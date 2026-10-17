@@ -10,7 +10,7 @@
 
 따라야 할 기준은 `rules`, 제품 동작은 `spec`, 책임과 연결은 `architecture`에 둔다.
 개발 도구와 문서 체계를 설명하는 내용은 `development`에 둔다.
-현재 단계와 다음 작업은 `current-state.md`에서 관리한다.
+확정·제안·미결과 구현·검증 범위는 해당 주제의 정본에서 관리한다.
 
 파일 수보다 독자가 찾는 질문과 변경 책임을 기준으로 나눈다.
 각 문서는 자신이 소유하는 내용과 적용 범위를 짧게 밝힌다.
@@ -21,18 +21,31 @@
 | 위치 | 소유하는 내용 | 정본 |
 |---|---|---|
 | 루트 | 기본 지침과 호스트 진입점 | [AGENTS](../../AGENTS.md), [CLAUDE](../../CLAUDE.md) |
-| `docs/rules/` | 상세 작업 규칙 | [문서 작성](../rules/documentation.md), [Markdown 표현](../rules/markdown.md), [개발](../rules/development.md) |
-| `docs/architecture/` | 구성 요소의 책임과 연결 | [구조 설명](../architecture/overview.md) |
-| `docs/architecture/decisions/` | 중요한 선택의 이유와 대안 | [호스트 판단 방식](../architecture/decisions/0001-host-agent-local-runtime.md), [공통 지침 방식](../architecture/decisions/0002-shared-agent-instructions.md) |
+| `docs/rules/` | 문서·기획·개발·검토 원칙 | 아래 작업 원칙 표 |
+| `docs/architecture/` | 구성 요소의 책임·연결·선택 근거 | [구조 설명](../architecture/overview.md) |
 | `docs/spec/` | 목적과 확정 제품 조건 | [제품 요구사항](../spec/product.md) |
 | `docs/spec/tasks/` | 업무 수행 계약 | [흐름·상태](../spec/tasks/workflow.md), [계획·승인](../spec/tasks/approval.md), [결과·이력](../spec/tasks/results.md), [사례](../spec/tasks/scenarios.md) |
 | `docs/spec/resources/` | 리소스 실행 계약과 초기 연동 | [공통 계약](../spec/resources/contract.md), [최초 어댑터](../spec/resources/initial-adapters.md) |
 | `docs/spec/installation/` | 로컬 환경과 배포 계약 | [환경 준비](../spec/installation/environment.md), [배포·업데이트](../spec/installation/distribution.md) |
 | `docs/development/` | 문서 구조와 도구 동작 설명 | 이 문서, [문맥 복구](agent-context.md) |
-| `docs/current-state.md` | 단계·미결·검증·다음 작업 | [현재 상태](../current-state.md) |
 
 현재는 README를 작성하지 않는다.
 문서가 정리되면 사용자에게 읽기 경로와 사용 방법을 안내하는 진입점으로 추가한다.
+
+## 작업 원칙의 정본
+
+| 정본 | 소유하는 내용 |
+|---|---|
+| [문서 작성](../rules/documentation.md) | 목적·독자·맥락·상태·출처·예시 |
+| [Markdown 표현](../rules/markdown.md) | 문장·문단·줄바꿈·제목·목록·표 |
+| [변경 관리](../rules/changes.md) | 사용자 수정 보존·이관·Git 기록·인계 |
+| [기획](../rules/planning.md) | 문제·범위·요구·가정·대안 비교·선택 근거 |
+| [개발](../rules/development.md) | 책임·의존 방향·확장·단순성·검증·문서화 |
+| [검토](../rules/review.md) | 검토 범위·기준·발견·확인 결과 |
+
+문서·기획·개발·검토 원칙은 서로 다른 작업 기준을 소유한다.
+개발의 기본 원칙은 정해졌고 언어·도구별 세부 규격은 미결이다.
+개발 원칙의 정의가 현재 작업을 구현 단계로 바꾸지는 않는다.
 
 ## 주제별 경계
 
@@ -45,22 +58,31 @@
 설치 환경 문서는 필요한 프로그램의 검사·준비를, 배포 문서는 패키지 전달과 업데이트를 소유한다.
 규칙 문서에서 미결 기술 선택을 제품의 확정 조건으로 바꾸지 않는다.
 
+필요한 프로그램·패키지와 지원 버전의 목록은 추후 dependency를 정리할 때 관리한다.
+설치·리소스 명세는 검사와 기능 계약을 설명하고 버전 목록은 복제하지 않는다.
+관리 기준은 [개발 원칙](../rules/development.md)에 둔다.
+
 ## 작업별 참조 경로
 
 | 작업 | 관련 정본 |
 |---|---|
-| 새 작업·인계·압축 후 재개 | AGENTS → 현재 상태 → 이 문서 → 작업별 규칙과 관련 명세 |
+| 새 작업·인계·압축 후 재개 | AGENTS → 이 문서 → 작업별 규칙과 관련 명세 |
 | 문서 작성·수정 | 문서 작성 + Markdown 표현 + 수정할 주제의 정본 |
+| 기존 문서 변경·이관·Git 기록 | 변경 관리 + 영향받는 정본 |
+| 요구사항 정리·설계안 구체화 | 기획 + 제품 + 관련 명세 |
+| 대안 선택·기존 선택 변경 | 기획 + 관련 구조 설명·명세 |
+| 문서·설계 확인 | 검토 + 검토 대상의 작업 원칙 |
 | 사용자 흐름·상태 변경 | 제품 + 업무 흐름 + 관련 승인·결과 계약 |
 | 승인·허용 범위 변경 | 계획·승인 + 업무 흐름 + 리소스 계약 |
 | 리소스·어댑터 변경 | 공통 계약 + 최초 어댑터 + 계획·승인 + 구조 |
-| 설치·배포 변경 | 환경 준비 + 배포·업데이트 + 최초 어댑터 + ADR-0001 |
-| 구성 요소 책임 변경 | 구조 + 관련 명세 + 관련 ADR |
-| 규칙·문서 체계 변경 | AGENTS + 관련 rules + 이 문서 + 문맥 복구 + ADR-0002 |
+| 설치·배포 변경 | 환경 준비 + 배포·업데이트 + 최초 어댑터 + 구조 |
+| 구성 요소 책임 변경 | 기획 + 구조 + 관련 명세 |
+| 구조 설계·코드·설정·의존성 변경 | 개발 + 관련 명세·구조 + 함께 바뀌는 문서의 원칙 |
+| 규칙·문서 체계 변경 | AGENTS + 관련 rules + 이 문서 + 문맥 복구 |
 
 링크는 파일을 찾아 읽는 경로다.
 본문 전체가 호스트에 자동 로딩된다는 뜻은 아니다.
-코드 변경에는 개발 규칙도 함께 적용한다.
+필요한 원칙을 조합해서 읽고 적용한다.
 
 ## 확장과 이관
 
@@ -72,8 +94,10 @@
 어댑터별 상세 계약이 길어지면 리소스 디렉터리에서 해당 문서를 추가한다.
 빈 분류와 제목만 있는 문서를 미리 늘리지 않는다.
 
-변경과 이관은 [문서 작성 규칙](../rules/documentation.md#변경과-이관)을 따른다.
-현재 요구 동작은 명세에서, 선택의 이유는 ADR에서 유지한다.
+변경과 이관은 [변경 관리](../rules/changes.md)를 따른다.
+`decisions` 디렉터리나 별도 ADR 문서를 만들지 않는다.
+선택 근거는 관련 구조 설명·명세에서 현재 내용과 함께 관리하고 변경 이력은 Git을 사용한다.
+임시 작업 현황은 응답에서 전달하고 별도 작업 상태 요약 문서는 두지 않는다.
 제품의 실행 이력과 이 저장소의 개발 진행 기록은 구분한다.
 
 ## 참고한 문서 설계
@@ -89,6 +113,5 @@
 [Google 문단 작성 지침](https://developers.google.com/style/paragraph-structure)은 한 주제를 중심으로 문단을 구성하는 기준을 제공한다.
 가독성의 상세 기준은 Markdown 규칙에서 관리한다.
 
-[MADR](https://adr.github.io/madr/)의 Markdown 결정 기록 방식을 참고한다.
-ADR에는 상태·배경·대안·선택·영향·관련 정본을 기록한다.
-날짜와 변경 이력은 Git으로 관리한다.
+[Google 검토 지침](https://google.github.io/eng-practices/review/reviewer/looking-for.html)의 설계·복잡도·일관성 관점도 참고했다.
+코드 검토 관점을 문서·설계에 적용한 판단은 검토 원칙에 설명했다.

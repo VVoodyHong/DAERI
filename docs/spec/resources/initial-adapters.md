@@ -2,6 +2,8 @@
 
 상태: 확정 연동 대상 + 최초 기능·SDK 설계 제안
 
+최초 연동 기능과 지원 범위를 검토하는 사람과 개발 에이전트를 위한 명세다.
+
 최초 연동 대상은 **PostgreSQL, Redis, AWS, GitLab**으로 확정했다.
 이 문서는 각 대상의 최초 기능, SDK와 권한 경계 제안을 소유한다.
 공통 등록부·호출·실패 계약은 [리소스 공통 계약](contract.md)에 있다.
@@ -18,8 +20,9 @@
 | AWS | `boto3` | 실제 계정·리전 확인, 제한된 EC2 인스턴스 조회 | account·region·기능·resource ID |
 | GitLab | `python-gitlab` | 저장소 tree·파일 읽기·검색 | origin·project·ref·path·commit snapshot |
 
-지원할 SDK 버전과 전이 의존성은 구현 전에 실제 검증한 뒤 잠근다.
-정확한 지원 버전과 세부 기능은 아직 미결이다.
+SDK 선택과 지원 버전은 [개발 원칙](../../rules/development.md)에 따라 추후 dependency 목록에서 관리한다.
+SDK와 전이 의존성은 구현 전에 실제 검증한 뒤 잠근다.
+세부 기능은 아직 미결이다.
 설치 여부와 호환성을 검사하는 흐름은 [실행 환경 명세](../installation/environment.md)에 있다.
 
 ## PostgreSQL의 경계
