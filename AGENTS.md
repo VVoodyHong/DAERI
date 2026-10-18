@@ -19,13 +19,11 @@
 
 | 작업 | 필수 규칙 |
 |---|---|
-| 문서 내용 작성 | [작성 원칙](docs/rules/documentation.md) |
-| 문장·문단·표현 정리 | [Markdown 원칙](docs/rules/markdown.md) |
-| 기존 문서 수정·이동·삭제 | [변경 관리](docs/rules/changes.md) |
+| 문서 작성·수정·이동·삭제 | [문서 작성·변경](docs/rules/documentation.md) |
 | 요구사항 해석·대안 비교·설계안 구성 | [기획 원칙](docs/rules/planning.md) |
 | 구조 설계·코드·설정·의존성 변경 | [개발 원칙](docs/rules/development.md) |
 | 문서·설계 검토와 확인 | [검토 원칙](docs/rules/review.md) |
-| Git 기록·작업 인계 | [변경 관리](docs/rules/changes.md) |
+| Git 기록·작업 인계 | [Git·인계](docs/rules/documentation.md#git-기록과-인계) |
 
 여러 작업이 함께 있으면 해당 규칙을 모두 적용한다.
 규칙은 작업 방법을, 명세는 제품의 요구 동작을 정의한다.

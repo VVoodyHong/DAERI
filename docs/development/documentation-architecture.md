@@ -1,117 +1,63 @@
-# 문서 구조와 정본
+# 문서 구조와 읽기 경로
 
-상태: 문서 체계 초안
+상태: 공통 문서 체계
 
-이 문서는 정보를 저장할 위치와 작업별 참조 경로를 정의한다.
-대상 독자는 문서를 수정하는 사람과 개발 에이전트다.
-공통 작업 진입점은 [AGENTS](../../AGENTS.md)다.
+정본 위치와 작업에 필요한 읽기 순서를 안내한다.
+같은 계약은 한 곳에 두고 설명·전송 규격·작업 규칙을 구분한다.
 
-## 분류 기준
+## 처음 읽기
 
-따라야 할 기준은 `rules`, 제품 동작은 `spec`, 책임과 연결은 `architecture`에 둔다.
-개발 도구와 문서 체계를 설명하는 내용은 `development`에 둔다.
-확정·제안·미결과 구현·검증 범위는 해당 주제의 정본에서 관리한다.
+[제품 명세](../spec/product.md) → [구조 설명](../architecture/overview.md) → [업무 흐름](../spec/tasks/workflow.md) 순서로 읽는다.
+개발 에이전트는 [AGENTS.md](../../AGENTS.md)의 재개·작업 규칙도 적용한다.
+구현 범위·개발 순서는 [최초 구현 계획](../plans/initial-implementation.md)에서 확인한다.
 
-파일 수보다 독자가 찾는 질문과 변경 책임을 기준으로 나눈다.
-각 문서는 자신이 소유하는 내용과 적용 범위를 짧게 밝힌다.
-인접한 계약은 링크하고 전체 내용을 복사하지 않는다.
+## 정본 지도
 
-## 디렉터리와 정본
-
-| 위치 | 소유하는 내용 | 정본 |
-|---|---|---|
-| 루트 | 기본 지침과 호스트 진입점 | [AGENTS](../../AGENTS.md), [CLAUDE](../../CLAUDE.md) |
-| `docs/rules/` | 문서·기획·개발·검토 원칙 | 아래 작업 원칙 표 |
-| `docs/architecture/` | 구성 요소의 책임·연결·선택 근거 | [구조 설명](../architecture/overview.md) |
-| `docs/spec/` | 목적과 확정 제품 조건 | [제품 요구사항](../spec/product.md) |
-| `docs/spec/tasks/` | 업무 수행 계약 | [흐름·상태](../spec/tasks/workflow.md), [계획·승인](../spec/tasks/approval.md), [결과·이력](../spec/tasks/results.md), [사례](../spec/tasks/scenarios.md) |
-| `docs/spec/resources/` | 리소스 실행 계약과 초기 연동 | [공통 계약](../spec/resources/contract.md), [최초 어댑터](../spec/resources/initial-adapters.md) |
-| `docs/spec/installation/` | 로컬 환경과 배포 계약 | [환경 준비](../spec/installation/environment.md), [배포·업데이트](../spec/installation/distribution.md) |
-| `docs/development/` | 문서 구조와 도구 동작 설명 | 이 문서, [문맥 복구](agent-context.md) |
-
-현재는 README를 작성하지 않는다.
-문서가 정리되면 사용자에게 읽기 경로와 사용 방법을 안내하는 진입점으로 추가한다.
-
-## 작업 원칙의 정본
-
-| 정본 | 소유하는 내용 |
+| 위치 | 소유하는 내용 |
 |---|---|
-| [문서 작성](../rules/documentation.md) | 목적·독자·맥락·상태·출처·예시 |
-| [Markdown 표현](../rules/markdown.md) | 문장·문단·줄바꿈·제목·목록·표 |
-| [변경 관리](../rules/changes.md) | 사용자 수정 보존·이관·Git 기록·인계 |
-| [기획](../rules/planning.md) | 문제·범위·요구·가정·대안 비교·선택 근거 |
-| [개발](../rules/development.md) | 책임·의존 방향·확장·단순성·검증·문서화 |
-| [검토](../rules/review.md) | 검토 범위·기준·발견·확인 결과 |
+| 루트 | [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
+| `docs/rules/` | [문서 작성·변경·Git](../rules/documentation.md), [기획](../rules/planning.md), [개발](../rules/development.md), [검토](../rules/review.md) |
+| `docs/architecture/` | [구조·책임·권한 경계](../architecture/overview.md) |
+| `docs/spec/` | [제품 요구사항](../spec/product.md) |
+| `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md) |
+| `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
+| `docs/spec/resources/` | [MCP 재사용·탐색·등록·호출 계약](../spec/resources/contract.md), [최초 제품 선정·제약](../spec/resources/initial-adapters.md) |
+| `docs/spec/configuration/` | [profile·연결·인증·개인 보존](../spec/configuration/profiles.md) |
+| `docs/spec/installation/` | [환경·의존성·전달·업데이트](../spec/installation/environment.md) |
+| `docs/spec/hosts/` | [플러그인·Skill·런처](../spec/hosts/plugins.md), [실제 승인 UI·등록·검증](../spec/hosts/approval.md) |
+| `docs/plans/` | [최초 구현 범위·순서·완료 기준](../plans/initial-implementation.md) |
+| `docs/development/` | 이 문서 |
 
-문서·기획·개발·검토 원칙은 서로 다른 작업 기준을 소유한다.
-개발의 기본 원칙은 정해졌고 언어·도구별 세부 규격은 미결이다.
-개발 원칙의 정의가 현재 작업을 구현 단계로 바꾸지는 않는다.
+업무·구조 명세는 사람이 이해할 동작·책임을, MCP는 필드·타입·enum을 소유한다.
+공개 DTO와 내부 저장 스키마는 구분한다.
+읽은 계약을 바꾸면 해당 정본과 영향받는 참조를 함께 갱신한다.
 
-## 주제별 경계
+## 작업별 읽기
 
-업무 흐름 문서는 승인 단계가 언제 나타나는지를 설명한다.
-승인 문서는 계획의 범위와 승인·차단 조건을 정의한다.
-결과 문서는 이력·근거·완료 검증을 정의한다.
-사례는 이 계약을 설명하며 새로운 규칙을 정의하지 않는다.
-
-리소스 공통 계약과 최초 제품별 기능을 구분한다.
-설치 환경 문서는 필요한 프로그램의 검사·준비를, 배포 문서는 패키지 전달과 업데이트를 소유한다.
-규칙 문서에서 미결 기술 선택을 제품의 확정 조건으로 바꾸지 않는다.
-
-필요한 프로그램·패키지와 지원 버전의 목록은 추후 dependency를 정리할 때 관리한다.
-설치·리소스 명세는 검사와 기능 계약을 설명하고 버전 목록은 복제하지 않는다.
-관리 기준은 [개발 원칙](../rules/development.md)에 둔다.
-
-## 작업별 참조 경로
-
-| 작업 | 관련 정본 |
+| 작업 | 순서 |
 |---|---|
-| 새 작업·인계·압축 후 재개 | AGENTS → 이 문서 → 작업별 규칙과 관련 명세 |
-| 문서 작성·수정 | 문서 작성 + Markdown 표현 + 수정할 주제의 정본 |
-| 기존 문서 변경·이관·Git 기록 | 변경 관리 + 영향받는 정본 |
-| 요구사항 정리·설계안 구체화 | 기획 + 제품 + 관련 명세 |
-| 대안 선택·기존 선택 변경 | 기획 + 관련 구조 설명·명세 |
-| 문서·설계 확인 | 검토 + 검토 대상의 작업 원칙 |
-| 사용자 흐름·상태 변경 | 제품 + 업무 흐름 + 관련 승인·결과 계약 |
-| 승인·허용 범위 변경 | 계획·승인 + 업무 흐름 + 리소스 계약 |
-| 리소스·어댑터 변경 | 공통 계약 + 최초 어댑터 + 계획·승인 + 구조 |
-| 설치·배포 변경 | 환경 준비 + 배포·업데이트 + 최초 어댑터 + 구조 |
-| 구성 요소 책임 변경 | 기획 + 구조 + 관련 명세 |
-| 구조 설계·코드·설정·의존성 변경 | 개발 + 관련 명세·구조 + 함께 바뀌는 문서의 원칙 |
-| 규칙·문서 체계 변경 | AGENTS + 관련 rules + 이 문서 + 문맥 복구 |
+| 요구·구현 범위 | 기획·개발 → 제품·구조 → 구현 계획·관련 명세 |
+| 승인·실행 | 업무 승인·흐름 → 호스트 승인 → MCP 계획·리소스 |
+| 리소스·MCP | 리소스 계약·최초 선정 → 공통 MCP·해당 도구 |
+| profile·준비·배포 | 사용자 구성 → 환경 준비 → 호스트 실행 |
+| 문서 변경·검토 | 문서·검토 규칙 → 변경 대상·영향받는 정본 |
 
-링크는 파일을 찾아 읽는 경로다.
-본문 전체가 호스트에 자동 로딩된다는 뜻은 아니다.
-필요한 원칙을 조합해서 읽고 적용한다.
+## 호스트 로딩과 문맥 복구
 
-## 확장과 이관
+Codex는 [AGENTS 지침 체인](https://learn.chatgpt.com/docs/agent-configuration/agents-md)을, Claude Code는 [공통 파일 가져오기](https://code.claude.com/docs/en/memory#share-one-file-with-other-coding-tools)를 사용한다.
+상위·전역 설정도 영향을 주며 Markdown 링크가 모든 docs의 자동 로딩을 뜻하지 않는다.
+작업·인계·압축 후에는 AGENTS의 순서로 관련 본문을 실제 읽고 변경 후에도 다시 확인한다.
 
-독립적으로 찾거나 수정할 내용이 생기면 문서를 분리한다.
-짧은 내용이 같은 질문에 답한다면 기존 문서의 절로 유지한다.
-분리 때문에 같은 계약의 반복 설명이 늘어나면 경계를 다시 검토한다.
+개인 메모리·대화 요약으로 최신 파일이나 실제 승인·실행 기록을 대신하지 않는다.
+문서 체계가 완전한 망각 방지를 보장하지는 않는다.
+새 세션·압축 후의 실제 호스트 검증은 미수행이며 제품 [Skill](../spec/hosts/plugins.md#skill-지침)과 개발 지침은 구분한다.
 
-실제 절차가 생기면 사용자 안내는 `docs/how-to/`, 실행 계획은 `docs/plans/`에 추가한다.
-어댑터별 상세 계약이 길어지면 리소스 디렉터리에서 해당 문서를 추가한다.
-빈 분류와 제목만 있는 문서를 미리 늘리지 않는다.
+## 파일을 나누는 기준
 
-변경과 이관은 [변경 관리](../rules/changes.md)를 따른다.
-`decisions` 디렉터리나 별도 ADR 문서를 만들지 않는다.
-선택 근거는 관련 구조 설명·명세에서 현재 내용과 함께 관리하고 변경 이력은 Git을 사용한다.
-임시 작업 현황은 응답에서 전달하고 별도 작업 상태 요약 문서는 두지 않는다.
-제품의 실행 이력과 이 저장소의 개발 진행 기록은 구분한다.
+다른 독자·독립적인 질문·변경 책임이 생길 때만 분리한다.
+같이 읽고 수정하는 짧은 내용은 절로 합치고 상세 계약을 복제하지 않는다.
+빈 분류·README·`decisions`·ADR·`current-state`·별도 작업 현황 문서는 현재 만들지 않는다.
+선택 근거·미결·검증 범위는 정본에, 변경 이력은 Git에 둔다.
 
-## 참고한 문서 설계
-
-[Diátaxis 적용 지침](https://diataxis.fr/how-to-use-diataxis/)은 실제 내용을 작은 단위로 개선하며 문서 구조를 발전시키는 접근을 제시한다.
-이 저장소는 설명·참조·절차를 구분하는 원칙을 주제별 디렉터리에 적용했다.
-디렉터리 이름 자체를 Diátaxis의 필수 규격으로 취급하지 않는다.
-
-[Google 문서 구성 지침](https://developers.google.com/tech-writing/one/documents)은 독자와 목적을 먼저 정의하고 내용을 구성하도록 안내한다.
-이를 바탕으로 DAERI에서는 독자의 질문과 변경 책임이 다른 내용을 분리했다.
-구체적인 파일 경계는 프로젝트에 맞춘 설계 판단이다.
-
-[Google 문단 작성 지침](https://developers.google.com/style/paragraph-structure)은 한 주제를 중심으로 문단을 구성하는 기준을 제공한다.
-가독성의 상세 기준은 Markdown 규칙에서 관리한다.
-
-[Google 검토 지침](https://google.github.io/eng-practices/review/reviewer/looking-for.html)의 설계·복잡도·일관성 관점도 참고했다.
-코드 검토 관점을 문서·설계에 적용한 판단은 검토 원칙에 설명했다.
+[Diátaxis](https://diataxis.fr/how-to-use-diataxis/)와 [Google 문서 구성](https://developers.google.com/tech-writing/one/documents)의 설명·참조 구분을 적용했다.
+폴더 개수를 베스트 프랙티스로 간주하지 않으며 표현·이관은 [문서 규칙](../rules/documentation.md)을 따른다.
