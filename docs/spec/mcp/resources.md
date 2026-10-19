@@ -8,6 +8,7 @@
 ## `daeri_resource_list`
 
 현재 열람 권한과 업무의 고정 profile에 속한 로컬 등록 인스턴스·기능 요약을 조회한다.
+로컬 실행기에 등록된 산출물 형식도 함께 제공한다.
 원격 진단·업무 원문 조회는 수행하지 않으므로 계획 승인은 필요하지 않다.
 profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 profile의 등록부로 대체하지 않는다.
 
@@ -23,7 +24,7 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 `types`를 생략하면 접근 가능한 모든 유형을 대상으로 한다.
 기본 범주는 DB·Cache·Infra·Source·Document·Log·Ticket·Mail이며 새 범주를 등록할 수 있다.
 빈 배열은 거부하며 `limit` 생략 시 로컬 설정의 기본값을 사용한다.
-커서는 업무·주체·필터·등록부 조회 조건에 연결한다.
+커서는 업무·주체·필터·리소스 및 산출물 형식 등록부 개정에 연결한다.
 다른 조건에 재사용하거나 등록부 변경으로 유효성을 잃으면 `CURSOR_INVALID`로 반환한다.
 
 ### 반환 `data`
@@ -32,6 +33,7 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 |---|---|---|---|
 | `task_id`, `task_revision` | string, integer | 예 | 업무 ID와 현재 개정 번호 |
 | `instances` | InstanceSummary[] | 예 | 권한 필터를 거친 인스턴스 |
+| `output_formats` | OutputFormatDescriptor[] | 예 | 현재 사용자·호스트의 로컬 산출물 형식 등록부 |
 | `next_cursor` | string 또는 null | 예 | 다음 목록 페이지 참조 |
 | `has_more` | boolean | 예 | 같은 조회에서 추가 페이지가 있는지 여부 |
 
@@ -43,6 +45,35 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 등록된 인스턴스가 없으면 `instances: []`, `has_more: false`, `next_cursor: null`인 `ok` 응답이다.
 요약의 `changes_state`는 설명용이며 실행 허가나 재시도 안전성을 대신하지 않는다.
 목록의 후속 페이지가 있다는 사실은 실제 리소스 데이터의 잘림을 뜻하지 않는다.
+
+### `OutputFormatDescriptor`
+
+설치한 생성기의 검증된 형식 계약을 제공하며 업무별 파일 생성 함수를 나열하지 않는다.
+형식과 생성기의 역할은 [결과 형식·생성기](tasks.md#결과-형식과-생성기)가 정본이다.
+아래 필드는 모두 필수다.
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `format_id` | string | 등록부 안에서 고유한 형식 ID |
+| `contract_ref` | RecordRef | 입력·옵션·생성 의미에 연결한 불변 계약 참조 |
+| `description` | string | 형식의 목적·생성 제약 |
+| `media_type` | string | 생성 파일의 미디어 유형 |
+| `extensions` | string[] | 허용한 파일 확장자 |
+| `input_kinds` | string[] | 생성기가 받는 입력 종류 |
+| `options_schema` | JsonObject | 허용 옵션의 로컬 검증 스키마 |
+| `available` | boolean | 현재 사용자·호스트에서 생성할 준비가 됐는지 여부 |
+| `unavailable_reason` | string 또는 null | 준비 미완료 이유; 사용 가능하면 null |
+
+`input_kinds`는 초기 `text`, `json`, `table`, `report`를 사용하되 등록 계약으로 확장할 수 있다.
+입력 종류가 같다는 이유로 다른 형식도 생성할 수 있다고 가정하지 않는다.
+`available: false`이면 비어 있지 않은 사유를 제공하며 등록하지 않은 형식은 목록에 만들어 넣지 않는다.
+미지원·준비 미완료를 다른 형식으로 조용히 대체하거나 이 조회에서 자동 설치하지 않는다.
+`options_schema`의 외부 참조를 자동 다운로드하거나 옵션을 실행 코드로 해석하지 않는다.
+
+형식 등록부 자체에 건수·바이트 상한을 적용하고 전체 목록을 각 페이지의 `output_formats`에 동일하게 반환한다.
+`types`·`limit`는 리소스 인스턴스 목록에만 적용하며 형식 목록을 일부만 지원하는 것처럼 자르지 않는다.
+리소스가 없어도 허용된 형식 목록을 반환하고, 형식 계약·준비 상태가 바뀌면 기존 커서는 무효화한다.
+형식 등록은 원격 접근·내보내기·보존 권한을 추가하지 않는다.
 
 ## `daeri_capability_get`
 
@@ -84,23 +115,24 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 
 `metric_id`는 같은 기능 안에서 중복하지 않는다.
 등록 시 같은 인스턴스의 동일 metric ID가 같은 단위·측정 의미·집계 범위를 가리키는지 검사한다.
-서로 다른 지표에는 다른 ID를 부여하며 `unit`·설명은 비어 있지 않아야 한다.
+서로 다른 지표에는 다른 ID를 부여하며 `unit`·`description`은 비어 있지 않아야 한다.
+`description`에는 측정 대상·집계 범위와 페이지·재시도의 합산 방식을 설명한다.
 
 | 하위 타입 | 필드와 타입 |
 |---|---|
-| `MetricDescriptor` | `metric_id: string`, `unit: string`, `enforceable: boolean` |
+| `MetricDescriptor` | `metric_id: string`, `unit: string`, `description: string`, `enforceable: boolean` |
 | `BudgetSupport` | `external_requests_enforceable: boolean` |
 | `EffectsDescriptor` | `changes_state: boolean`, `side_effects: string[]`, `interruptible: boolean` |
 | `RetryDescriptor` | `auto_retry_supported: boolean`, `max_attempts: integer`, `read_repeatability: string`, `retryable_codes: string[]` |
-| `IdempotencyDescriptor` | `supported: boolean`, `key_mode: string`, `key_pointer: string/null`, `scope: string`, `validity: string` |
-| `VerificationDescriptor` | `supported: boolean`, `capability_ids: string[]`, `external_reference_pointers: string[]` |
-| `ContinuationDescriptor` | `supported: boolean`, `cursor_input_pointer: string/null`, `next_cursor_output_pointer: string/null`, `has_more_output_pointer: string/null`, `consistency: string`, `validity: string/null` |
+| `IdempotencyDescriptor` | `supported: boolean`, `key_mode: string`, `key_pointer: JsonPointer/null`, `scope: string`, `validity: string` |
+| `VerificationDescriptor` | `supported: boolean`, `capability_ids: string[]`, `external_reference_pointers: JsonPointer[]` |
+| `ContinuationDescriptor` | `supported: boolean`, `cursor_input_pointer: JsonPointer/null`, `next_cursor_output_pointer: JsonPointer/null`, `has_more_output_pointer: JsonPointer/null`, `consistency: string`, `validity: string/null` |
 
 `retry.max_attempts`는 최초 시도를 포함한 1 이상의 상한이며 자동 재시도 미지원이면 1·빈 `retryable_codes`다.
 `read_repeatability`는 `snapshot`, `live`, `not_applicable` 중 하나다.
 
 `idempotency.key_mode`는 `none`, `server_generated`, `parameters` 중 하나다.
-`parameters`이면 `key_pointer`로 입력 스키마의 위치를 지정하며 다른 모드에서는 null이다.
+`parameters`이면 `key_pointer`로 입력 스키마가 허용한 `parameters`의 위치를 지정하며 다른 모드에서는 null이다.
 `supported: false`이면 `key_mode: "none"`이며 `scope`·`validity`에 미지원 한계를 설명한다.
 지원하면 `none`을 사용할 수 없다.
 `verification.supported: false`이면 두 배열은 비고 true이면 등록된 확인 기능을 하나 이상 지정한다.
@@ -108,8 +140,8 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 `continuation.consistency`는 `snapshot`, `live`, `unspecified` 중 하나다.
 페이지 미지원이면 세 pointer와 `validity`는 null이다.
 페이지 지원이면 세 pointer와 `validity`는 비어 있지 않은 문자열이다.
-pointer는 등록 계약에서 허용한 필드 위치를 가리킨다.
-필드 선택자의 세부 표기와 해석 방식은 구현 시 입력·출력 계약에 맞춰 정한다.
+pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [공통 필드 경로](common.md#필드-경로와-선택)를 따른다.
+입력 pointer의 기준은 `parameters`, 출력 pointer의 기준은 정규화한 기능 결과 객체다.
 출력의 후속 값을 입력에 연결하는 허용 방식은 [계획 규격](plans.md)의 `input_bindings`에 둔다.
 
 세 스키마는 최상위 객체·허용 속성을 정의하고 서버가 검증한 등록부에서 제공한다.
@@ -122,7 +154,7 @@ pointer는 등록 계약에서 허용한 필드 위치를 가리킨다.
 `supported_purposes`는 실제 `effects`·`verification` 계약과 일치하도록 등록 시 검증한다.
 호스트가 임의로 `reconcile` 목적을 붙여 변경 기능의 실행 권한을 바꾸지 못한다.
 `metadata_discovery_allowed`는 등록 메타데이터 노출만 뜻하며 원격 탐색의 계획 승인을 면제하지 않는다.
-제품별 실제 권한과 변환 후 범위 검사는 [하위 MCP 승인 검사](../resources/contract.md#계획과-승인-범위)를 따른다.
+제품별 실제 권한과 변환 후 범위 검사는 [실제 요청 정규화·판정](../resources/contract.md#실제-요청-정규화와-범위-판정)을 따른다.
 
 ## `daeri_capability_execute`
 
@@ -149,6 +181,17 @@ pointer는 등록 계약에서 허용한 필드 위치를 가리킨다.
 
 새 호출의 단계·목적·분기·의존 관계는 [계획 규격](plans.md)으로 검사한다.
 상태·권한·승인·실제 대상 검사와 예약·의도 보존·dispatch는 [실행 제어](../tasks/workflow.md#실행-검사와-기록)를 따른다.
+기억을 전제로 하는 새 dispatch에도 [현재 기억 검사](../tasks/memory.md#계획-전-조회와-활용)를 적용하며 전제가 무효이면 `PLAN_INVALID`로 수정 계획을 요구한다.
+
+| 현재 업무 상태 | 새 호출에 허용하는 목적 |
+|---|---|
+| `running`, `verifying` | 현재 계획에서 승인한 `collect`, `change`, `verify`, `reconcile` |
+| `reconciling` | 승인한 원 호출을 확인하는 `reconcile`만 허용 |
+| 그 밖의 상태 | 신규 리소스 호출 금지 |
+
+상태에 맞지 않는 새 호출은 `TASK_STATE_INVALID`로 거부한다.
+허용 목적도 현재 계획·유효 승인·확인 대상·나머지 실행 검사를 모두 충족해야 한다.
+이 제한은 새 dispatch에 적용하며 이미 보낸 호출의 결과 보존이나 같은 호출의 상태 재전달을 막지 않는다.
 
 서버는 저장한 `input_bindings`의 허용 source pointer에서 값을 읽어 target pointer에 채운다.
 `target_pointer: null`인 바인딩은 조건 판단에만 사용한다.
@@ -214,6 +257,11 @@ profile이 달라도 원 인스턴스·실제 대상·권한 문맥의 바인딩
 
 `inline_result`가 있으면 해당 `output_schema`를 만족해야 한다.
 마스킹 뒤 스키마를 만족할 수 없으면 null로 반환하고 제한을 표시한다.
+하위 응답의 정규화·출력 스키마 검사에 실패하면 미검증 본문은 `inline_result`로 제공하거나 바인딩·파생 계산·완료 근거에 사용하지 않는다.
+검증 실패와 별도로 확인된 원격 완료·효과·소비·예약을 원 호출에 보존하며 출력 오류를 원격 미실행으로 바꾸지 않는다.
+완료 여부·효과를 확인할 수 있으면 `RESULT_VALIDATION_FAILED`, `inline_result=null`로 반환하고 실제 `call_state`를 유지한다.
+효과까지 미확인이면 `EXTERNAL_OUTCOME_UNKNOWN`을 우선하고 승인된 확인 절차를 따른다.
+출력 오류만으로 자동 재실행·예약 해제·성공 근거 생성을 허용하지 않는다.
 URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공한다.
 `external_effect: "none"`은 업무 대상 변경이 없다는 뜻이며 읽기의 부수 효과는 기능 계약에 남긴다.
 
@@ -252,6 +300,7 @@ URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공�
 | 비동기 접수 | `pending` · `pending` · null |
 | 확정된 원격 실패 | `error` · `failed` · `EXTERNAL_EXECUTION_FAILED` |
 | 단절·시간 초과 등으로 결과 미확인 | `error` · `unknown` · `EXTERNAL_OUTCOME_UNKNOWN` |
+| 출력 정규화·스키마 실패, 실행 결과는 확인됨 | `error` · 실제 확인 상태 · `RESULT_VALIDATION_FAILED` |
 | 일부 결과 잘림 | `partial` · 실제 확인 상태 · `RESULT_TRUNCATED` |
 
 도구·호출·업무의 완료와 외부 효과는 구분하며 접수만 확인한 변경의 효과는 `unknown`이다.

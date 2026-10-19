@@ -20,6 +20,9 @@
 | `steps` | PlanStep[] | 예 | 수행 단계; 리소스 실행이 없으면 빈 배열 |
 | `budget` | PlanBudget | 예 | 업무 전체 누적 실행 한도 |
 | `output` | PlanOutput | 예 | 보고 형식과 제공 범위 |
+| `memory_search_refs` | RecordRef[] | 예 | 현재 요청·profile 맥락에서 발급한 검색 기록; 최소 하나 |
+| `memory_refs` | RecordRef[] | 예 | 계획에 적용한 기억의 불변 개정 참조; 없으면 [] |
+| `memory_limitations` | string[] | 예 | 검색 실패·누락·적용 조건·재확인 필요; 없으면 [] |
 | `completion_criteria` | CompletionCriterion[] | 예 | 최소 한 개의 완료 판단 기준 |
 | `previous_plan_id` | string | 아니요 | 같은 업무의 현재 계획을 대체할 때 필수 |
 | `carried_evidence_refs` | string[] | 아니요 | 승계할 같은 업무의 기존 결과 참조; 기본 [] |
@@ -28,6 +31,17 @@
 사용할 목적·방법·대상·제공 범위를 기존 업무와 현재 권한에 대조한다.
 단순한 목적 설명이나 필드 선택자가 비밀 자료의 반환을 허가하지 않는다.
 실패 처리는 [공통 기본 동작](../tasks/workflow.md#일부-조회-실패의-기본-동작)을 따르며 별도 정책 엔진을 추가하지 않는다.
+
+기억 검색 참조는 [기억 조회 도구](tasks.md#daeri_memory_search)가 실제 발급한 기록이어야 한다.
+실행기는 업무·profile 스냅샷·최신 요청과 보완 맥락·조회 당시 현재 계획 참조, 선택한 기억의 버전·현재 권한·만료·무효화를 대조한다.
+`memory_refs`는 연결한 검색 기록들이 반환한 항목의 부분집합이며 임의 기록 참조를 넣지 않는다.
+추가 검색은 참조 배열로 함께 연결해 서로 다른 질의에서 찾은 지식을 사용할 수 있다.
+현재 맥락으로 조회하지 않았거나 선택한 기억이 유효하지 않으면 `PLAN_INVALID`로 새 조회·계획 수정을 요구한다.
+
+0건 조회는 `memory_refs: []`로 정상 계획을 만들 수 있다.
+검색 제한·실패가 있는 기록도 계획에 연결할 수 있지만 서버가 확인한 제한을 표시본과 `memory_limitations`에 남긴다.
+저장소를 신뢰하지 못해 검색 기록도 발급하지 못하면 계획을 저장하지 않는다.
+검색 참조는 조회했다는 근거이며 모델의 숙지·검색의 충분성·현재 상태의 정확성을 증명하지 않는다.
 
 ### `PlanStep`
 
@@ -102,11 +116,10 @@
 |---|---|---|---|
 | `binding_id` | string | 예 | 계획 안에서 고유한 연결 ID |
 | `source_step_id` | string | 예 | 선행 단계 또는 명시적으로 승계한 결과의 단계 |
-| `source_pointer` | string | 예 | 기능 출력에서 읽을 허용 필드 위치 |
-| `target_pointer` | string 또는 null | 예 | 기능 입력 위치; null은 조건 판단 전용 |
+| `source_pointer` | JsonPointer | 예 | 기능 출력에서 읽을 허용 값 위치 |
+| `target_pointer` | JsonPointer 또는 null | 예 | `parameters` 안의 입력 위치; null은 조건 판단 전용 |
 
-필드 선택자는 등록 계약이 허용한 값 위치만 참조한다.
-세부 표기와 해석 방식은 구현 시 입력·출력 계약에 맞춰 정한다.
+포인터는 등록 계약이 허용한 값 위치만 참조하며 [공통 경로 문법](common.md#필드-경로와-선택)을 따른다.
 입력용 `target_pointer`는 비어 있지 않아야 하고 한 단계의 대상 위치끼리 충돌할 수 없다.
 인증·인스턴스·기능·승인·예산 필드를 결과 바인딩으로 바꾸지 않는다.
 
@@ -170,22 +183,34 @@ null도 실제 확인한 값일 때만 비교하며 추정한 null을 사용하�
 
 | PlanOutput 필드 | 타입 | 필수 | 제약 |
 |---|---|---|---|
-| `format` | string | 예 | 로컬 실행기가 지원할 보고 형식 |
+| `format` | string | 예 | 호스트 대화에서 사용할 설명·표·구조화 응답 등의 보고 표현 |
 | `destination` | string | 예 | 사람이 이해할 전달 대상 설명 |
 | `resource_rules` | ResourceOutputRule[] | 예 | 업무 계획마다 승인할 리소스별 제공 범위 |
+| `table_rules` | TableRule[] | 예 | 파생 표의 출처·결합·계산·완전성 범위; 없으면 [] |
+| `artifact_rules` | ArtifactRule[] | 예 | 생성·제공할 파일 형식·입력 종류·옵션·크기; 파일이 없으면 [] |
+
+대화 응답의 표현과 파일 산출물의 형식을 구분한다.
+표·CSV는 최초 검증 사례이며 사용자의 요청과 등록 생성기에 따라 텍스트·JSON·DB 파일 등으로 확장한다.
+형식의 발견·등록·생성 경계는 [출력 계약](tasks.md#결과-형식과-생성기)을 따른다.
+
+`ArtifactRule`의 필수 필드는 `artifact_id:ID`, `format_id:string`, `format_contract_ref:RecordRef`, `input_kind:string`, `options:JsonObject`, `max_bytes:PositiveInt`다.
+`artifact_id`는 계획 안에서 고유하고 등록 형식·계약·입력 종류·옵션 스키마와 일치해야 한다.
+파일 크기는 실행기 상한 안에서 지정하고 실제 자료 범위·형식·옵션·제공 대상 확대는 재승인받는다.
+생성기 계약이 바뀌거나 준비되지 않으면 기존 계획으로 생성하지 않으며 설치·다른 형식 대체를 숨겨 수행하지 않는다.
 
 | ResourceOutputRule 필드 | 타입 | 필수 | 제약 |
 |---|---|---|---|
 | `instance_id` | string | 예 | 고정 profile 안의 원본 리소스; 중복 금지 |
-| `allowed_model_fields` | string[] | 예 | 해당 리소스 결과 중 모델에 제공할 필드 |
-| `export_fields` | string[] | 예 | 해당 리소스 결과 중 산출물에 포함할 필드 |
-| `retained_fields` | string[] | 예 | 업무 종료 후 로컬에 유지할 최소 조회 본문 필드 |
+| `allowed_model_fields` | FieldSelector[] | 예 | 해당 리소스 결과 중 모델에 제공할 필드 |
+| `export_fields` | FieldSelector[] | 예 | 해당 리소스 결과 중 산출물에 포함할 필드 |
+| `retained_fields` | FieldSelector[] | 예 | 업무 종료 후 로컬에 유지할 최소 조회 본문 필드 |
+| `memory` | MemoryRule | 예 | 이 리소스에서 선별할 지식의 범주·출처·재제공·보존 허용 |
 | `masking` | MaskingRule[] | 예 | 해당 리소스의 가림 조건; 없으면 빈 배열 |
 
-실행 단계와 승계 근거의 리소스마다 규칙을 하나씩 명시하고 호스트 대화에서도 리소스별로 표시한다.
+실행 단계·승계 근거·선택한 기억의 기여 리소스마다 규칙을 하나씩 명시하고 호스트 대화에서도 리소스별로 표시한다.
 원본 기록의 인스턴스로 규칙을 선택하며 다른 리소스의 같은 필드명에 적용하지 않는다.
 빈 필드 배열은 해당 모델 제공·내보내기·종료 후 본문 보관을 허용하지 않으며 규칙·출처를 확인할 수 없으면 허용하지 않는다.
-리소스 호출·승계 근거가 없는 계획에서는 `resource_rules: []`를 사용하고 요청 자료의 등록 제공 정책을 적용한다.
+리소스 호출·승계 근거·리소스 기억이 없는 계획에서는 `resource_rules: []`를 사용하고 요청 자료의 등록 제공 정책을 적용한다.
 승계 근거는 원본 보관·제공 조건·현재 권한·새 계획의 해당 규칙을 모두 충족해야 한다.
 
 `retained_fields`는 종료 후 본문 보관 범위이며 모델 제공·내보내기 허용을 뜻하지 않는다.
@@ -193,15 +218,74 @@ null도 실제 확인한 값일 때만 비교하며 추정한 null을 사용하�
 실행기는 고정 profile에서 [공통 보존기간](../tasks/workflow.md#이력과-완료-근거)을 해소해 표시하며 모델 인수로 기간을 바꾸지 않는다.
 같은 기간을 적용해도 조회 보관·보고·내보내기의 필드별 허용 범위는 별개다.
 
-필드 선택자는 기능 계약이 식별하는 결과 필드를 가리키며 임의 실행 표현식을 받지 않는다.
-`MaskingRule`의 필수 필드는 `field: string`, `action: "omit" | "redact"`다.
-`field`도 같은 필드 선택 규칙을 사용하며 같은 필드의 충돌한 규칙을 거부한다.
+| MemoryRule 필드 | 타입 | 필수 | 제약 |
+|---|---|---|---|
+| `categories` | enum[] | 예 | `service_rule`, `resource_structure`, `procedure`, `lesson`; 중복 금지 |
+| `source_fields` | FieldSelector[] | 예 | 후보 작성에 사용할 원본 필드; 모델 제공·본문 보관 허용의 교집합 안에서 선택 |
+| `context_sources` | enum[] | 예 | 실제 사용자 확인 자료 `request`, `clarification`; 허용하지 않으면 [] |
+| `retention` | enum | 예 | `none`, `source_bound`, `long_term` |
+| `allow_model_recall` | boolean | 예 | 향후 업무의 호스트 모델에 해당 지식을 제공할 수 있는지 |
+
+`none`이면 범주·출처 필드·사용자 확인 자료는 빈 배열이고 재제공은 false다.
+그 외에는 범주와 하나 이상의 원본 필드 또는 사용자 확인 자료를 명시하며 profile 정책을 초과하지 않는다.
+출처 필드는 개별 자료의 보존 허용이지 그 내용을 그대로 장기 지식에 복제할 허가가 아니다.
+사용자 요청·정정은 `context_sources`로 별도 허용하며 실제 대상 리소스의 규칙과 해당 자료의 제공 정책을 함께 적용한다.
+이 선택으로 기능 출력의 필드 선택자에 요청 본문을 끼워 넣거나 승인 응답을 지식으로 수집하지 않는다.
+
+실행기는 profile에서 해소한 일반 경험·장기 지식의 기간과 미래 재제공 조건을 불변 표시본에 포함한다.
+`long_term`은 원자료와 별개의 운영지식을 자체 기한까지 보관하는 명시적인 승인 항목이다.
+모델 인수로 기간을 늘리지 않으며 상세 대상·기한·정정은 [기억 보존](../tasks/memory.md#보존과-장기-운영지식)을 따른다.
+혼합 출처의 허용 범위는 모든 기여 리소스 조건의 교집합이다.
+
+기억을 보고·CSV에 인용할 때에도 원지식의 내보내기 허용과 현재 계획의 `export_fields`·마스킹을 검사한다.
+선택자는 기억이 보존한 원 출처 필드 대응으로 검사하며 대응·제공 허용이 불명확하면 인용하지 않는다.
+기억을 읽었다는 이유로 원자료·장기 지식을 다시 보관하거나 내보낼 수 있는 것은 아니다.
+
+선택자는 [공통 문법](common.md#필드-경로와-선택)으로 기능 계약의 결과 본문을 가리킨다.
+`MaskingRule`의 필수 필드는 `field: FieldSelector`, `action: "omit" | "redact"`다.
+부모·자식의 선택·가림·충돌은 공통 경로 규칙으로 처리한다.
 
 선택자에 포함된 영역도 현재 열람 권한·비밀 제외·마스킹 조건을 만족해야 반환한다.
 
 `destination`은 경로나 URL·인증 참조를 실행하는 지시가 아니다.
 메일 전송·외부 게시처럼 실제 외부 전달이 필요하면 별도의 변경 기능 단계로 승인받는다.
 필드·마스킹의 제품 의미는 [결과·이력 명세](../tasks/workflow.md#이력과-완료-근거)를 따른다.
+
+### 파생 표의 허용 범위
+
+`TableRule`은 보고·CSV의 로컬 결합·계산 범위를 승인하기 위한 자료형이다.
+소스·연산·한도만 지정하며 원격 조회나 임의 식을 실행하는 계획 언어가 아니다.
+
+| TableRule 필드 | 타입 | 제약 |
+|---|---|---|
+| `table_id` | ID | 계획 안에서 고유한 파생 표 식별자 |
+| `sources` | TableSourceRule[] | 하나 이상; `source_id` 중복 금지 |
+| `join_mode` | enum | `none`, `inner`, `full` |
+| `coverage` | enum | `complete`, `selected` |
+| `allowed_operations` | TableOperation[] | 허용할 [셀 연산](tasks.md#파생-표와-셀-검증); 중복 없는 하나 이상 |
+| `max_rows` | PositiveInt | 로컬 처리·반환 상한 이내의 결과 행 수 |
+| `ratio_scale` | NonNegativeInt 또는 null | 비율 연산을 허용하면 0~18의 반올림 소수 자릿수; 그 밖에는 null |
+
+`TableSourceRule`의 필수 필드는 `source_id:ID`, `step_id:ID`, `rows_pointer:JsonPointer`, `key_pointers:JsonPointer[]`다.
+`step_id`는 현재 계획의 자료 확보 단계이며 저장 결과의 리소스·기능·계약이 이 단계와 일치해야 한다.
+기존 결과를 재사용하려면 `carried_evidence_refs`에도 명시하고 해당 단계와의 대응을 확인한다.
+현재 계획에 같은 논리 단계를 두었다는 이유로 이미 끝난 조회를 다시 수행하지 않는다.
+
+`rows_pointer`는 기능 결과의 객체 배열 또는 단일 객체를, `key_pointers`는 각 행 안의 결합키를 가리킨다.
+단일 객체는 한 행으로 취급하며 소스별 여러 기록의 대응·페이지 완전성은 제출 시 검사한다.
+객체 하나뿐인 단일 소스는 빈 키를 허용하고 그 밖에는 하나 이상의 키가 필요하다.
+복합 키의 순서·타입은 모든 소스가 같아야 하며 누락·null·중복 키는 거부한다.
+
+`none`은 단일 소스, `inner`는 모든 소스에 있는 키, `full`은 어느 소스에든 있는 키의 합집합이다.
+초기에는 유일키의 등가 결합만 제공하고 다대다·조건식 결합이나 로컬 그룹 집계는 수행하지 않는다.
+필요한 그룹 집계는 승인된 리소스 기능으로 먼저 확보하고 그 확정 결과를 결합·계산한다.
+
+`complete`는 승인 범위의 원자료 완전성과 결과의 누락 없음이 모두 확인돼야 한다.
+`selected`는 선택한 일부 결과이며 전체 자료를 전제로 하는 완료 조건을 충족하지 못한다.
+결합 방식·키·허용 연산·전체성 범위를 바꾸거나 행 한도를 늘리려면 수정 계획을 승인받는다.
+계산 결과·출처·마스킹·기한의 검사는 [파생 표 계약](tasks.md#파생-표와-셀-검증)으로 연결한다.
+
+### 완료 조건
 
 | CompletionCriterion 필드 | 타입 | 필수 | 제약 |
 |---|---|---|---|
@@ -226,13 +310,19 @@ null도 실제 확인한 값일 때만 비교하며 추정한 null을 사용하�
 | `draft` | PlanDraft | 예 | 검증하고 보존한 계획 원본 |
 | `contract_refs` | string[] | 예 | 단계에서 사용한 중복 없는 계약 참조 |
 | `render_ref` | string | 예 | 원본 전체 조건에 대응하는 불변 표시본 참조 |
+| `retention_context` | RetentionContext | 예 | 고정 profile에서 해소한 본문·장기 지식의 보존기간 |
 | `is_active` | boolean | 예 | 현재 업무의 실행 대상 계획인지 여부 |
 | `approval_request` | ApprovalOutcome 또는 null | 예 | 연결된 최신 확인 요청; 없으면 null |
 | `budget_context` | BudgetContext | 예 | 이전 한도와 실제 소비·예약·남은 양 |
 
-`context`, `draft`, `contract_refs`와 `render_ref`는 저장 후 수정하지 않는다.
+`context`, `draft`, `contract_refs`, `render_ref`, `retention_context`는 저장 후 수정하지 않는다.
+불변은 보존 중 내용 변경을 금지하며 [본문 기한과 정리](../tasks/workflow.md#이력과-완료-근거)를 면제하지 않는다.
 `is_active`·승인 요청 상태·예산 맥락은 조회 당시 기록이며 계획 내용과 구분한다.
 표시본은 [호스트 대화의 계획 제시](../hosts/approval.md#화면과-사용자-흐름)에 필요한 전체 조건에 대응하며 비밀값·내부 인증 참조를 제외한다.
+
+`RetentionContext`는 필수 `task_body_days:PositiveInt`, `long_term_memory_days:PositiveInt`를 갖는다.
+모델 입력이 아닌 고정 설정에서 구하며 표시본에 같은 기간을 보여 준다.
+기억 저장·기간 확대를 허용하는 값이 아니며 개별 기억에는 원출처·승인 조건에 따른 더 짧은 기한을 적용한다.
 
 `BudgetContext`의 필수 필드는 `previous_budget: PlanBudget/null`, `consumed: BudgetAmounts`, `reserved: BudgetAmounts`, `remaining: BudgetRemaining`다.
 `BudgetRemaining`은 [기능 실행 규격](resources.md)의 자료형을 사용한다.
@@ -260,18 +350,23 @@ null도 실제 확인한 값일 때만 비교하며 추정한 null을 사용하�
 | `expected_task_revision` | integer | 예 | 1 이상; 새 제출의 현재 개정과 일치 |
 | `draft` | PlanDraft | 예 | 위 자료형과 등록 기능 계약으로 검증 |
 
-반환 `data`의 필수 필드는 `task_id`, `task_revision`, `plan_id`, `plan_version`, `contract_refs`, `render_ref`, `budget_context`다.
+반환 `data`의 필수 필드는 `task_id`, `task_revision`, `plan_id`, `plan_version`, `contract_refs`, `render_ref`, `retention_context`, `budget_context`다.
 각 타입은 공통 규격과 `SavedPlan` 표를 따른다.
 성공은 `status: "ok"`이며 최초 제출 또는 교체를 기록할 때 개정을 한 번 증가시킨다.
 실행기는 업무의 `TaskContext`를 SavedPlan에 연결하며 입력으로 다른 profile이나 스냅샷 참조를 받지 않는다.
 profile 맥락 미해소, 스냅샷 밖 인스턴스, 연결·인증의 미준비 상태는 실행 가능한 계획으로 저장하지 않는다.
 원격 연결이나 로그인을 계획 검사에서 암묵적으로 수행하지 않는다.
+기억 검색 기록·참조 검사는 위 `PlanDraft`를 따르며 검색을 계획 검사 안에서 대신 수행하지 않는다.
 
 교체는 현재 계획을 `previous_plan_id`로 연결하는 재계획 경로에서만 허용한다.
+최초 제출은 `planning`, 교체는 `planning|awaiting_approval|running|reconciling|verifying`에서 허용한다.
+교체를 보존하면 이전 승인·대기 요청의 무효화와 새 현재 계획의 `awaiting_approval` 전이를 같은 트랜잭션으로 확정한다.
+별도 재계획 도구 없이 이 제출로 승인 대기에 진입하며 진행 중인 호출은 원 계획·승인에 연결해 보존한다.
+미답변 질문이 있는 `awaiting_input`에서는 먼저 보완·재개 경로로 질문을 해소한다.
 `paused`에서 새 계획 제출은 `TASK_STATE_INVALID`이며 먼저 업무 재개로 상태·기존 계획을 검토한다.
 진행 중 호출·미확인 외부 효과를 숨기거나 새 변경을 재실행할 근거로 사용하지 않는다.
 상태 확인의 승인·예산이 부족하면 필요한 `reconcile` 단계의 새 계획을 제출해 확인받을 수 있다.
-종료된 업무는 `TASK_STATE_INVALID`로 거부하며 기존 계획은 계속 열람할 수 있다.
+종료된 업무는 `TASK_STATE_INVALID`로 거부하며 기존 계획은 현재 권한·본문 보존기한 안에서 열람할 수 있다.
 
 교체를 보존할 때 이전 승인과 확인 요청으로 새 호출을 시작하지 못하게 한다.
 [재계획 승계 원칙](../tasks/approval.md#수정-계획에서-작업과-예산-승계-제안)에 따라 근거·사용량을 유지하며 멱등 처리는 공통 규격을 따른다.
@@ -290,10 +385,14 @@ profile 맥락 미해소, 스냅샷 밖 인스턴스, 연결·인증의 미준�
 과거 계획도 열람할 수 있지만 `is_active: false`는 실행 허가가 아니다.
 조회는 개정을 증가시키지 않으며 존재하지 않거나 접근할 수 없는 계획을 빈 성공으로 반환하지 않는다.
 
+필수 계획 본문·표시본이 만료되면 `RECORD_EXPIRED`, `data=null`로 반환하며 불완전한 `SavedPlan`을 만들지 않는다.
+보존 중인 파일 유실·손상은 `RECORD_UNAVAILABLE`로 구분하고 원문을 재생성하지 않는다.
+최소 업무 식별·결정·참조는 현재 제공 권한 안에서 `daeri_task_get`으로 확인한다.
+
 ## `daeri_approval_request`
 
-저장한 현재 계획을 실제 사용자에게 표시하고 응답을 같은 불변 계획에 연결한다.
-한 도구에서 승인 요청 준비와 실제 사용자 대화 응답 전달을 구분한다.
+저장한 현재 계획의 승인 요청을 만들고 실제 사용자 대화 응답을 같은 불변 계획에 연결한다.
+호스트가 자연어 응답의 결정을 해석하고 실행기가 대상·상태·권한을 검사한다.
 호스트는 요청 단계 뒤 계획을 대화에 제시하고 사용자의 답변을 기다린다.
 
 | 입력 필드 | 타입 | 필수 | 제약 |
@@ -304,26 +403,56 @@ profile 맥락 미해소, 스냅샷 밖 인스턴스, 연결·인증의 미준�
 | `plan_id`, `plan_version` | string, integer | 예 | 현재 저장 계획과 1 이상의 버전 |
 | `stage` | string | 예 | `request` 또는 `respond` |
 | `approval_request_id` | string | 조건부 | `respond`에서 필수; 사용자가 확인한 대기 요청 |
-| `user_response` | string | 조건부 | `respond`에서 필수; 해당 계획에 대한 사용자의 실제 대화 답변 |
+| `decision` | ApprovalDecision 또는 null | 조건부 | `respond`에서 필수; 호스트가 실제 답변·대화 맥락에서 해석한 결정 |
+| `user_response` | string | 조건부 | `respond`에서 필수; 비밀 제거를 제외하고 요약·재작성하지 않은 실제 답변 |
+| `user_message_ref` | string | 아니요 | `respond`에서 호스트가 제공할 때만 전달하는 불투명 사용자 메시지 참조 |
 
-`request`에는 응답 필드를 넣지 않는다.
-`respond`에는 사용자가 실제로 보낸 답변을 전달하며 비밀값은 제거한다.
-호스트가 사용자 메시지 참조를 제공하면 해당 응답과 함께 연결하고 세부 전달 형식은 호스트 통합에서 정한다.
+`ApprovalDecision`은 `approve`, `request_changes`, `decline`, `cancel`의 enum이다.
+`request`에는 `approval_request_id`, `decision`, `user_response`, `user_message_ref`를 넣지 않는다.
+응답이 없으면 `respond`를 호출하지 않으며 응답 부재를 승인이나 취소로 바꾸지 않는다.
+
+`respond`의 `user_response`는 비어 있지 않아야 하고 모델이 작성한 승인 요약으로 대체하지 않는다.
+호스트는 응답의 비밀값만 제거하며 원래의 대상·조건·부정·결정 의미를 유지한다.
+제거 때문에 의사를 판단할 수 없으면 `decision=null`로 두고 비밀을 다시 요구하지 않는 방식으로 확인한다.
+실행기도 저장·반환 전에 비밀 제거를 적용하고 정제한 답변을 `feedback`으로 보존한다.
+
+`user_message_ref`는 인증 증거나 임의 대화 조회 지시가 아니다.
+참조를 제공하지 않는 호스트에서는 생략하며 새로운 호스트 API를 필수로 가정하지 않는다.
+참조가 있으면 같은 참조의 이미 보존한 응답·승인 대상과 대조하고 서로 다른 답변이나 계획에 재사용하면 `APPROVAL_UNAVAILABLE`로 거부한다.
+
+### 응답 해석과 검사의 책임
+
+| 담당 | 처리 |
+|---|---|
+| 호스트 | 실제 사용자 메시지를 모델·도구·리소스 자료와 구분하고 현재 대화에서 승인 대상·결정을 해석 |
+| 호스트 | 조건 추가·변경은 `request_changes`, 질문·대상 불명확·아직 결정하지 않음은 null로 전달 |
+| 실행기 | 입력 형식·멱등 키·업무 개정·현재 계획과 버전·대기 요청·표시본·현재 권한을 검사 |
+| 실행기 | 응답과 해석한 결정을 함께 보존하고 유효한 `approve`에서만 승인 발급 |
+
+“좋아, 다만 조회 기간은 줄여 줘”는 `approve`가 아니라 `request_changes`다.
+현재 계획에 이미 있는 조건을 확인하는 말인지 실제 변경 요구인지도 호스트가 문맥에서 구분한다.
+호스트가 판단하지 못하면 null로 전달하며 승인으로 추정하지 않는다.
+수정 요구는 `feedback`에 남기고 새 계획을 제출하며 답변의 조건으로 기존 계획을 부분 수정하지 않는다.
 
 `approved` 같은 값 하나나 모델이 작성한 “사용자가 승인했다”는 설명만으로 승인을 생성하지 않는다.
-실제 사용자 응답과 모델·도구·리소스 자료를 구분하는 방식과 확인 한계는 [호스트 승인 계약](../hosts/approval.md#승인-응답-검증)을 따른다.
+실행기는 자연어를 별도 모델로 다시 판정하지 않으며 구조 검사만으로 호스트의 해석 오류를 모두 증명·차단한다고 보장하지 않는다.
+실제 답변 전달과 해석의 신뢰 경계는 [호스트 승인 계약](../hosts/approval.md#대화-승인의-범위)을 따른다.
 
-새 확인 요청은 `awaiting_approval`에서만 허용하며 `paused`·종료 상태 등에서는 `TASK_STATE_INVALID`로 거부한다.
-최종 응답 보존 때도 현재 상태·요청 유효성을 다시 검사하고 이전 응답이 일시중지·종료를 해제하지 못하게 한다.
+새 확인 요청과 새 응답은 `awaiting_approval`에서만 허용한다.
+`paused`·종료 상태 등에서는 `TASK_STATE_INVALID`로 거부하며 과거 응답으로 상태를 해제하지 않는다.
+실행기는 대기 요청의 업무·계획·버전·표시본이 현재 대상과 일치하는지 확인한다.
+불일치·이미 종료된 요청·철회·무효화·현재 승인 권한 상실은 승인을 발급하지 않는다.
 
-현재 계획·승인 요청 권한·표시본의 동일성을 확인한 뒤 `request`를 보존한다.
-`respond`는 그 요청에 대한 명시적 승인·수정·거절·확인 취소를 구분한다.
+`approve`를 기록하기 직전에 선택 기억의 [현재 유효성](../tasks/memory.md#계획-전-조회와-활용)과 현재 계획의 실행 조건도 다시 검사한다.
+계약·대상·조건이 변경됐거나 강제할 수 없으면 기존 계획을 그대로 승인하지 않는다.
+계획 전제가 깨졌으면 `PLAN_INVALID`로 재조회·수정 계획을 요구하며 대기 요청의 연결 실패는 `APPROVAL_UNAVAILABLE`이다.
 
-“승인할게”, “이 계획대로 진행해”처럼 현재 계획 전체를 승인하는 응답은 승인을 기록할 수 있다.
-대상이 모호하거나 조건을 바꾸는 응답은 승인으로 추정하지 않고 확인·수정 계획으로 연결한다.
-
-새 요청 생성과 최종 결정 기록은 각각 업무 개정을 증가시킨다.
-두 단계는 서로 다른 새 요청이므로 서로 다른 `request_id`를 사용하고 각 단계의 재전달에는 원래 키·입력을 유지한다.
+새 확인 요청과 실제 응답 기록은 각각 업무 개정을 한 번 증가시킨다.
+질문 등 `decision=null`인 실제 응답도 기록하지만 승인 대기를 유지한다.
+다음 사용자 응답은 새 `request_id`와 최신 업무 개정으로 전달한다.
+각 요청의 재전달은 원래 키·입력을 유지한다.
+멱등 비교에는 `decision`, 정제한 실제 `user_response`와 제공된 `user_message_ref`도 포함한다.
+같은 키로 결정만 바꿔 보내면 공통 멱등 충돌로 거부한다.
 
 ### `ApprovalOutcome`과 실제 응답
 
@@ -334,31 +463,33 @@ profile 맥락 미해소, 스냅샷 밖 인스턴스, 연결·인증의 미준�
 |---|---|---|---|
 | `approval_request_id` | string | 예 | 저장한 확인 요청 ID |
 | `state` | string | 예 | `awaiting_response`, `approved`, `rejected`, `cancelled`, `invalidated` |
-| `approval_id` | string | 조건부 | `approved`에서만 반환 |
-| `decision` | string 또는 null | 예 | `approve`, `request_changes`, `decline`, `cancel` 또는 결정 전 null |
-| `feedback` | string 또는 null | 예 | 비밀을 제거한 사용자 답변·수정 내용; `request_changes`이면 비어 있지 않음 |
+| `approval_id` | string | 조건부 | 현재 유효한 `approved`에서만 반환 |
+| `decision` | ApprovalDecision 또는 null | 예 | 보존한 결정; 요청 직후·미결 응답이면 null |
+| `feedback` | string 또는 null | 예 | 비밀을 제거한 실제 답변; 응답 기록이 없으면 null |
 
 대기는 `pending`, 보존한 승인·거절·명시적 확인 취소는 `ok`다.
 무효 요청·응답 검증 실패는 `error`이며 실행 권한을 부여하지 않는다.
 도구의 정상 처리가 업무 성공·업무 취소를 뜻하지 않는다.
 
-실제 응답과 현재 요청·계획의 연결은 [호스트 승인 계약](../hosts/approval.md#승인-응답-검증)에 따라 확인한다.
-결정과 업무 전이는 다음과 같으며 `feedback`은 데이터로 보존하고 새 계획에 자동 적용하지 않는다.
+결정과 업무 전이는 다음과 같으며 `feedback`은 자료로 보존하고 새 계획에 자동 적용하지 않는다.
+응답이 있으면 `feedback`은 비어 있지 않아야 한다.
 
 | `decision` | 요청 `state` | 검증·보존 후 업무 상태 |
 |---|---|---|
+| null | `awaiting_response` | `awaiting_approval`; 설명·대상 확인 뒤 새 응답 대기 |
 | `approve` | `approved` | `running`; 미확인 효과가 있으면 `reconciling` |
 | `request_changes`, `decline` | `rejected` | `planning`; 조건 수정은 새 계획으로 제출 |
-| `cancel` | `cancelled` | `awaiting_approval`; 업무 취소와 구분 |
+| `cancel` | `cancelled` | `awaiting_approval`; 확인 요청만 취소하고 업무는 유지 |
 
-답변이 없거나 대화 연결이 끊기면 결정 제출이 아니며 `decision=null`이다.
-질문·보완처럼 아직 결정하지 않은 답변도 승인 대기를 유지한다.
+업무 일시중지는 [업무 수정](tasks.md#daeri_task_update)의 `action=pause`, 업무 취소는 [업무 취소](tasks.md#daeri_task_cancel)로 처리한다.
+이 요청들을 승인 도구의 `cancel`로 대신 처리하지 않는다.
+“이 확인 요청만 취소해 줘”와 “업무를 취소해 줘”를 구분할 수 없으면 null로 두고 뜻을 확인한다.
 확인 요청 기한은 실행 승인 만료와 구분한다.
 
 동일 요청 재전달은 기존 상태를 조회하며 승인·예산을 추가하지 않는다.
 현재 계획의 유효 대기 요청이 있으면 다른 ID로 승인 요청을 중복 생성하지 않는다.
-취소·교체·만료·철회·일시중지로 무효화한 요청은 `invalidated`로 반환하고 실행 가능한 `approval_id`를 재전달하지 않는다.
-최종 결정은 현재 업무·요청 유효성을 다시 검사해 한 번만 기록한다.
+업무 취소·계획 교체·만료·철회·일시중지로 무효화한 요청은 `invalidated`로 반환하고 실행 가능한 `approval_id`를 재전달하지 않는다.
+최종 결정은 현재 업무·요청 유효성을 다시 검사해 한 번만 기록하며 이후 새 응답으로 덮어쓰지 않는다.
 
 ## 오류와 호스트 연결의 경계
 
