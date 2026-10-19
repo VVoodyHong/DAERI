@@ -23,7 +23,7 @@
 부처·환경이 선택 profile과 다르면 `INVALID_INPUT`이다.
 기본 profile이 없거나 모호하면 `awaiting_input`이며 다른 profile을 임의 선택·합병하지 않는다.
 
-DAERI profile과 AWS 인증 profile은 구분한다.
+DAERI profile과 리소스 제공자의 인증 설정은 구분한다.
 구성·선택은 [profile 명세](../configuration/profiles.md), 최종 형식·제공 범위는 [PlanDraft](plans.md)에 따른다.
 
 ### TaskContext
@@ -151,7 +151,7 @@ profile 해소는 로컬 설정만 읽는다.
 
 `action="pause"`는 현재 주체의 업무 중단 권한으로 처리하며 다른 실행 소유자가 있어도 중단할 수 있다.
 종료 업무는 `TASK_STATE_INVALID`이며 이미 `paused`이면 새 개정 없이 현재 기록을 반환한다.
-업무의 `paused` 전이·개정 증가, 기존 승인 철회와 대기 확인 요청·challenge 무효화를 원자적으로 보존한다.
+업무의 `paused` 전이·개정 증가, 기존 승인 철회와 대기 확인 요청 무효화를 함께 보존한다.
 `waiting_reason.kind=pause`로 두고 원 대기 사유·미답변 질문과 복귀에 필요한 상태를 보존한다.
 
 dispatch 직전 상태를 재검사하며 늦은 결과·정산·자동 보고는 `paused`를 해제하지 못한다.
@@ -320,7 +320,7 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 ### ArtifactDraft
 
 아래 표는 형식 변환·기존 첨부 규격이며 [확정된 파생 표·CSV 요구](../tasks/workflow.md#결과-제공과-전달)를 아직 표현하지 못한다.
-**3단계 공통 실행·보고 착수 전**, 개발 담당자가 다음 계약을 이 절에 확정하고 로컬 시험 자료로 검증한다.
+**3단계 승인·공통 실행·보고 착수 전**, 개발 담당자가 다음 계약을 이 절에 확정하고 로컬 시험 자료로 검증한다.
 
 - 기존 `daeri_result_submit` 안에서 복수 원본 참조·필드 출처·결합/계산 방법·구조화된 표·검증 기록을 연결할 입력.
 - 실행기가 계산·원본 대응을 검증하는 로컬 방식과 파생 열의 제공·마스킹·보존기한 판정.

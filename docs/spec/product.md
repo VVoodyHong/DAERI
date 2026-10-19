@@ -20,31 +20,49 @@ DAERI는 자연어로 서버 운영 업무를 맡기고 수행 과정·결과를
 | P-01 | 자연어로 요청을 받고 수행 과정·결과·업무 이력을 관리한다. | [흐름](tasks/workflow.md), [결과](tasks/workflow.md#이력과-완료-근거) |
 | P-02 | 에이전트가 연결된 기능을 참고해 필요한 리소스와 수행 방법을 판단한다. | [리소스 계약](resources/contract.md) |
 | P-03 | 여러 부처의 리소스를 확장하고 포트·어댑터로 구현을 교체한다. | [리소스 계약](resources/contract.md) |
-| P-04 | 초기에는 실행 전 방법·범위·예상 결과물과 리소스별 자료 제공·보관 범위를 사람에게 확인받는다. | [계획·승인](tasks/approval.md) |
+| P-04 | 초기에는 실행 전 방법·범위·예상 결과물과 리소스별 자료 제공·보관 범위를 Codex·Claude Code 대화에서 사용자에게 승인받는다. | [계획·승인](tasks/approval.md) |
 | P-05 | 승인한 방법·범위 안에서 자율 실행하고, 범위 이탈 전에 수정 계획을 승인받는다. | [계획·승인](tasks/approval.md) |
 | P-06 | 검증 후 HITL을 완화하거나 해제할 수 있도록 승인 정책과 실행 구조를 분리한다. | [계획·승인](tasks/approval.md) |
 | P-07 | 사용자 PC의 실행기를 사용하며 개발자의 중앙 서버 운영을 전제로 하지 않는다. | [구조](../architecture/overview.md) |
 | P-08 | 초기 개발 방식은 기존 호스트 에이전트 + Skill + 로컬 MCP 실행기인 1안이다. | [개발 방식과 근거](../architecture/overview.md#개발-방식과-선택-근거) |
-| P-09 | 프로젝트를 사내 GitLab·GitHub 등의 저장소에 올려 배포할 수 있어야 한다. | [배포](installation/environment.md#배포-출처와-최초-전달) |
+| P-09 | 프로젝트를 사내외 Git 저장소에 올려 호스트 마켓플레이스 등록·플러그인 설치로 배포할 수 있어야 한다. | [배포](installation/environment.md#배포-출처와-최초-전달) |
 | P-10 | 필요한 프로그램·버전을 확인하고 누락·비호환 환경을 설치 기능으로 준비한다. | [환경 준비](installation/environment.md) |
 | P-11 | Windows·macOS 지원을 설계하고 최초 구현·실행 검증은 사용자의 Mac에서 진행한다. | [환경 준비](installation/environment.md) |
-| P-12 | 최초 어댑터 연동 대상은 PostgreSQL, Redis, AWS, GitLab이다. | [최초 어댑터](resources/initial-adapters.md) |
+| P-12 | DB·Cache·Infra·Source·Document 등 필요한 리소스 범주를 어댑터로 연결하고 추가 범주로 확장한다. | [리소스 범주](resources/initial-adapters.md) |
 | P-13 | 리소스 연결은 기존 MCP 재사용을 기본으로 하고 필요한 부족분만 보완한다. | [MCP 재사용](resources/contract.md#연결-구조) |
 | P-14 | 서비스별 profile에 여러 인프라·리소스와 연결 정보를 등록해 관리한다. | [profile 구성](configuration/profiles.md) |
 
 사용자 PC에는 Codex 또는 Claude Code만 준비되어 있다고 가정한다.
 DAERI profile 안에 동일 종류의 리소스를 여러 개 등록할 수 있어야 한다.
-초기 네 제품 외에도 DB·Cache·Infra·Log·티켓·메일·소스 등으로 확장할 수 있어야 한다.
+리소스 범주와 구현 제품은 구분하며 특정 제품 목록으로 업무나 연동 대상을 제한하지 않는다.
+
+## 사용 예정 환경
+
+아래는 사용자가 처음 사용할 예정인 환경이다.
+공통 설계의 제품 선정이나 지원 완료 목록을 뜻하지 않으며 각 연결의 실제 호환성은 구현 시 검증한다.
+
+| 역할 | 사용 예정 환경 |
+|---|---|
+| DAERI 소스·마켓플레이스 배포 저장소 | GitLab |
+| 사용자 호스트 | Codex 또는 Claude Code |
+| profile의 Source | GitLab |
+| profile의 Infra | AWS |
+| profile의 DB | PostgreSQL |
+| profile의 Cache | Redis |
+| profile의 Document | Confluence |
+
+DAERI 자체의 배포 저장소와 profile에서 분석할 Source 리소스는 서로 다른 설정이다.
+배포 위치를 바꾸거나 리소스 제품을 교체해도 공통 업무·승인 계약을 유지한다.
 
 ## 범용성의 의미와 한계
 
 업무 수행 가능성은 연결된 기능·데이터 의미·실제 권한에 따른다.
-PostgreSQL을 MongoDB로 교체할 수 있어도 SQL과 문서 쿼리의 의미를 자동으로 같게 취급하지 않는다.
+같은 DB 범주라도 조회 방식·데이터 구조·보장 범위가 다를 수 있다.
 제품별 기능·제약을 확인하는 기준은 [기능 설계 단위](resources/contract.md#기능-설계-단위)를 따른다.
 부족한 기능과 대안을 설명하고 실행하지 않은 일을 완료로 보고하지 않는다.
 
 ## 최초 구현과 후속 범위
 
-[최초 구현 계획](../plans/initial-implementation.md)이 구현 범위·기술 후보 확인·개발 순서·완료 기준을 소유한다.
-네 MCP의 읽기 흐름을 Mac에서 먼저 검증하고 Windows로 이어 가는 계획이다.
+[최초 구현 계획](../plans/initial-implementation.md)이 구현 범위·개발 순서·완료 기준을 소유한다.
+단일 리소스의 읽기 흐름에서 시작해 여러 범주의 조합을 Mac에서 확인하고 Windows로 이어 가는 계획이다.
 제품 전체를 조회 전용으로 제한하지 않으며 변경 실행·무인 업무는 필요한 계약을 갖춰 후속으로 추가한다.

@@ -84,6 +84,6 @@
 - [YAGNI](https://martinfowler.com/bliki/Yagni.html): 현재 필요와 변경 용이성.
 - [Google 검토](https://google.github.io/eng-practices/review/reviewer/looking-for.html)·[작은 변경](https://google.github.io/eng-practices/review/developer/small-cls.html): 복잡도·검증·명명·문서화·검토 단위.
 - [OWASP 권한](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html): 최소 권한·기본 거부·호출마다 검사.
-- [AWS 재시도](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/): 시간 제한·재시도 부하·부작용.
+- [재시도와 시간 제한](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/): 재시도 부하·부작용.
 
 자료를 DAERI에 적용한 기준이며 특정 언어·프레임워크의 도입을 요구하지 않는다.

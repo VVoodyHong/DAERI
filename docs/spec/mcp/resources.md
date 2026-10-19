@@ -16,11 +16,12 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 | 필드 | 타입 | 필수 | 제약 |
 |---|---|---|---|
 | `task_id` | string | 예 | 열람할 업무 ID |
-| `types` | string[] | 아니요 | `DB`, `Cache`, `Infra`, `Log`, `Ticket`, `Mail`, `Source`; 중복 금지 |
+| `types` | string[] | 아니요 | 등록된 리소스 범주 ID; 중복 금지 |
 | `cursor` | string | 아니요 | 이전 응답의 불투명 목록 커서 |
 | `limit` | integer | 아니요 | 1 이상, 로컬 설정의 최대 반환 수 이하 |
 
 `types`를 생략하면 접근 가능한 모든 유형을 대상으로 한다.
+기본 범주는 DB·Cache·Infra·Source·Document·Log·Ticket·Mail이며 새 범주를 등록할 수 있다.
 빈 배열은 거부하며 `limit` 생략 시 로컬 설정의 기본값을 사용한다.
 커서는 업무·주체·필터·등록부 조회 조건에 연결한다.
 다른 조건에 재사용하거나 등록부 변경으로 유효성을 잃으면 `CURSOR_INVALID`로 반환한다.
@@ -35,7 +36,7 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 | `has_more` | boolean | 예 | 같은 조회에서 추가 페이지가 있는지 여부 |
 
 `InstanceSummary`는 `instance_id: string`, `type: string`, `label: string`, `capability_summaries: CapabilitySummary[]`를 갖는다.
-`type`은 입력의 유형 enum을 따른다.
+`type`은 등록된 리소스 범주 ID를 사용한다.
 `CapabilitySummary`는 `capability_id: string`, `contract_ref: string`, `description: string`, `changes_state: boolean`을 갖는다.
 두 객체의 필드는 모두 필수이며 비어 있는 기능 배열도 허용한다.
 
@@ -68,9 +69,9 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 | `instance_id`, `capability_id` | string | 조회한 인스턴스·기능과 일치 |
 | `contract_ref` | string | 의미·스키마·제약에 연결된 불변 계약 참조 |
 | `description` | string | 기능 목적과 제품별 의미 |
-| `input_schema` | JSON Schema object | 구조화된 `parameters`의 검증 기준 |
-| `output_schema` | JSON Schema object | 결과 객체의 검증 기준 |
-| `scope_schema` | JSON Schema object | 계획 단계의 승인 범위 검증 기준 |
+| `input_schema` | object | 구조화된 `parameters`의 검증 기준 |
+| `output_schema` | object | 결과 객체의 검증 기준 |
+| `scope_schema` | object | 계획 단계의 승인 범위 검증 기준 |
 | `supported_purposes` | string[] | `collect`, `change`, `verify`, `reconcile` 중 하나 이상; 중복 금지 |
 | `supported_metrics` | MetricDescriptor[] | 기능별 측정·한도 강제 지원 항목 |
 | `budget_support` | BudgetSupport | 실제 외부 요청 수 상한의 강제 지원 여부 |
@@ -107,7 +108,8 @@ profile이 해소되지 않았으면 `CONTEXT_REQUIRED`를 반환하며 다른 p
 `continuation.consistency`는 `snapshot`, `live`, `unspecified` 중 하나다.
 페이지 미지원이면 세 pointer와 `validity`는 null이다.
 페이지 지원이면 세 pointer와 `validity`는 비어 있지 않은 문자열이다.
-pointer는 각 스키마의 존재하는 위치를 가리키는 JSON Pointer다.
+pointer는 등록 계약에서 허용한 필드 위치를 가리킨다.
+필드 선택자의 세부 표기와 해석 방식은 구현 시 입력·출력 계약에 맞춰 정한다.
 출력의 후속 값을 입력에 연결하는 허용 방식은 [계획 규격](plans.md)의 `input_bindings`에 둔다.
 
 세 스키마는 최상위 객체·허용 속성을 정의하고 서버가 검증한 등록부에서 제공한다.
@@ -258,4 +260,4 @@ URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공�
 
 ## 구현 시 확인
 
-로컬 JSON Schema 검증 범위, 커서 만료·계약 참조 보존과 SDK 제약 강제는 구현에서 확인해야 한다.
+입출력 계약 검증 범위, 커서 만료·계약 참조 보존과 실제 제약 강제는 구현에서 확인해야 한다.

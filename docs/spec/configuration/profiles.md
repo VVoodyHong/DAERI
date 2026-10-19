@@ -1,240 +1,147 @@
 # 서비스 profile·연결·인증 관리
 
-상태: 서비스별 profile·사용자 로컬 인증 요구 확정 + 구성·보존·갱신 설계 제안
+상태: 서비스별 profile·사용자 로컬 인증 요구 확정, 설정·저장 구현 미검증
 
-서비스별 리소스 묶음, MCP 연결, 업무 스냅샷과 인증·저장 위치를 정의한다.
-도구 등록·호출은 [리소스 계약](../resources/contract.md), 공개 profile 필드는 [업무 MCP](../mcp/tasks.md)가 소유한다.
+profile에 리소스와 운영 맥락을 묶고 사용자가 연결을 준비하는 방법을 정의한다.
+기능의 탐색·등록·실행은 [리소스 계약](../resources/contract.md)을 따른다.
 
 ## profile의 의미
 
-profile은 서비스·환경의 업무 맥락으로 여러 DB·Redis·AWS 계정·리전·GitLab 프로젝트와 운영 정보를 묶는다.
+profile은 서비스·환경별 리소스와 운영 정보를 묶는 DAERI의 설정 단위다.
+DB·Cache·Infra·Source·Document 등 필요한 범주와 여러 인스턴스를 함께 등록한다.
+범주 예시는 [리소스 범주](../resources/initial-adapters.md), 실제 사용 예정 제품은 [사용 예정 환경](../product.md#사용-예정-환경)을 따른다.
 
 | 구분 | 가상 예시 | 책임 |
 |---|---|---|
-| DAERI profile | `commerce-prod` | 서비스·환경과 리소스 묶음 |
-| 리소스 인스턴스 | `orders-db`, `catalog-db` | 실제 대상과 역할 |
-| MCP 연결 | `backend-orders-postgres` | 서버·전송·인증 설정 |
-| 제공자 인증 profile | AWS의 `commerce-operations` | 제공자의 로그인·자격 증명 |
+| DAERI profile | `service-prod` | 서비스·환경과 리소스 묶음 |
+| 리소스 인스턴스 | `primary-db`, `reference-db` | 실제 대상과 역할 |
+| 연결 | `primary-db-connection` | 어댑터·실행 위치·인증 설정 |
+| 제공자 인증 설정 | `operations-account` | 해당 제공자의 로그인·자격 증명 |
 
-DAERI profile과 제공자 profile은 별개이며 하나의 DAERI profile이 서로 다른 이름의 여러 제공자 profile을 참조할 수 있다.
-에이전트는 리소스 설명·계약을 읽고 이번 업무에 필요한 대상을 선택한다.
+DAERI profile과 제공자 인증 설정은 별개다.
+하나의 DAERI profile이 여러 제공자·계정의 인증 설정을 참조할 수 있다.
 
 ## 구성과 연결
 
-profile에는 안정적인 `profile_id`, 별칭·구성 `revision`, 부처·서비스·환경 식별자·설명, 리소스 바인딩·정책 참조를 둔다.
-ID는 이름 변경에도 유지하고 다른 실제 대상에 재사용하지 않는다.
+profile에는 식별자·이름·서비스·환경·설명과 리소스 연결을 둔다.
+이름을 바꿔도 같은 profile의 이력을 유지하며 식별자를 다른 실제 대상에 재사용하지 않는다.
 
-`content_retention_days`는 조회·보고 본문·DAERI 산출물의 공통 보존기간인 양의 정수다.
-생략 시 [기본 보존기간](../tasks/workflow.md#이력과-완료-근거)을 적용하고 업무 스냅샷에 고정한다.
-관리 경로의 변경은 새 업무에만 적용하며 기존 기한·만료 자료를 연장·복원하지 않는다.
+각 리소스에는 범주·역할·어댑터·연결 위치·실제 대상·인증 참조·접근 정책을 등록한다.
+같은 범주의 여러 리소스를 허용하며 필요한 범주를 추가할 수 있어야 한다.
+연결이 어디서 실행되고 어떤 자료가 외부로 전달되는지 설정에서 확인할 수 있어야 한다.
 
-리소스 바인딩은 인스턴스 ID·역할·연결·실제 대상·정책을 연결한다.
-MCP 연결은 선정 제품·전송·인증 참조·실행 환경을 지정한다.
+같은 연결을 여러 profile에서 쓰려면 각각 명시적으로 등록한다.
+인증·대상·정책이 다른 연결은 표시명이 같아도 구분한다.
+등록되지 않은 연결이나 주변 실행 환경의 다른 계정을 자동 선택하지 않는다.
 
-| 연결 방식 | 설정과 실행 조건 |
-|---|---|
-| stdio | 검증한 실행 파일의 절대 경로·고정 인수·작업 위치 |
-| HTTP | 등록한 origin·endpoint와 TLS 조건 |
-| 인증 | 로컬 참조로 해소; 비밀값은 설정에 넣지 않음 |
-| 대상 | DB·Redis DB·AWS 계정과 리전·GitLab origin과 프로젝트 명시 |
-
-실제 대상·권한과 도구의 대상 전환을 검사하며 강제할 수 없는 조건을 지원으로 표시하지 않는다.
-모델 명령·주소·인증 profile로 관리 구성을 바꾸는 공개 업무 도구를 두지 않는다.
-
-같은 연결을 여러 profile에서 쓰려면 각각 명시적으로 바인딩한다.
-인증·대상·정책이 다른 연결은 같은 이름이어도 세션을 공유하지 않는다.
-등록하지 않은 연결은 해당 업무의 후보에 나타나지 않는다.
-
-stdio 자식에는 필요한 환경만 전달하며 주변 호스트의 다른 인증·DB 주소를 자동 상속하지 않는다.
+보존기간은 profile별로 변경할 수 있다.
+생략 시 기본 30일을 적용하며 조회 자료·보고서·CSV의 상세 보존 조건은 [이력과 완료 근거](../tasks/workflow.md#이력과-완료-근거)를 따른다.
+변경한 기간은 새 업무에 적용하고 기존 기한이나 만료 자료를 자동 연장하지 않는다.
 
 ## 관리 등록과 진단
 
-설치·로그인·원격 진단은 업무용 MCP와 구분한 명시적 설정 작업에서 수행한다.
+사용자는 `/setup {profile명}`이라는 설정 진입 흐름으로 profile을 준비한다.
+호스트별 실제 호출 표기는 [플러그인 지침](../hosts/plugins.md)에서 다룬다.
 
-1. 서비스·환경·MCP 제품·대상과 인증 참조를 입력한다.
-2. 필요한 프로그램·인증 방식·진단 요청과 전달 위치·효과·한도를 보여 준다.
-3. 확인한 범위에서 [환경 준비](../installation/environment.md), 사용자 로그인과 제한된 진단을 수행한다.
-4. 실제 주체·대상·도구 계약을 확인하고 profile의 새 개정을 보존한다.
-5. 준비된 연결·보류 기능·부족한 사용자 조치를 보고한다.
+1. profile 이름과 서비스·환경을 입력한다.
+2. 필요한 리소스 범주와 범주별 어댑터·실제 대상을 선택한다.
+3. 연결 위치와 인증 방식을 정한다.
+4. 필요한 프로그램·버전 검사 결과와 설치·로그인·진단 범위를 확인한다.
+5. 확인한 범위에서 [환경 준비](../installation/environment.md)와 제공자 안내에 따른 사용자 로그인을 진행한다.
+6. 실제 연결·사용 주체·접근 가능 대상·제공 기능을 확인하고 설정을 저장한다.
+7. 준비 완료 항목과 사용자 조치가 필요한 항목을 보고한다.
 
-진단의 접근 로그·요금을 안내하고 DB 업무 데이터·Redis 값·소스 원문은 임의로 읽지 않는다.
-연결별 프로그램 누락·로그인 필요·재탐색·정책 차단·네트워크 실패를 구분하며 진단 성공을 업무 승인으로 사용하지 않는다.
+선택한 연결에 필요한 프로그램만 준비하며 이미 호환되는 프로그램은 재사용한다.
+설치·인증·진단에 대한 준비 동의와 실제 업무 계획의 승인은 별개다.
+설정을 마쳤다는 이유로 업무 데이터 조회까지 허용하지 않는다.
 
-업무 접수·로컬 등록 조회가 숨은 설치·로그인·원격 탐색을 시작하지 않는다.
-원격 구조가 필요하면 제한된 탐색 계획을 승인받는다.
-등록과 현재 계약 검사는 [리소스 계약](../resources/contract.md#등록부와-계약-변경)을 따른다.
+진단은 연결과 권한을 확인하는 최소 범위로 수행한다.
+업무 자료가 필요하면 제한된 탐색 계획을 먼저 승인받는다.
+프로그램 누락·인증 필요·권한 부족·네트워크 실패·기능 미지원은 연결별로 구분한다.
+
+자연어 업무 접수나 로컬 설정 확인이 숨은 설치·로그인·원격 탐색을 시작하지 않는다.
+필요한 준비를 알리고 확인된 범위 안에서 진행한다.
 
 ## 선택과 기본값
 
-새 업무의 profile은 명시 선택 또는 검증한 사용자 기본값으로 해소한다.
-기본값은 이후 새 업무에만 적용하며 없거나 접근할 수 없으면 `awaiting_input`으로 확인한다.
+새 업무는 사용자가 지정한 profile 또는 확인한 기본 profile에서 시작한다.
+선택을 해석할 수 없거나 접근할 수 없으면 사용자에게 확인한다.
+비슷한 이름·설명·접속 가능 여부만으로 대상을 추정하지 않는다.
 
-부처·환경을 등록 맥락과 대조하며 비슷한 설명·접속 가능 여부로 임의 선택하거나 다른 profile과 자동 합병하지 않는다.
-
-초기에는 **업무당 하나의 DAERI profile**을 적용한다.
-한 profile의 리소스·제품·계정 수를 하나로 제한하는 조건은 아니다.
-다른 profile의 리소스가 필요하면 명시적인 묶음을 구성하고 새 업무로 접수한다.
+초기에는 업무당 하나의 DAERI profile을 적용한다.
+한 profile에 둘 수 있는 리소스·제품·계정 수를 하나로 제한하는 조건은 아니다.
+다른 profile의 리소스가 필요하면 사용할 묶음을 명시적으로 구성해 새 업무로 시작한다.
 
 ## 업무에 고정하는 스냅샷
 
-접수 시 profile 개정과 리소스·연결·대상·인증 문맥·정책을 불변 스냅샷으로 보존한다.
-비밀값·로그인 토큰은 넣지 않고 계획은 이 안의 등록 인스턴스·기능을 선택한다.
+업무를 시작할 때 선택한 profile 구성·리소스·대상·인증 문맥·정책·보존기간을 기록한다.
+비밀값은 업무 기록에 복사하지 않는다.
+이 기록은 계획과 실행이 어느 환경을 대상으로 했는지 확인하는 기준이다.
 
-첫 승인 이후 스냅샷은 교체하지 않고 그 안의 방법·범위 변경은 [수정 계획](../tasks/approval.md)으로 처리한다.
+승인한 업무에 다른 연결·계정·대상을 조용히 끼워 넣지 않는다.
+같은 구성 안의 방법·허용 범위 변경은 [수정 계획](../tasks/approval.md)으로 처리한다.
+승인 이후 profile의 대상·인증 주체 자체를 바꿔야 하면 새 업무로 시작한다.
 
-| 변경 | 기존 업무 처리 |
-|---|---|
-| 승인·외부 호출 전 맥락 보완 | 현재 개정으로 해소하고 미승인 계획·확인 요청 대체 |
-| 승인 또는 외부 호출 이력 이후 스냅샷 변경 | 거부; 새 업무 접수 |
-| 기본 profile 변경 | 새 업무에만 적용 |
-| 도구 의미·스키마 변경 | 영향 기능 차단; 새 계약의 수정 계획 승인 |
-| 대상·주체·권한 바인딩 변경 | 영향 호출 차단; 관리 검증 후 새 업무 |
-| 설명 변경·같은 주체의 비밀 갱신 | 대상·권한·계약이 같음을 확인한 뒤 유지 |
-
-재개는 저장한 스냅샷과 현재 권한을 함께 검사하며 기본값·같은 이름의 profile·다른 계정으로 대체하지 않는다.
-비활성화·접근 철회·인증 실패는 새 호출을 차단하되 기존 호출·미확인 효과·예약을 보존한다.
+기본 profile이나 설정 변경은 기존 업무를 자동 전환하지 않는다.
+재개할 때에는 저장된 구성과 현재 권한·연결 상태를 함께 확인한다.
+접근 철회·인증 실패는 새 호출을 막되 이미 수행한 호출과 미확인 실행 기록을 보존한다.
 
 ## 사용자 저장 위치
 
-같은 OS 사용자의 두 호스트는 같은 DAERI 저장소를 사용한다.
-설정·이력은 프로젝트 Git·플러그인 캐시 밖에 두고 OS 사용자 디렉터리 API로 경로를 해소한다.
+같은 OS 사용자의 Codex와 Claude Code는 같은 DAERI 설정·업무 저장소를 사용한다.
+설정·이력·산출물은 프로젝트 저장소와 플러그인 캐시 밖의 사용자 전용 영역에 보관한다.
+정확한 경로와 저장 방식은 구현 단계에서 정한다.
 
-| 용도 | macOS 기본 위치 제안 | Windows 기본 위치 제안 |
-|---|---|---|
-| 설정·이력·산출물·관리 실행 환경 | `~/Library/Application Support/DAERI` | `%LOCALAPPDATA%\DAERI` |
-| 다시 받을 수 있는 임시 배포물 | `~/Library/Caches/DAERI` | 데이터 영역의 `cache` |
-| 비밀값 | Keychain 또는 제공자 저장소 | Credential Manager 또는 제공자 저장소 |
+다시 받을 수 있는 설치 자료와 업무·승인 기록을 구분한다.
+캐시 삭제·플러그인 업데이트로 사용자 설정과 업무 기록이 사라지지 않아야 한다.
+두 호스트가 동시에 접근해도 중복 실행과 기록 손실을 막는다.
 
-설정·이력·산출물·런타임을 구분하고 캐시를 승인·호출 기록의 유일한 원본으로 쓰지 않는다.
-파일 형식·SQLite는 구현 후보이며 별도 저장 프레임워크는 만들지 않는다.
-
-사용자 전용 권한과 저장소의 잠금·개정 검사로 두 호스트의 동시 수정을 처리한다.
-중간에 저장된 설정은 실행하지 않고 업무 소유권·호출·예산은 [실행 제어](../tasks/workflow.md#실행-검사와-기록)를 따른다.
-
-위치의 근거는 [Apple 파일 시스템](https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/FileSystemProgrammingGuide/FileSystemOverview/FileSystemOverview.html)과 [Windows Known Folder](https://learn.microsoft.com/en-us/windows/win32/shell/knownfolderid)다.
-하위 배치는 프로젝트 제안이며 격리 전제는 [신뢰 경계](../hosts/approval.md#신뢰-경계와-최초-등록)를 따른다.
+조회 자료는 보관을 허용한 최소 자료만 비밀 제거·마스킹 후 남긴다.
+보존기간이 만료되면 열람을 막고 다음 실행 때 정리한다.
+사용자·PC가 바뀌면 인증과 승인 기록을 그대로 이식하지 않는다.
 
 ## 인증 저장과 전달
 
-설정에는 불투명한 `credential_ref`와 허용 연결·origin·예상 주체를 저장한다.
-등록 연결만 실행기 내부에서 참조를 해소하며 참조 ID·모델 입력 경로로 비밀을 조회하지 않는다.
+profile은 비밀값 대신 로컬 인증 참조를 보관한다.
+실행기는 등록된 연결을 위해서만 그 참조를 해소하고 필요한 인증 정보를 전달한다.
+다른 연결의 인증이나 주변 환경의 자격 증명을 함께 사용하지 않는다.
 
-비밀번호·OAuth token은 OS 비밀 저장소에 두고 AWS SSO 설정·캐시는 제공자 저장소를 재사용한다.
-승인용 공개 키·정책은 [사용자 승인](../hosts/approval.md)의 등록 기록으로 관리한다.
+비밀값은 OS 또는 제공자의 안전한 저장소를 사용한다.
+잠김·만료·미지원이면 필요한 복구 조치를 안내하며 평문 저장으로 자동 대체하지 않는다.
+실제 저장소와 지원 범위는 OS별로 구현·검증한다.
 
-macOS Keychain·Windows Credential Manager를 기본으로 제안한다.
-자체 암호화 저장소·평문 파일 fallback은 도입하지 않고 잠김·미지원이면 복구 조치를 안내한다.
+비밀은 제공자 로그인 또는 안전한 로컬 입력 경로에서 처리한다.
+채팅·모델 입력·소스 저장소·로그·오류·산출물에 비밀번호·토큰·인증 세션을 넣지 않는다.
+원격 연결은 등록한 대상과 신뢰 조건을 확인하며 다른 곳으로 인증 정보를 임의 전달하지 않는다.
 
-[Keychain](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains)의 방식별 접근 조건을 확인한다.
-실행 파일·서명·업데이트 경로별 읽기·교체·거부를 검증하며 일반 Python을 전용 서명 앱처럼 격리한다고 가정하지 않는다.
-[Credential Manager](https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw)는 현재 사용자·기기의 범위로 시작하고 payload·로그인 문맥 제한을 검증한다.
-
-비밀은 로컬 설정·제공자 로그인 화면에서 입력하며 채팅·MCP 인수·명령문·Git·호스트 설정에 넣지 않는다.
-
-해소한 비밀은 필요한 client·신뢰한 자식 프로세스에만 전달한다.
-환경 전체·인증 헤더·토큰 URI·callback query·일회성 코드는 로그·모델 응답·진단 내보내기에서 제외한다.
-하위 stderr·오류·결과도 저장·반환 전에 검사하고 다른 연결의 인증을 함께 주입하지 않는다.
-
-진단·공유·내보내기에 제공자 캐시·인증 세션을 포함하지 않는다.
-
-## AWS named profile과 SSO
-
-각 AWS 연결은 하나의 제공자 named profile·설정 위치를 지정하며 기존 설정·캐시를 SDK·프록시가 읽는다.
-DAERI profile은 여러 AWS 연결을 담고 제공자 profile들은 SSO session을 공유할 수 있다.
-
-로그인은 `aws sso login --profile <provider-profile>` 형태로 안내한다.
-MFA·동의는 사용자가 수행하고 `default`나 다른 profile을 덮어쓰지 않는다.
-출처: [AWS SSO](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
-
-선정 프록시는 연결당 하나의 `--profile`로 시작한다.
-`aws_profile` 도구 입력으로 전환하는 multi-profile 경로와 `--skip-auth`는 사용하지 않는다.
-출처: [프록시 profile](https://github.com/aws/mcp-proxy-for-aws/blob/main/README.md#multi-account-access).
-
-부모 환경의 access key·session token·`AWS_MCP_PROXY_PROFILES` 등 인증 선택 값을 상속하지 않는다.
-등록되지 않은 `credential_process`, web identity·container·metadata fallback도 사용하지 않는다.
-`AWS_MCP_PROXY_PROFILES`가 `--profile`보다 우선할 수 있어 실제 적용 주체를 진단한다.
-
-account·principal·role을 확인하며 이름·ARN prefix 비교만으로 같다고 추정하지 않는다.
-매 갱신의 assumed-role session ID와 안정적인 계정·역할 문맥을 구분한다.
-출처: [CLI 우선순위](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html), [SDK 공급 순서](https://docs.aws.amazon.com/boto3/latest/guide/credentials.html), [프록시 설정](https://github.com/aws/mcp-proxy-for-aws/blob/main/README.md#configuration-parameters).
-
-설정·재로그인·권한 변화는 [재개 검사](#만료교체철회와-재개)를 적용하며 외부 파일·원격 권한의 원자적 고정을 가정하지 않는다.
-
-유효 session의 SDK 갱신만 기존 연결·권한 안에서 허용한다.
-만료는 사용자 재로그인으로 처리하고 다른 profile·정적 key로 대체하지 않는다.
-연결 해제 시 다른 연결에 영향을 줄 수 있는 `aws sso logout`을 자동 실행하지 않는다.
-
-## GitLab OAuth와 fine-grained PAT
-
-공식 MCP의 `mcp` scope OAuth를 우선 제안하고 등록 GitLab origin에 독립적으로 인증한다.
-지원 인스턴스에서는 MCP tool Execute 권한의 fine-grained PAT를 대안으로 등록한다.
-Legacy PAT·project token·group token은 사용하지 않으며 지원·권한이 부족하면 연결 선택을 재검토한다.
-출처: [GitLab MCP 인증](https://docs.gitlab.com/user/model_context_protocol/mcp_server/#authentication).
-
-MCP client의 OAuth를 재사용해 PKCE·state·정확한 redirect URI를 검사하고 callback은 사용자 PC에서 처리한다.
-
-사전 등록 public client를 우선 검토하고 동적 등록은 허용된 설정 작업에서만 한다.
-로컬 redirect 정책과 실제 client 호환성을 확인하며 미지원이면 연결 방식을 재검토한다.
-출처: [사전 등록 앱](https://docs.gitlab.com/user/model_context_protocol/mcp_server/#reuse-a-single-oauth-application).
-
-refresh는 기존 issuer·client·사용자·scope 안에서 수행하고 동시 갱신으로 새 값을 덮어쓰지 않는다.
-갱신 거부·철회·다른 주체 확인은 재인증 또는 등록 검토로 처리한다.
-
-## PostgreSQL·Redis
-
-host·port·database·username·TLS 정책과 비밀 참조를 나눠 등록하며 DB 권한·Redis ACL을 업무 승인으로 사용하지 않는다.
-
-DBHub에는 관리 TOML 환경 치환·제한한 자식 환경으로 비밀을 전달하고 치환 변수 누락을 시작 전에 검사한다.
-비밀 DSN을 `--dsn`·프로젝트 파일에 넣지 않는다.
-출처: [DBHub 환경 치환](https://dbhub.ai/config/toml#environment-variable-interpolation).
-
-실행 설정은 등록 연결의 고정 복사본을 사용하며 hot reload로 인증·대상을 바꾸지 않는다.
-개인 키 파일이 필요한 방식은 명시적인 관리 파일·권한을 검토하고 OS 비밀을 평문 파일로 자동 풀지 않는다.
-
-네트워크 PostgreSQL은 `verify-full`·등록 CA를 기본으로 하며 DBHub의 `require`를 인증서·hostname 검증으로 취급하지 않는다.
-출처: [DBHub TLS](https://dbhub.ai/config/toml#sslmode).
-
-Redis에는 `REDIS_USERNAME`·`REDIS_PWD`·TLS 조건을 자식 환경으로 전달한다.
-`--password`, 비밀 `--url`과 CLI 인증 override를 사용하지 않는다.
-entrypoint의 환경 입력·CA·hostname 검증·cluster 지원을 확인한 뒤 등록한다.
-출처: [Redis 환경 설정](https://github.com/redis/mcp-redis/blob/main/README.md#configuration-via-environment-variables).
-
-비밀번호 교체가 기존 pool·session을 종료한다고 가정하지 않는다.
-새 비밀로 세션을 준비하고 이전 세션의 새 호출을 차단하며 이미 보낸 요청의 원 인증·대상·확인 기록은 보존한다.
-
-## 원격 인증 경계
-
-토큰은 등록 issuer·audience·resource·origin에 바인딩한다.
-다른 origin redirect·서버 반환 URL에 인증 헤더를 자동 전달하지 않고 호스트 token passthrough를 사용하지 않는다.
-출처: [MCP 인증](https://modelcontextprotocol.io/specification/latest/basic/authorization), [MCP 보안](https://modelcontextprotocol.io/specification/latest/basic/security_best_practices).
-
-TLS 검증을 유지하고 사내 CA·프록시는 허용 참조·도구별 신뢰 저장소로 적용한다.
-자료 제공·보존은 [결과·이력](../tasks/workflow.md#이력과-완료-근거)을 따른다.
+제공자가 사용자 로그인을 요구하면 해당 안내에 따라 사용자가 인증한다.
+계획 승인을 대화에서 받는 것과 제공자 인증 절차는 구분한다.
+원격 권한이 있다는 사실도 업무 계획 승인을 대신하지 않는다.
 
 ## 만료·교체·철회와 재개
 
-인증 만료·잠김·철회·참조 해소 실패는 새 호출을 보류하고 실제 복구를 확인한다.
+인증 만료·잠김·철회·참조 해소 실패 시 새 호출을 보류한다.
+재인증 이후 실제 사용 주체·대상·권한과 업무 승인 범위를 다시 확인한다.
+다른 계정·연결로 자동 대체하지 않는다.
 
-같은 주체·대상·권한의 비밀 교체만으로 재승인받지는 않는다.
-재인증 뒤 업무 상태·승인·계약·권한·예산을 재검사하고 주체·대상·강제 정책 변경은 스냅샷 규칙을 적용한다.
+같은 주체·대상·권한의 인증 갱신만으로 업무 재승인을 요구하지 않는다.
+접근 범위나 실행 조건이 달라지면 해당 업무의 수정 계획 또는 새 업무 조건을 적용한다.
+진행 중인 원격 작업이 인증 해제만으로 종료되었다고 가정하지 않는다.
 
-DAERI 참조 해제·세션 종료·제공자 token과 권한 철회는 서로 다른 작업이다.
-선택한 범위만 처리하며 원격 철회·진행 중 작업 종료를 추정하지 않는다.
-기기·OS 사용자 변경·저장소 손실 뒤에는 참조 복원과 별도로 재인증한다.
+연결 해제·로컬 로그인 종료·제공자 권한 철회는 서로 다른 작업이다.
+사용자가 선택한 범위를 처리하고 다른 연결의 공유 인증을 임의로 제거하지 않는다.
 
 ## 변경·공유·복구
 
-업무가 참조한 구성 개정은 출처로 보존하며 profile 삭제로 이력·미확인 호출·원격 리소스를 지우지 않는다.
-업데이트·재설치·백업 복원은 [보존·복구 계약](../installation/environment.md#업데이트와-데이터-보존)을 따른다.
+profile 삭제가 원격 리소스나 업무 이력·미확인 호출을 삭제하지 않는다.
+업데이트·재설치·백업 복원은 [데이터 보존](../installation/environment.md#업데이트와-데이터-보존)을 따른다.
 
-공유 템플릿에는 역할·입력 항목·확인한 구성만 담고 비밀·제공자 캐시·업무 이력·승인·소유권은 이식하지 않는다.
-다른 사용자·PC는 참조를 새로 연결하고 재인증·진단한다.
-
-종료 업무의 확인도 원 연결·실제 대상·현재 권한을 대조하며 [확인 대상 계약](../mcp/plans.md#미확인-호출의-확인-대상)을 따른다.
+공유 템플릿에는 범주·역할·필요 입력·비밀을 제외한 연결 구조만 담는다.
+인증 비밀·로그인 세션·업무 자료·승인 권한은 공유하지 않는다.
+다른 사용자·PC는 자신의 인증을 연결하고 진단을 다시 수행한다.
 
 ## 구현 전 확인
 
-[초기 구현](../../plans/initial-implementation.md)에서 관리 화면·파일 형식과 OS 저장소 API를 선정·검증한다.
-복수 리소스·기본값 변경 뒤 기존 업무 유지, 동시 접근·복구와 권한 철회·비밀 갱신 구분을 확인한다.
-잠김·만료·갱신 실패·다른 profile fallback·주변 인증 충돌과 비밀 노출 거부는 필수 검증이다.
-실제 설정 생성·로그인·저장소·연결은 아직 실행하지 않았다.
+복수 범주·복수 인스턴스, 기본값 변경 뒤 기존 업무 유지, 두 호스트 동시 접근을 확인한다.
+인증 만료·주체 변경·권한 철회·비밀 노출 방지와 자료 만료·정리를 확인한다.
+실제 설정 생성·로그인·저장소·리소스 연결은 아직 실행하지 않았다.

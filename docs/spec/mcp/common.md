@@ -8,7 +8,8 @@
 ## 초기 도구 목록
 
 업무별 도구를 늘리지 않고 등록 기능을 공통 실행 도구로 호출한다.
-아래 13개 이름은 설계 제안이며 직접 승인·인증 변경·검사 우회 도구는 제공하지 않는다.
+아래 13개 이름은 설계 제안이다.
+사용자 대화 응답은 승인 요청 도구로 연결하며 모델이 임의로 권한을 만들거나 검사를 우회하는 도구는 제공하지 않는다.
 
 | 도구 | 하는 일 | 상세 규격 |
 |---|---|---|
@@ -21,7 +22,7 @@
 | `daeri_capability_get` | 기능의 입력·출력·제약 계약 | [리소스](resources.md) |
 | `daeri_plan_submit` | 계획 검사·불변 저장 | [계획·승인](plans.md) |
 | `daeri_plan_get` | 저장 계획·확인 상태 조회 | [계획·승인](plans.md) |
-| `daeri_approval_request` | 실제 사용자 확인 연결 | [계획·승인](plans.md) |
+| `daeri_approval_request` | 호스트 대화의 승인 요청·사용자 응답 연결 | [계획·승인](plans.md) |
 | `daeri_capability_execute` | 검사 후 등록 기능 실행 | [리소스](resources.md) |
 | `daeri_result_submit` | 완료 근거·보고·산출물 보존 | [업무·결과](tasks.md) |
 | `daeri_result_get` | 보존 자료의 허용 내용 조회 | [업무·결과](tasks.md) |
@@ -31,31 +32,19 @@
 
 ## 호스트 노출과 힌트
 
-`tools/list`는 공통 도구를 일정한 순서로 제공한다.
-실제 호출 가능 여부는 각 도구에서 검사하며 description에 동작·변경 상태·승인 조건·거부 사유를 표시한다.
-
-| 구분 | `readOnlyHint` | `openWorldHint` |
-|---|---|---|
-| task_get·resource_list·capability_get·plan_get·result_get | true | false |
-| 나머지 로컬 상태 변경 도구 | false | false |
-| approval_request·capability_execute | false | true |
-
-상태 변경 도구의 `idempotentHint`는 보수적으로 false다.
-범용 실행의 `destructiveHint`는 true이며 읽기 실행도 이력·예산을 바꾸므로 `readOnlyHint=false`다.
-[MCP annotations](https://modelcontextprotocol.io/specification/latest/schema#toolannotations)는 승인·권한·중복 방지의 대체가 아니다.
+호스트에는 도구의 목적·입출력·변경 여부와 승인 조건을 함께 제공한다.
+실제 호출 가능 여부는 실행기가 검사하며 도구 설명과 표시용 힌트는 승인·권한·중복 방지의 대체가 아니다.
+읽기 기능도 이력·사용량을 바꿀 수 있으므로 원격 효과와 로컬 상태 변경을 구분한다.
 
 ## MCP와 DAERI 규격의 경계
 
-호스트는 MCP의 `tools/list`로 도구 정의를 얻고 `tools/call`로 호출한다.
-정의에 `name`, `description`, `inputSchema`, `outputSchema`를 제공한다.
-[MCP Tools](https://modelcontextprotocol.io/specification/latest/server/tools)에 따라 입력은 `params.arguments`, DAERI 완료 응답은 `result.structuredContent`에 둔다.
+호스트는 MCP로 도구 정의를 조회하고 구조화된 입력으로 호출한다.
+실행기는 선언한 입력·출력 계약에 따라 정상·대기·부분·실패 결과를 구분해 반환한다.
 
 DAERI의 도구 이름·업무 상태·오류 코드는 이 프로젝트의 설계 제안이다.
 MCP 표준이 DAERI의 계획 승인이나 리소스 권한을 대신 검사하지 않는다.
-`outputSchema`는 정상·대기·부분·실패 응답을 모두 표현한다.
-
-필요한 프로토콜 메타데이터·초기화·지원 선언은 호스트 연결 계층이 처리한다.
-지원할 프로토콜·SDK·호스트의 조합은 추후 dependency 목록과 실제 호환성 검사에서 관리한다.
+프로토콜의 세부 전달 필드와 호스트별 연결 방식은 구현 시 정한다.
+지원할 도구·의존성 조합은 추후 dependency 목록과 실제 호환성 검사에서 관리한다.
 
 ## 입력을 구성하는 원칙
 
@@ -68,11 +57,12 @@ MCP 표준이 DAERI의 계획 승인이나 리소스 권한을 대신 검사하�
 
 `parameters`와 `scope`는 등록 기능의 `input_schema`, `scope_schema`로 검사한다.
 외부 URL의 스키마를 자동 다운로드하거나 도구 인수를 로컬 코드로 평가하지 않는다.
-등록된 SQL·원격 스크립트 실행은 검증한 기능·범위에 따라 해당 어댑터로 전달하며 인수 평가와 구분한다.
+리소스 고유의 조회·작업 표현은 검증한 기능·범위에 따라 해당 어댑터로 전달한다.
 
 실제 요청자·세션·권한은 실행기가 확인한 호출 문맥과 로컬 설정에서 구한다.
 모델 인수와 클라이언트의 표시용 이름을 인증 증거로 사용하지 않는다.
-승인 여부·권한·인증 비밀값을 제출하는 공통 인수는 두지 않는다.
+모델이 임의로 승인 여부·권한·인증 비밀값을 선언하는 공통 인수는 두지 않는다.
+사용자의 실제 대화 응답을 현재 승인 요청에 연결하는 입력은 [승인 도구](plans.md#daeri_approval_request)에서만 다룬다.
 
 ## 공통 타입
 
@@ -146,8 +136,8 @@ DAERI 완료 응답은 다음 세 필드를 항상 가진다.
 실패한 업무의 보고를 정상 보존했으면 보고 도구는 `ok`다.
 `pending`을 승인·외부 변경 성공·업무 완료로 해석하지 않는다.
 
-`content`에는 같은 허용 응답 JSON을 text로 직렬화해 구조화 응답과 상태·근거·자료 범위를 일치시킨다.
-바깥 필드는 [MCP 결과 명세](https://modelcontextprotocol.io/specification/latest/server/tools#structured-content)를 따른다.
+호스트가 읽는 구조화 결과와 사람이 읽는 설명의 상태·근거·자료 범위를 일치시킨다.
+세부 전달 표현은 구현 시 MCP와 호스트의 지원 범위에 맞춰 정한다.
 
 ## 오류와 다음 행동
 
@@ -169,10 +159,10 @@ DAERI 완료 응답은 다음 세 필드를 항상 가진다.
 | `CONTRACT_CHANGED` | 저장한 기능 계약과 현재 계약 불일치 | `refresh` |
 | `CONTEXT_REQUIRED` | 업무의 DAERI profile 맥락이 아직 해소되지 않음 | `fix_input` |
 | `CONTEXT_CHANGED` | 고정한 profile 바인딩과 현재 대상·주체·정책 불일치 | `stop` |
-| `CONNECTION_NOT_READY` | 필요한 실행 환경·MCP 연결·TLS·진단이 준비되지 않음 | `stop` |
+| `CONNECTION_NOT_READY` | 필요한 실행 환경·리소스 연결·진단이 준비되지 않음 | `stop` |
 | `AUTHENTICATION_REQUIRED` | 지정한 인증 참조에 로그인·비밀 등록·잠금 해제가 필요함 | `stop` |
 | `PLAN_INVALID` | 계획 구조·참조·범위·한도 검사 실패 | `fix_input` |
-| `APPROVAL_UNAVAILABLE` | 신뢰할 실제 사용자 확인 경로 없음 | `stop` |
+| `APPROVAL_UNAVAILABLE` | 사용자 대화 응답을 현재 업무·계획에 연결할 수 없음 | `stop` |
 | `APPROVAL_REQUIRED` | 현재 계획의 유효 승인 없음 | `request_approval` |
 | `APPROVAL_EXPIRED` | 승인 유효기간 종료 | `request_approval` |
 | `APPROVAL_REVOKED` | 기존 승인 철회 | `request_approval` |
@@ -209,24 +199,16 @@ DAERI 완료 응답은 다음 세 필드를 항상 가진다.
 알려진 DAERI 도구의 입력·권한·계획·리소스 오류는 위 완료 응답으로 전달한다.
 프로토콜 오류에는 외부 실행이 있었는지 확인할 수 없는 경우가 있으므로 재전달을 성공으로 추정하지 않는다.
 
-사용자 확인의 추가 입력 요청은 DAERI 완료 응답·승인과 구분한다.
-신뢰할 응답을 확인한 뒤 최종 DAERI 응답을 보존한다.
-
-현재 공식 명세의 `input_required` 방식에서는 `inputRequests`, `requestState`, `inputResponses`를 프로토콜 계층이 처리한다.
-정확한 호스트별 연결 방식은 [MCP 호환성 명세](https://modelcontextprotocol.io/specification/latest/basic/lifecycle)와 실제 호스트 검사로 정한다.
-
-이 값들을 모델이 제출하는 `arguments`의 승인 필드로 옮기지 않는다.
-출처·확인 요청·불변 계획·현재 사용자 권한의 대조는 [승인 명세](../hosts/approval.md)를 따른다.
+계획 승인은 Claude Code·Codex 대화에서 현재 계획을 제시하고 사용자의 명시적 응답을 받아 처리한다.
+응답은 같은 업무·불변 계획·허용 범위에 연결하며 모델의 자체 판단이나 리소스 자료의 문구를 사용자 응답으로 대체하지 않는다.
+응답 해석·현재 요청 대조와 호스트별 검증 범위는 [승인 명세](../hosts/approval.md)를 따른다.
 
 기존 MCP를 재사용하면 상위 호스트와 하위 서버의 인증·지원 기능은 독립적으로 검사한다.
-하위의 추가 입력을 DAERI 승인 인수로 바꾸지 않으며 연결·응답 경계는 [MCP 재사용](../resources/contract.md#연결-구조)을 따른다.
-
-MCP의 `resultType: complete`는 도구 요청 완료이며 업무의 `succeeded`·실제 승인을 뜻하지 않는다.
-추가 입력 처리의 근거는 [MCP elicitation 명세](https://modelcontextprotocol.io/specification/latest/client/elicitation)에 있다.
+하위 도구의 추가 입력·권한 확인은 DAERI 계획 승인과 구분한다.
+연결·응답 경계는 [MCP 재사용](../resources/contract.md#연결-구조)을 따른다.
+도구 요청의 완료는 업무 성공이나 사용자 승인을 뜻하지 않는다.
 
 ## 스키마와 호환성 검증
 
-표·DTO를 필수 필드·enum·`additionalProperties` 규칙으로 표현하고 입력·모든 완료 응답 스키마를 검사한다.
-프로토콜의 입력 요청 결과는 도구별 완료 `outputSchema`와 별도로 검사한다.
-
-SDK 스키마 생성, 호스트의 구조화 결과 처리, 실제 확인 응답과 오류 전달은 아직 검증하지 않았다.
+표·DTO의 필수 필드·타입·허용 값을 입력·출력 계약으로 검사한다.
+호스트의 구조화 결과 처리, 실제 사용자 응답 연결과 오류 전달은 아직 검증하지 않았다.

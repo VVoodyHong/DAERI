@@ -21,10 +21,10 @@
 | `docs/spec/` | [제품 요구사항](../spec/product.md) |
 | `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md) |
 | `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
-| `docs/spec/resources/` | [MCP 재사용·탐색·등록·호출 계약](../spec/resources/contract.md), [최초 제품 선정·제약](../spec/resources/initial-adapters.md) |
+| `docs/spec/resources/` | [MCP 재사용·탐색·등록·호출 계약](../spec/resources/contract.md), [리소스 범주와 연결 기준](../spec/resources/initial-adapters.md) |
 | `docs/spec/configuration/` | [profile·연결·인증·개인 보존](../spec/configuration/profiles.md) |
 | `docs/spec/installation/` | [환경·의존성·전달·업데이트](../spec/installation/environment.md) |
-| `docs/spec/hosts/` | [플러그인·Skill·런처](../spec/hosts/plugins.md), [실제 승인 UI·등록·검증](../spec/hosts/approval.md) |
+| `docs/spec/hosts/` | [플러그인·Skill·로컬 실행](../spec/hosts/plugins.md), [사용자 대화 승인·응답 확인](../spec/hosts/approval.md) |
 | `docs/plans/` | [최초 구현 범위·순서·완료 기준](../plans/initial-implementation.md) |
 | `docs/development/` | 이 문서 |
 
@@ -38,7 +38,7 @@
 |---|---|
 | 요구·구현 범위 | 기획·개발 → 제품·구조 → 구현 계획·관련 명세 |
 | 승인·실행 | 업무 승인·흐름 → 호스트 승인 → MCP 계획·리소스 |
-| 리소스·MCP | 리소스 계약·최초 선정 → 공통 MCP·해당 도구 |
+| 리소스·MCP | 리소스 계약·범주별 연결 → 공통 MCP·해당 도구 |
 | profile·준비·배포 | 사용자 구성 → 환경 준비 → 호스트 실행 |
 | 문서 변경·검토 | 문서·검토 규칙 → 변경 대상·영향받는 정본 |
 
