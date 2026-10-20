@@ -20,7 +20,7 @@
 
 | 영역 | 구현한 동작 | 상세 사양 |
 |---|---|---|
-| 호스트 | Codex·Claude Code 패키지와 Skill, 공통 오프라인 MCP 진입 | [플러그인](../spec/hosts/plugins.md) |
+| 호스트 | Codex·Claude Code 패키지, setup·profile·work·list-profiles Skill, 공통 오프라인 MCP 진입 | [플러그인](../spec/hosts/plugins.md) |
 | 최초 준비 | OS별 검사, user-local uv·Python·잠긴 환경의 명시적 준비·실패 복구 | [환경](../spec/installation/environment.md) |
 | 사용자 구성 | 복수 profile·인스턴스, 설정 가져오기·내보내기, 인증 참조·recipe 준비·진단·제공자 로그인 | [profile](../spec/configuration/profiles.md) |
 | 업무·승인 | 접수·보완·최근 목록·상태 복구, 불변 계획·대화 응답 연결, 일시중지·재승인·취소 | [업무](../spec/tasks/workflow.md)·[승인](../spec/hosts/approval.md) |
@@ -53,6 +53,7 @@
 | 하위 MCP 조합 | 격리한 잠금 환경의 실제 패키지 설치·import·선택 도구 메타데이터; 업무 자료 접근은 제외 |
 | 제공자 로그인 | 가짜 device 응답의 대기·속도 제한·거절·만료와 네트워크를 차단한 실제 SDK의 요청·표준 캐시 읽기 |
 | 호스트 구성 | Claude Code manifest 검사와 Codex의 읽기 전용 플러그인 조회; 설치·사용자 대화는 제외 |
+| Skill 지침 | 네 진입점의 구조·분기 검토, 임시 profile의 목록·조회·업무 바인딩·기존 업무 대상 보존; 실제 호스트 UI 제외 |
 
 실제 Codex·Claude Code의 마켓플레이스 추가·설치·Skill 진입과 사용자 답변의 의미 해석은 미검증이다.
 Windows의 준비 스크립트·공통 MCP 구성은 있으나 실제 Windows 실행·정책·인증 UI는 미검증이다.

@@ -17,6 +17,7 @@ SQLite·본문 파일·인증 저장소·색인의 역할과 저장·조회·삭
 사용자는 배포 저장소를 호스트 마켓플레이스에 추가하고 DAERI 플러그인을 설치한다.
 `/setup {profile명}`에 해당하는 진입점에서 리소스 범주·어댑터·연결 대상·인증 방식을 정하고 필요한 프로그램을 준비한다.
 호스트별 진입 방식은 [플러그인](../hosts/plugins.md), 준비 절차는 [환경 구성](../installation/environment.md)을 따른다.
+준비 후 work로 업무를 요청하며 새 업무의 대상은 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)에 따라 확인한다.
 
 ```mermaid
 flowchart TD

@@ -9,6 +9,8 @@ description: DAERI 설치·실행 환경 준비, profile·리소스 설정 또�
 사용자가 다른 언어를 명시하면 그 언어를 사용하고 명령·설정 키·제품명은 원래 표기를 유지한다.
 
 사용자가 DAERI의 설치·환경·profile·리소스 연결 관리를 요청했을 때 적용한다.
+`setup PROFILE`은 해당 profile의 구성을 준비한다.
+등록 목록만 조회할 때는 [list-profiles](../list-profiles/SKILL.md), 기존 profile을 이 대화의 기본 대상으로 선택할 때는 [profile](../profile/SKILL.md)을 사용한다.
 이 Skill에서 `../../`는 설치된 플러그인 루트이며 사용자 작업 디렉토리와 구분한다.
 [환경 준비](../../docs/spec/installation/environment.md), [profile·인증](../../docs/spec/configuration/profiles.md), [개발 의존성과 실행](../../docs/development/dependencies.md)을 필요한 범위에서 실제 읽는다.
 
@@ -75,6 +77,9 @@ Plan에서는 파일로 확인할 수 있는 입력을 먼저 수집하고 상�
    준비가 필요하면 명시적 관리 경로로 진행하며 외부 임베딩 서비스나 생성 LLM 설치로 대체하지 않는다.
 8. 준비한 프로그램·현재 MCP 연결·profile 저장·리소스별 연결과 권한·기억 준비·남은 사용자 조치를 구분해 보고한다.
    실제 진단하지 않은 항목을 성공으로 채우지 않는다.
+   설정을 저장한 뒤 `profile show`가 성공한 이름·`profile_id`를 확인하고 [profile의 선택 범위](../profile/SKILL.md)에 따라 이 대화의 이후 새 업무 대상으로 안내한다.
+   기존 업무의 스냅샷·승인을 바꾸지 않고 업무가 필요하면 [work](../work/SKILL.md)로 이어가게 한다.
+   setup 완료를 업무 접수·실행 또는 업무 계획 승인으로 처리하지 않는다.
 
 명령·이름·경로·사용자 입력은 별도 인자로 안전하게 전달한다.
 조직 정책과 인증서·출처 검사를 끄지 않으며 자동화할 수 없는 로그인·조직 조치는 사용자에게 안내한다.

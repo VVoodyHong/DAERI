@@ -64,7 +64,7 @@ macOS는 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`이며 관리 
 
 | 입력 | 처리와 반환 |
 |---|---|
-| `profile create/list/show` | 이름·기본 맥락·기간 생성, 최근 활성 profile 목록·구성 조회 |
+| `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
 | `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
 | `profile export NAME` | 내부 상태·인증 비밀을 제외한 이동 가능한 설정 반환 |
 | `resource catalog/template` | 지원 recipe와 사용자가 채울 대상·정책 설정안 반환 |
@@ -85,6 +85,8 @@ macOS는 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`이며 관리 
 
 profile·정책·인증 입력의 필드·실패·지원 경계는 [사용자 구성](../spec/configuration/profiles.md), 기억 준비와 부분 검색은 [기억 사양](../spec/tasks/memory.md)을 따른다.
 미완성 template·기본 거부 정책·누락 인증을 준비 성공으로 채우지 않는다.
+profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
+대화 안의 대상 선택과 목록 표시 범위는 [profile 선택 계약](../spec/configuration/profiles.md#선택과-기본값)을 따르며 별도 전역 선택 CLI를 추가하지 않는다.
 
 ## 실행 진입점과 모듈
 
@@ -108,7 +110,7 @@ profile·정책·인증 입력의 필드·실패·지원 경계는 [사용자 �
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리 |
 | `cli.py`·`setup.py` | 명시적인 사용자 구성·환경·recipe 준비·진단 진입 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
-| `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 두 호스트의 실행·업무 지침 전달 |
+| `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 setup·profile·work·list-profiles 지침 전달 |
 
 ## 저장 위치와 데이터 역할
 

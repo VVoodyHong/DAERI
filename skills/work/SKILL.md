@@ -1,9 +1,9 @@
 ---
-name: daeri
-description: DAERI 업무를 요청하거나 DAERI profile에 등록한 리소스로 작업할 때 사용한다.
+name: work
+description: DAERI profile을 대상으로 새 업무를 요청하거나 저장된 업무를 이어서 수행할 때 사용한다.
 ---
 
-# DAERI 업무
+# DAERI work
 
 첫 안내부터 계획·승인 질문·진행 상황·결과 보고까지 기본적으로 한국어로 응답한다.
 사용자가 다른 언어를 명시하면 그 언어를 사용하고 명령·설정 키·제품명은 원래 표기를 유지한다.
@@ -13,11 +13,36 @@ DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업�
 [호스트 행동](../../docs/spec/hosts/plugins.md), [대화 승인](../../docs/spec/hosts/approval.md), [업무 흐름](../../docs/spec/tasks/workflow.md)을 필요한 범위에서 실제 읽는다.
 입력·결과 필드는 제공된 도구 스키마와 [MCP 정본](../../docs/spec/mcp/common.md)을 따르며 여기서 재정의하지 않는다.
 
+## 업무 대상
+
+`work REQUEST`는 새 업무 요청 또는 저장된 업무의 재개 요청을 받는다.
+설정 준비는 [setup](../setup/SKILL.md), 이후 새 업무의 기본 대상 선택은 [profile](../profile/SKILL.md), 등록 목록만 조회할 때는 [list-profiles](../list-profiles/SKILL.md)을 사용한다.
+
+새 업무는 요청에 등록 이름·식별자로 명확히 지정한 profile을 우선한다.
+지정이 없으면 현재 대화에서 setup 또는 profile로 마지막으로 확인한 선택을 사용한다.
+접수 전에 준비된 Python의 `-m daeri.cli profile show PROFILE`로 이름·`profile_id`와 현재 등록을 확인한다.
+관리 조회의 실행 경로와 안전한 인자 전달은 profile Skill의 지침을 따른다.
+성공한 조회의 `profile_id`를 `daeri_task_create`의 `context.profile_id`에 전달하고 이번 업무의 대상을 알린다.
+명확히 지정한 대상이 대화의 기본 선택과 다르다는 이유만으로 재확인을 요구하지 않는다.
+이번 업무에만 지정한 profile을 대화의 기본 선택 변경으로 처리하지 않는다.
+
+선택 기록이 없거나 문맥이 불확실하면 `profile list`의 실제 목록을 확인하고 호스트의 정형 질문 도구로 대상을 선택하게 한다.
+등록 profile을 특정하지 못하는 환경 설명이나 하나의 요청 안에서 서로 충돌하는 대상 지시도 같은 방식으로 확인한다.
+질문 도구와 대화 모드 조건은 [정형 질문 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문)을 따르며 모호한 답변이나 취소를 선택으로 처리하지 않는다.
+profile이 확정되기 전 업무 접수·원격 자료 조회를 시작하지 않는다.
+
+기존 업무 재개는 해당 업무에 저장된 `context`와 profile 스냅샷을 우선한다.
+현재 대화의 기본 선택과 다르면 그 차이를 알리고 저장된 대상으로 재개하며 기본 선택은 유지한다.
+사용자가 다른 대상으로 이어가라고 요청하면 기존 업무를 바꾸지 말고 새 업무인지 먼저 확인한다.
+새 대화나 복구할 수 없는 선택 맥락에서는 다른 대화의 기본 선택을 추정하지 않는다.
+
+## 업무 흐름
+
 1. 연결된 DAERI MCP가 실제 제공하는 도구와 현재 지원 범위를 확인한다.
    실행 환경이 준비되지 않았으면 setup Skill로 안내한다.
    요청의 대상 profile·기대 결과·완료 조건을 정리한다.
 2. 새 업무는 접수하고 기존 업무는 저장 기록에서 선택한다.
-   대상이 불분명하면 해당 profile의 최근 업무를 보여 주고 사용자가 선택하게 한다.
+   재개할 업무가 불분명하면 확인한 profile의 최근 업무를 보여 주고 사용자가 선택하게 한다.
    재개한 요청을 자동으로 새 업무로 접수하지 않는다.
 3. 계획 전에 `daeri_memory_search`로 현재 기본 맥락과 관련 경험을 조회한다.
    `daeri_resource_list`와 `daeri_capability_get`으로 등록된 기능·제약·결과 형식을 확인한다.

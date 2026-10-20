@@ -8,14 +8,16 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 ## 공통 구성
 
 호스트가 요청을 해석하고 필요한 자료·수행 방법·다음 행동을 판단한다.
-플러그인은 업무·setup Skill과 로컬 DAERI MCP 실행기를 연결한다.
+플러그인은 setup·profile·work·list-profiles Skill과 로컬 DAERI MCP 실행기를 연결한다.
 실행기는 profile·승인·범위·이력·기억을 관리하고 필요한 리소스의 연결을 사용한다.
 
 | 구성 | 역할 |
 |---|---|
 | 호스트별 플러그인 | 마켓플레이스 등록·설치와 Skill·실행기 연결 |
-| 업무 Skill | 계획 전 기억 조회·계획·승인·실행·보고·기억 갱신 지침 |
 | setup Skill | 환경 준비·profile·리소스 연결 관리 진입 |
+| profile Skill | 현재 대화에서 새 업무의 기본 대상 선택 |
+| work Skill | 계획 전 기억 조회·계획·승인·실행·보고·기억 갱신 지침 |
+| list-profiles Skill | 저장한 profile 목록 요약 |
 | 공통 참조 문서 | 업무·승인·리소스 계약을 필요할 때 읽는 자료 |
 | 로컬 실행 진입점 | 필요한 환경을 준비하고 설치된 DAERI MCP 실행 |
 
@@ -34,7 +36,8 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 3. 사용자가 `/setup {profile명}`에 해당하는 호스트 진입점으로 준비를 시작한다.
 4. 해당 profile에서 사용할 리소스 범주·어댑터·대상·연결·인증 방식을 정한다.
 5. 선택한 연결과 로컬 임베딩에 필요한 프로그램·의존성을 검사하고 필요한 준비·설치를 진행한다.
-6. 연결과 접근 범위를 확인해 profile을 준비하고 자연어로 업무를 요청한다.
+6. 준비한 profile과 리소스별 실제 확인 결과·남은 조치를 안내한다.
+7. 해당 대화에서 확인한 profile을 대상으로 work 또는 자연어로 업무를 요청한다.
 
 `/setup {profile명}`은 공통 사용 흐름을 설명하는 논리적 이름이다.
 실제 호출 이름과 설치 방식은 아래 호스트별 구성을 따른다.
@@ -50,8 +53,8 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 | 마켓플레이스 | `.agents/plugins/marketplace.json` | `.claude-plugin/marketplace.json` |
 | 플러그인 정의 | `.codex-plugin/plugin.json` 호환 형식 | `.claude-plugin/plugin.json` |
 | MCP 구성 | 플러그인 정의 안의 `mcpServers.daeri` | 루트 `.mcp.json`의 `mcpServers.daeri` |
-| 공유 Skill | `skills/setup/SKILL.md`, `skills/daeri/SKILL.md` | 같은 두 Skill |
-| setup 진입 | `$` 선택기 또는 `/skills`에서 DAERI의 setup 선택 | `/daeri:setup service-prod` |
+| 공유 Skill | `skills/<Skill명>/SKILL.md`의 setup·profile·work·list-profiles | 같은 네 Skill |
+| 사용자 진입 | `$` 선택기·`/skills`·앱의 Skill 선택 화면에서 DAERI의 네 Skill 선택 | `/daeri:setup`, `/daeri:profile`, `/daeri:work`, `/daeri:list-profiles` |
 | 준비 동작 | 선택한 Skill이 설치된 플러그인 루트에서 OS별 준비 실행 | 같은 방식 |
 
 두 카탈로그의 이름은 `daeri-marketplace`, 플러그인 이름은 `daeri`다.
@@ -70,7 +73,8 @@ codex plugin add daeri@daeri-marketplace
 설치한 플러그인을 사용할 새 대화를 연다.
 Codex CLI·IDE는 `/skills` 또는 `$` 선택기에서 DAERI의 setup을 고른 뒤 `service-prod profile을 준비해줘`처럼 profile 이름을 전달한다.
 앱에서는 해당 앱의 Skill 선택 화면에서 같은 setup을 선택한다.
-선택 방식은 [공식 Skill 호출 안내](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)를 따르며 이름이 같은 다른 setup을 선택하지 않는다.
+준비 후에는 같은 방식으로 profile·work·list-profiles를 선택한다.
+선택 방식은 [공식 Skill 호출 안내](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)를 따르며 다른 플러그인의 같은 이름 Skill과 구분한다.
 
 Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/docs/en/discover-plugins#add-a-marketplace)에 따라 대화에서 아래를 순서대로 입력한다.
 브랜치 지정은 URL의 `#ref`이며 Codex의 `--ref`와 구분한다.
@@ -81,8 +85,10 @@ Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/
 ```
 
 설치가 현재 세션에 반영되지 않으면 새 세션을 연다.
-그다음 `/daeri:setup service-prod`로 준비하고 `/daeri:daeri` 또는 자연어로 업무를 요청한다.
+그다음 `/daeri:setup service-prod`로 준비하고 `/daeri:work` 또는 자연어로 업무를 요청한다.
+대화의 기본 대상을 고를 때는 `/daeri:profile`, 저장한 목록만 볼 때는 `/daeri:list-profiles`를 사용한다.
 플러그인 Skill은 [공식 이름 규칙](https://code.claude.com/docs/en/skills#choose-where-skills-load)에 따라 `/플러그인명:Skill명`으로 노출된다.
+업무 진입 Skill명은 work이며 이전 업무 Skill의 별칭은 제공하지 않는다.
 
 이미 pull한 로컬 사본을 쓰려면 두 호스트 모두 마켓플레이스 추가의 URL 대신 해당 저장소 루트 경로를 받는다.
 공백이 있는 경로는 터미널에서 한 인자로 인용하며 Claude의 대화 명령으로 처리하기 어려운 경로는 공식 `claude plugin marketplace add` 터미널 명령을 사용한다.
@@ -137,6 +143,8 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 | 최초 setup 요청 | 검사 후 누락 프로그램·설치 위치·네트워크·사용자 PATH 변경 범위 설명 | 명시적 준비 실행 또는 남은 조치 |
 | 프로그램 준비 완료 | 실행기 검사 결과와 현재 호스트 연결을 구분해 확인 | 필요한 경우 호스트 재시작·MCP 재연결 안내 |
 | profile 준비 요청 | 대상 서비스의 리소스·연결·인증 참조 구성 | 등록 정보와 리소스별 진단 결과 |
+| profile 선택 요청 | 저장 목록·지정 profile을 확인하고 대화의 기본 대상 선택 | 이후 새 업무에 사용할 이름·식별자 |
+| profile 목록 요청 | 저장된 profile 목록을 이름순으로 요약 | 이름·리소스 범주, 구별에 필요한 식별자 |
 | 자연어 업무 요청 | 현재 제공 도구와 profile의 저장 정보를 읽고 접수 | 업무 식별자·필요한 추가 입력 |
 | 승인 답변 | 현재 업무·저장된 계획·대기 승인 요청과 실제 사용자 답변 연결 | 승인·수정 요청·거절·미결 상태 |
 | 재개 요청 | 최근 업무나 지정 업무의 저장 상태·계획·남은 작업 확인 | 필요한 새 승인과 이어갈 범위 |
@@ -147,7 +155,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 
 호스트는 실제로 열거된 도구와 입력 스키마를 기준으로 행동한다.
 누락 도구·미지원 기능·검색 실패를 다른 명령으로 우회하거나 완료한 것처럼 보고하지 않는다.
-setup과 업무 Skill은 개발용 AGENTS·CLAUDE 전체를 자동 로딩한다고 가정하지 않으며 필요한 제품 정본을 직접 읽는다.
+네 Skill은 개발용 AGENTS·CLAUDE 전체를 자동 로딩한다고 가정하지 않으며 필요한 제품 정본을 직접 읽는다.
 
 ## setup의 정형 질문
 
@@ -186,8 +194,21 @@ Plan 모드에서는 질문·읽기만 수행하며 설치·저장·로그인·�
 
 ## Skill 지침
 
-업무 Skill은 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
+네 사용자 진입점은 아래 역할로 나누며 공통 실행기와 사용자 저장소를 사용한다.
+
+| Skill | Markdown 경로 | 수행 범위 |
+|---|---|---|
+| setup | `skills/setup/SKILL.md` | 환경·리소스 설정, 준비 결과와 대상 profile 안내 |
+| profile | `skills/profile/SKILL.md` | 저장한 대상을 확인해 현재 대화의 기본 profile 선택·전환 |
+| work | `skills/work/SKILL.md` | 선택한 대상의 업무 접수·계획·승인·실행·보고 |
+| list-profiles | `skills/list-profiles/SKILL.md` | 저장한 profile의 목록 요약 |
+
 setup은 사용자가 환경·연결 관리를 요청했을 때 시작하며 일반 업무 실행이 숨은 설치·설정 변경으로 전환되지 않게 한다.
+설정 완료 시 이름·식별자와 실제 확인한 준비 상태를 안내하고 해당 대화에서 선택한 맥락으로 사용한다.
+profile·list-profiles는 기존 관리 CLI의 `profile list`·`profile show`를 사용하며 전역 active·default 설정을 추가하지 않는다.
+선택 우선순위·재선택·목록의 범위는 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)을 따른다.
+
+work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 도구의 역할과 입출력은 [MCP 규격](../mcp/common.md)을 따르고 Skill에 중복 정의하지 않는다.
 
 1. 요청·대상 profile·기대 결과·완료 조건을 정리하고 업무를 접수한다.
@@ -222,6 +243,7 @@ setup은 사용자가 환경·연결 관리를 요청했을 때 시작하며 일
 ## 재개·동시 사용·환경 고정
 
 새 대화·문맥 압축·호스트 전환 뒤에는 Skill과 관련 계약을 다시 읽고 저장한 업무·계획·실행 이력을 확인한다.
+새 업무의 대상 선택 증거가 불확실하면 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)에 따라 정형 질문으로 다시 고른다.
 업무를 특정할 수 없으면 해당 profile의 최근 업무 목록을 보여 주고 사용자가 선택하게 한다.
 같은 요청을 자동으로 새 업무로 접수하지 않는다.
 정확한 업무 복구는 저장 기록으로 수행하며 유사 기억 검색 결과로 업무·승인 상태를 복원하지 않는다.
@@ -231,7 +253,7 @@ setup은 사용자가 환경·연결 관리를 요청했을 때 시작하며 일
 모호한 승인 응답이나 미완료 승인 요청을 호스트 전환만으로 승인 상태로 바꾸지 않는다.
 
 재연결·재계획으로 기존 사용량·진행 내역·미확인 효과를 초기화하지 않는다.
-업데이트나 기본 profile 변경도 진행 중인 업무의 대상과 실행 환경을 자동 교체하지 않는다.
+업데이트나 대화의 기본 profile 변경도 진행 중인 업무의 대상과 실행 환경을 자동 교체하지 않는다.
 현재 환경이 이어가기에 적합하지 않으면 필요한 준비를 안내하고 [재개 조건](../tasks/workflow.md)을 다시 확인한다.
 
 ## 로컬 실행과 연결 수명

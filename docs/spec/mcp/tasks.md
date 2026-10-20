@@ -20,9 +20,9 @@
 | `DesiredOutput` | `format` | string, 선택 | 원하는 형식; 지원 확정이 아님 |
 | `DesiredOutput` | `description` | string, 선택 | 원하는 결과·완료 조건 |
 
-생략한 맥락은 검증한 기본값으로 해소하거나 질문으로 보완한다.
+호스트는 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)에 따라 확인한 profile을 전달하고 생략한 맥락은 질문으로 보완한다.
 부처·환경이 선택 profile과 다르면 `INVALID_INPUT`이다.
-기본 profile이 없거나 모호하면 `awaiting_input`이며 다른 profile을 임의 선택·합병하지 않는다.
+profile이 없거나 모호하면 `awaiting_input`이며 다른 profile을 임의 선택·합병하지 않는다.
 
 DAERI profile과 리소스 제공자의 인증 설정은 구분한다.
 구성·선택은 [profile 명세](../configuration/profiles.md), 최종 형식·제공 범위는 [PlanDraft](plans.md)에 따른다.
@@ -93,7 +93,7 @@ profile 관련 세 필드는 모두 값이 있거나 모두 null이어야 한다
 |---|---|---|---|
 | `request_id` | ID | 예 | 접수 재전달 키 |
 | `request_text` | 비어 있지 않은 string | 예 | 보존 전 비밀 제거 |
-| `context` | ContextSelection | 아니요 | 기본값 확인 또는 질문 |
+| `context` | ContextSelection | 아니요 | 확인한 profile 전달 또는 질문 |
 | `desired_output` | DesiredOutput | 아니요 | 형식·완료 조건 요청 |
 
 `data`는 TaskReceipt다.
@@ -102,7 +102,7 @@ profile 관련 세 필드는 모두 값이 있거나 모두 null이어야 한다
 
 profile 해소는 로컬 설정만 읽는다.
 원격 로그인·연결 진단·설치를 시작하지 않으며 접수 성공은 리소스 접근 승인이 아니다.
-기본 profile이 바뀌어도 동일 요청 재전달은 최초 맥락을 유지한다.
+대화의 기본 profile이 바뀌어도 동일 요청 재전달은 최초 맥락을 유지한다.
 
 ## daeri_task_update
 
