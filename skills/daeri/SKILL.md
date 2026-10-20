@@ -1,9 +1,12 @@
 ---
 name: daeri
-description: Use when the user requests DAERI operations or work using resources registered in a DAERI profile.
+description: DAERI 업무를 요청하거나 DAERI profile에 등록한 리소스로 작업할 때 사용한다.
 ---
 
 # DAERI 업무
+
+첫 안내부터 계획·승인 질문·진행 상황·결과 보고까지 기본적으로 한국어로 응답한다.
+사용자가 다른 언어를 명시하면 그 언어를 사용하고 명령·설정 키·제품명은 원래 표기를 유지한다.
 
 DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업무에 적용한다.
 이 Skill에서 `../../`는 설치된 플러그인 루트다.

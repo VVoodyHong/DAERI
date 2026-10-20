@@ -3,6 +3,7 @@ import os
 import socket
 import hashlib
 import json
+import sqlite3
 import sys
 
 import pytest
@@ -45,17 +46,18 @@ def memory(tmp_path):
     store.close()
 
 
-def source(service, profile, *, key="one", **changes):
+def source(service, profile, *, key="one", record_days=30, **changes):
     store = service.store
     task_id = "task-" + key
     store.insert_task({"task_id": task_id, "profile_id": profile["profile_id"],
                        "task_revision": 1, "state": "succeeded", "created_at": timestamp(),
                        "last_report_ref": "report-existing"})
-    ref = store.write_record(task_id, "request", {"text": "실제 확인한 서비스 용어"}, timestamp(30))
+    expiry = timestamp(record_days) if record_days is not None else None
+    ref = store.write_record(task_id, "request", {"text": "실제 확인한 서비스 용어"}, expiry)
     return {"task_id": task_id, "record_ref": ref,
             "fields": [{"segments": [{"key": "text"}]}],
             "instance_ids": ["primary-db"], "target_bindings": {"primary-db": TARGET_HASH},
-            "verified_at": timestamp(), "expires_at": timestamp(30), "available": True,
+            "verified_at": timestamp(), "expires_at": expiry, "available": True,
             "model_allowed": True, "retain_allowed": True, "long_term_allowed": True, **changes}
 
 
@@ -297,10 +299,13 @@ def test_actual_local_multilingual_model_retrieves_without_network(memory, monke
     service = MemoryService(original.store, embedder)
     related = candidate("A saturated database connection pool requires checking active sessions and connection limits.")
     related["applicability"] = "운영 작업"
-    expected = save(service, profile, draft=related)
+    expected = save(service, profile, draft=related, policy={"retention": "long_term", "retention_days": None})
+    assert expected["expires_at"] is None
     unrelated = candidate("Release deployment naming follows the approved build identifier.")
     unrelated["applicability"] = "운영 작업"
-    save(service, profile, draft=unrelated, sources=[source(service, profile, key="build")])
+    alternate = save(service, profile, draft=unrelated, sources=[source(service, profile, key="build", record_days=None)],
+                     policy={"expires_at": None})
+    assert alternate["retention"] == "source_bound" and alternate["expires_at"] is None
     result = service.search(profile["profile_id"], "데이터베이스 접속이 실패할 때 연결 수를 확인하는 방법", limit=1)
     assert result["retrieval_state"] == "hybrid"
     assert result["limitations"] == []
@@ -385,3 +390,203 @@ def test_every_memory_read_rechecks_current_resource_policy(memory, changed):
     with pytest.raises(StoreError, match="ACCESS_DENIED"):
         service.get(current["profile_id"], item["memory_ref"])
     assert service.can_export(current["profile_id"], item["memory_ref"]) is False
+
+
+def unbounded_profile(service, profile):
+    return service.store.put_profile("alpha", resources=profile["resources"],
+        memory_policy=memory_policy(exports_allowed=True), long_term_memory_days=None)
+
+
+def test_unbounded_long_term_memory_survives_original_expiry_and_rebuilds_indexes(memory):
+    original, profile = memory
+    profile = unbounded_profile(original, profile)
+    service = MemoryService(original.store, NumericalFixtureEmbedder(), auto_load=False)
+    origin = source(service, profile, export_allowed=True)
+    item = save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None})
+    assert item["expires_at"] is None
+    service.store.set_task_expiry(origin["task_id"], timestamp(-1))
+    service.store.cleanup()
+    assert service.cleanup()["deleted"] == 0
+    assert service.get(profile["profile_id"], item["memory_ref"])["expires_at"] is None
+    assert service.can_export(profile["profile_id"], item["memory_ref"]) is True
+    assert service.search(profile["profile_id"], "E_CONN_001")["items"][0]["memory_ref"] == item["memory_ref"]
+    assert service.reindex(profile["profile_id"]) == {"ready": 1, "pending": 0}
+
+
+@pytest.mark.parametrize("reason", ["deleted_source", "permission", "invalidation"])
+def test_unbounded_does_not_bypass_source_deletion_permission_or_invalidation(memory, reason):
+    service, profile = memory
+    profile = unbounded_profile(service, profile)
+    origin = source(service, profile)
+    item = save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None})
+    if reason == "deleted_source":
+        service.store._db.execute("DELETE FROM records WHERE record_ref=?", (origin["record_ref"],))
+    elif reason == "permission":
+        service.store.put_profile("alpha", resources=profile["resources"], long_term_memory_days=None,
+                                 memory_policy=memory_policy(model_allowed=False))
+    else:
+        service.invalidate(profile["profile_id"], item["memory_ref"], reason="사용자가 잘못된 지식임을 확인",
+                           source_records=[origin])
+    assert service.search(profile["profile_id"], "E_CONN_001")["items"] == []
+    with pytest.raises(StoreError):
+        service.get(profile["profile_id"], item["memory_ref"])
+
+
+def test_unbounded_memory_can_be_invalidated_after_permission_cleanup_removed_its_body(memory):
+    service, profile = memory
+    profile = unbounded_profile(service, profile)
+    origin = source(service, profile)
+    item = save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None})
+    service.store.put_profile("alpha", resources=profile["resources"], long_term_memory_days=None,
+                             memory_policy=memory_policy(model_allowed=False))
+    assert service.cleanup()["deleted"] == 1
+    result = service.invalidate(profile["profile_id"], item["memory_ref"], reason="현재 사용자 정정", source_records=[origin])
+    assert result["memory_state"] == "invalidated"
+
+
+@pytest.mark.parametrize("removed_by", ["invalidation", "permission_cleanup"])
+def test_reusing_old_sources_cannot_restore_removed_unbounded_memory(memory, removed_by):
+    service, profile = memory
+    profile = unbounded_profile(service, profile)
+    origin = source(service, profile)
+    item = save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None})
+    if removed_by == "invalidation":
+        service.invalidate(profile["profile_id"], item["memory_ref"], reason="사용자가 정정한 이전 지식", source_records=[origin])
+    else:
+        service.store.put_profile("alpha", resources=profile["resources"], long_term_memory_days=None,
+                                 memory_policy=memory_policy(model_allowed=False))
+        service.cleanup()
+        profile = unbounded_profile(service, profile)
+    with pytest.raises(StoreError, match="MEMORY_CONFLICT"):
+        save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None},
+             draft=candidate("사용 차단된 원래 출처를 새 문장으로 다시 등록한다"))
+    fresh = save(service, profile, sources=[source(service, profile, key="independently-verified")],
+                 policy={"retention": "long_term", "retention_days": None})
+    assert fresh["expires_at"] is None
+
+
+def test_switching_default_to_unbounded_never_extends_or_revives_old_finite_memory(memory):
+    service, profile = memory
+    origin = source(service, profile)
+    first = save(service, profile, sources=[origin], policy={"retention": "long_term"})
+    profile = unbounded_profile(service, profile)
+    second = save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None},
+                  draft=candidate("같은 확인 자료의 연결 풀 절차를 다시 표현한다"))
+    assert second["expires_at"] == first["expires_at"]
+    service.store._db.execute("UPDATE memory_versions SET expires_at=?", (timestamp(-1),))
+    service.cleanup()
+    with pytest.raises(StoreError, match="RECORD_EXPIRED"):
+        save(service, profile, sources=[origin], policy={"retention": "long_term", "retention_days": None})
+
+
+@pytest.mark.parametrize("profile_days,approved_days,expected_days", [(None, 5, 5), (7, None, 7), (7, 3, 3)])
+def test_unbounded_permission_still_respects_a_finite_profile_or_plan_limit(memory, profile_days, approved_days, expected_days):
+    service, profile = memory
+    profile = service.store.put_profile("alpha", resources=profile["resources"], memory_policy=memory_policy(),
+                                        long_term_memory_days=profile_days)
+    item = save(service, profile, policy={"retention": "long_term", "retention_days": approved_days})
+    expiry = datetime.fromisoformat(item["expires_at"])
+    assert datetime.now(UTC) + timedelta(days=expected_days - 0.01) < expiry <= datetime.now(UTC) + timedelta(days=expected_days)
+
+
+def test_unbounded_default_does_not_make_source_bound_memory_permanent(memory):
+    service, profile = memory
+    profile = unbounded_profile(service, profile)
+    origin = source(service, profile, expires_at=timestamp(2))
+    item = save(service, profile, sources=[origin], policy={"retention_days": None})
+    assert datetime.fromisoformat(item["expires_at"]) <= datetime.now(UTC) + timedelta(days=2)
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_legacy_nonnull_expiry_schema_upgrades_atomically_with_vectors_and_fts(memory, interrupt):
+    original, profile = memory
+    service = MemoryService(original.store, NumericalFixtureEmbedder(), auto_load=False)
+    # Reproduce the released schema before creating data through the real service.
+    with service.store.transaction():
+        service.store._db.execute("DROP TABLE memory_vectors")
+        service.store._db.execute("DROP TABLE memory_versions")
+        service.store._db.execute("""CREATE TABLE memory_versions (
+            memory_ref TEXT PRIMARY KEY, memory_id TEXT NOT NULL REFERENCES memory_heads(memory_id),
+            profile_id TEXT NOT NULL REFERENCES profiles(profile_id), version INTEGER NOT NULL,
+            body TEXT, content_hash TEXT NOT NULL, source_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL, expires_at TEXT NOT NULL, index_state TEXT NOT NULL,
+            UNIQUE(memory_id,version))""")
+        service.store._db.execute("""CREATE TABLE memory_vectors (
+            memory_ref TEXT PRIMARY KEY REFERENCES memory_versions(memory_ref),
+            model_id TEXT NOT NULL, dimensions INTEGER NOT NULL, embedding BLOB NOT NULL)""")
+    item = save(service, profile)
+    vector = tuple(service.store._db.execute("SELECT * FROM memory_vectors").fetchone())
+    reopened = Store(service.store.data_dir)
+    try:
+        if interrupt:
+            reopened._db.set_authorizer(lambda action, name, *_: sqlite3.SQLITE_DENY
+                if action == sqlite3.SQLITE_DROP_TABLE and name == "memory_versions" else sqlite3.SQLITE_OK)
+            with pytest.raises(StoreError, match="STORE_UNAVAILABLE"):
+                MemoryService(reopened, NumericalFixtureEmbedder(), auto_load=False)
+            assert next(row for row in reopened._db.execute("PRAGMA table_info(memory_versions)") if row[1] == "expires_at")[3] == 1
+            assert tuple(reopened._db.execute("SELECT * FROM memory_vectors").fetchone()) == vector
+            reopened._db.set_authorizer(None)
+        restored = MemoryService(reopened, NumericalFixtureEmbedder(), auto_load=False)
+        assert next(row for row in reopened._db.execute("PRAGMA table_info(memory_versions)") if row[1] == "expires_at")[3] == 0
+        assert tuple(reopened._db.execute("SELECT * FROM memory_vectors").fetchone()) == vector
+        assert reopened._db.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert restored.search(profile["profile_id"], "E_CONN_001")["items"][0]["memory_ref"] == item["memory_ref"]
+        assert restored.get(profile["profile_id"], item["memory_ref"])["expires_at"] == item["expires_at"]
+        with pytest.raises(StoreError, match="STORE_UNAVAILABLE"):
+            with reopened.transaction():
+                reopened._db.execute("INSERT INTO memory_versions SELECT 'duplicate-ref',memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state FROM memory_versions")
+        current = unbounded_profile(restored, profile)
+        permanent = save(restored, current, sources=[source(restored, current, key="after-upgrade")],
+                         policy={"retention": "long_term", "retention_days": None})
+        assert permanent["expires_at"] is None
+    finally:
+        reopened.close()
+
+
+def test_source_bound_without_any_expiry_keeps_sources_and_reindexes(memory):
+    original, profile = memory
+    profile = unbounded_profile(original, profile)
+    service = MemoryService(original.store, NumericalFixtureEmbedder(), auto_load=False)
+    origin = source(service, profile, record_days=None, export_allowed=True)
+    item = save(service, profile, sources=[origin], policy={"expires_at": None})
+    assert item["retention"] == "source_bound" and item["expires_at"] is None
+    assert [entry["record_ref"] for entry in item["sources"]] == [origin["record_ref"]]
+    assert service.can_export(profile["profile_id"], item["memory_ref"]) is True
+    assert service.cleanup()["deleted"] == 0
+    assert service.reindex(profile["profile_id"]) == {"ready": 1, "pending": 0}
+    assert service.search(profile["profile_id"], "E_CONN_001")["items"][0]["expires_at"] is None
+
+
+@pytest.mark.parametrize("record_days,source_days,task_days,expected", [(3, None, None, 3), (None, 2, None, 2), (None, None, 4, 4), (5, 4, 2, 2)])
+def test_source_bound_intersects_finite_and_unbounded_origin_and_task_expiry(memory, record_days, source_days, task_days, expected):
+    service, profile = memory
+    origin = source(service, profile, record_days=record_days,
+                    expires_at=timestamp(source_days) if source_days is not None else None)
+    item = save(service, profile, sources=[origin], policy={"expires_at": timestamp(task_days) if task_days is not None else None})
+    expiry = datetime.fromisoformat(item["expires_at"])
+    assert datetime.now(UTC) + timedelta(days=expected - 0.01) < expiry <= datetime.now(UTC) + timedelta(days=expected)
+
+
+def test_original_expiry_removal_cannot_extend_or_revive_a_finite_source_bound_memory(memory):
+    service, profile = memory
+    origin = source(service, profile, record_days=None)
+    first = save(service, profile, sources=[origin], policy={"expires_at": timestamp(2)})
+    revised = save(service, profile, sources=[origin], policy={"expires_at": None},
+                   draft=candidate("동일한 원출처를 다시 표현한 연결 점검 절차"))
+    assert revised["expires_at"] == first["expires_at"]
+    service.store._db.execute("UPDATE memory_versions SET expires_at=?", (timestamp(-1),))
+    service.cleanup()
+    with pytest.raises(StoreError, match="RECORD_EXPIRED"):
+        save(service, profile, sources=[origin], policy={"expires_at": None})
+
+
+def test_unbounded_source_still_requires_verification_time_and_respects_explicit_block(memory):
+    service, profile = memory
+    origin = source(service, profile, record_days=None)
+    with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
+        save(service, profile, sources=[{**origin, "verified_at": None}], policy={"expires_at": None})
+    item = save(service, profile, sources=[origin], policy={"expires_at": None})
+    service.store._db.execute("UPDATE records SET blocked=1 WHERE record_ref=?", (origin["record_ref"],))
+    assert service.search(profile["profile_id"], "E_CONN_001")["items"] == []
+    with pytest.raises(StoreError, match="ACCESS_DENIED"):
+        service.get(profile["profile_id"], item["memory_ref"])

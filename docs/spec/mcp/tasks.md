@@ -301,10 +301,12 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 | `instance_ids` | ID[] | 기여 리소스; 실제 대상 바인딩은 서버가 보존·대조 |
 | `sources` | MemorySource[] | 현재 제공 가능한 출처 업무·기록; 원문 만료·제공 제한 시 [] 가능 |
 | `verification_method` | string | 실제 확인 방법과 제한 |
-| `verified_at`, `expires_at` | 각각 string | 시간대를 포함한 ISO 8601 시각 |
+| `verified_at` | string | 시간대를 포함한 실제 검증의 ISO 8601 시각 |
+| `expires_at` | string 또는 null | 유한 기한의 ISO 8601 시각; 활성 무기한 지식은 null |
 | `retention` | enum | `source_bound`, `long_term` |
 
 검색에는 현재 사용 가능한 개정만 반환한다.
+따라서 검색 결과의 `expires_at=null`은 활성 무기한 지식이며 만료 검사만 생략하고 현재 개정·권한·대상 검사는 유지한다.
 `MemorySource`의 필수 필드는 `task_id:ID`, `record_ref:RecordRef`, `fields:FieldSelector[]`다.
 `fields`는 서버가 확정한 기여 필드이며 호스트가 지정해 허용 범위를 줄이거나 넓히지 않는다.
 출처 참조가 반환돼도 원문 열람은 해당 업무의 현재 권한·기한을 별도로 검사한다.
@@ -388,7 +390,8 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 원본 참조와 말단 경로를 중복 제거하되 정책·시점이 다른 관찰을 하나로 합치지 않는다.
 
 모든 기여 필드가 현재 계획·profile의 지식 범주·모델 제공·보관 조건을 만족해야 후보를 저장한다.
-마스킹·미래 재제공·내보내기는 가장 엄격한 조건, 일반 경험의 기한은 가장 이른 출처 기한을 승계한다.
+마스킹·미래 재제공·내보내기는 가장 엄격한 조건을 적용한다.
+일반 경험은 업무·기여 출처의 가장 이른 유한 기한을 승계하며 모두 무기한이면 null을 사용한다.
 하나의 기록에 기억으로 보존하면 안 되는 필드가 섞여 있으면 해당 후보를 저장하지 않는다.
 필요하면 이후 업무에서 적법한 계획으로 조회·모델 제공 범위를 좁혀 새 근거를 확보한다.
 
@@ -412,8 +415,8 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 
 실행기는 [MemoryRule](plans.md#예산보고완료-조건)과 profile 정책에서 범주·원출처 필드·재제공·보존을 해소한다.
 허용·근거·비밀 제거·마스킹 검사를 통과하면 정본 개정·출처 연결·만료·멱등 기록을 보존한다.
-중복 후보·기존 근거의 재사용은 새 기한을 만들지 않고 실제 새 검증이 있는 개정만 기간을 다시 해소한다.
-새 허용이나 더 긴 기본값만으로 기존 지식의 기간을 늘리지 않는다.
+중복 후보·동일 출처의 재저장·문장 정정은 새 기한을 만들거나 만료 지식을 부활시키지 않고 실제 새 검증이 있는 개정만 보존 조건을 다시 해소한다.
+새 허용·더 긴 기본값·무기한 기본값만으로 기존 유한 기한을 초기화하거나 늘리지 않는다.
 
 `memory_ref`를 사용한 정정·무효화는 같은 profile·실제 대상의 현재 개정만 받는다.
 다른 개정으로 이미 바뀌었으면 `MEMORY_CONFLICT`이며 임의 최신 개정에 덮어쓰지 않는다.
@@ -427,10 +430,12 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 | `update_ref` | RecordRef | 본문 복제 없는 갱신 결과 기록 |
 | `memory_ref` | RecordRef | 저장·정정·무효화한 정확한 개정 |
 | `memory_state` | enum | `active`, `invalidated` |
-| `expires_at` | string 또는 null | 활성 지식의 기한; 무효화 결과는 null |
+| `expires_at` | string 또는 null | 활성 지식의 유한 기한; 활성 무기한 지식과 무효화 결과는 null |
 | `index_state` | enum | `ready`, `pending` |
 
 성공한 정본 변경과 갱신 기록은 업무 개정을 한 번 증가시키며 기존 종료 상태·외부 효과를 바꾸지 않는다.
+`expires_at`만으로 유효성을 판정하지 않고 `memory_state`를 함께 검사한다.
+`active`와 null의 조합은 시간 제한 없는 지식이며 `invalidated`는 기한과 관계없이 사용할 수 없다.
 무효화·정정은 정본 검사로 이전 개정의 검색 노출을 즉시 막는다.
 정본 보존 실패는 `STORE_UNAVAILABLE`이며 부분 저장 여부를 확인하고 같은 요청으로 복구한다.
 정본은 보존했지만 색인이 미완성이면 `status=partial`, `MEMORY_INDEX_INCOMPLETE`, `index_state=pending`으로 반환한다.
@@ -629,11 +634,11 @@ scale은 계획의 `ratio_scale`과 같고 최대 18이며, 해당 자리에서 
 출력 값뿐 아니라 결합키·부재·행 포함 판정에 쓰인 필드도 기여 출처다.
 해당 원출처의 내보내기·가림·현재 권한을 모두 검사하고 불명확하거나 금지된 기여 필드가 있으면 거부한다.
 `omit|redact`된 값은 결합키·셀 연산·부재·행 포함 판정에도 사용하지 않고 거부한다.
-보존기한은 업무 보고·표와 모든 기여 원자료의 기한 중 가장 이른 값이다.
+보존기한은 업무 보고·표와 모든 기여 원자료의 유한 기한 중 가장 이른 값이며, 모두 무기한일 때만 null이다.
 원자료의 의미·시점·완전성 차이는 보고 제한에 남기고 같은 시점의 원자적 조회로 표현하지 않는다.
 
 검증 통과 시 실행기가 `TableValidation`을 생성해 보존할 표와 연결한다.
-필수 필드는 `table_ref:RecordRef`, `table_id:ID`, `source_refs:RecordRef[]`, `row_count:NonNegativeInt`, `coverage:enum`, `checks:string[]`, `limitations:string[]`, `expires_at:string`이다.
+필수 필드는 `table_ref:RecordRef`, `table_id:ID`, `source_refs:RecordRef[]`, `row_count:NonNegativeInt`, `coverage:enum`, `checks:string[]`, `limitations:string[]`, `expires_at:string|null`이다.
 `coverage`는 실제 확인한 `complete|selected`이며 `checks`에는 형식·출처·결합·산술·제공·기한 검사 결과를 남긴다.
 실패하면 `RESULT_VALIDATION_FAILED`로 거부하고 유효 표·산출물 참조를 발급하지 않는다.
 호스트가 `verified=true`나 자체 검증 기록을 보내 이 판정을 대신할 수 없다.
@@ -690,7 +695,7 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 `paused`에서는 새 보고 제출·산출물 생성을 `TASK_STATE_INVALID`로 거부한다.
 기존 요청의 재전달·기록 열람과 이미 시작된 호출의 기록 보존은 현재 제공 권한 안에서 처리한다.
 
-종료 업무의 추가 보고·첨부도 최초 종료 시각에 고정한 보존기한을 적용한다.
+종료 업무의 추가 보고·첨부도 최초 종료 때 확정한 유한 기한 또는 무기한 조건을 유지하며 기여 출처의 더 이른 유한 기한을 승계한다.
 만료 후 새 보고 본문·산출물 보존은 `RECORD_EXPIRED`로 거부하며 새 요청 ID로 기한을 초기화하지 않는다.
 
 실행기는 입력·업무·계획·참조 소유, 완료 조건과 호출·근거·제공 범위를 검사한다.
@@ -789,7 +794,7 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 | `coverage` | object | 아래 필수 필드 |
 | `managed_file` | ArtifactFile 또는 null | 허용된 파일 산출물의 실제 위치·형식; 그 밖에는 null |
 
-`ArtifactFile`의 필수 필드는 `artifact_ref:RecordRef`, `format_id:string`, `media_type:string`, `size_bytes:NonNegativeInt`, `local_path:string`, `expires_at:string`이다.
+`ArtifactFile`의 필수 필드는 `artifact_ref:RecordRef`, `format_id:string`, `media_type:string`, `size_bytes:NonNegativeInt`, `local_path:string`, `expires_at:string|null`이다.
 `local_path`는 실행기가 생성·등록한 사용자 영역의 절대 경로이며 호스트 입력 경로나 임의 읽기·쓰기 지시가 아니다.
 현재 내보내기 허용·마스킹·기한·실제 파일 무결성을 확인한 뒤 제공하고 호스트가 지원하는 로컬 파일 링크로 전달한다.
 파일 전체에 현재 금지된 필드가 남아 있으면 경로를 제공하지 않는다.

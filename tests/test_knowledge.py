@@ -72,7 +72,7 @@ class LocalEngine:
         payload = ({"result": result, "instance_id": "source-one", "step_id": "collect",
                     "contract_ref": "read-contract", "plan_id": "plan-one", "plan_version": 1,
                     "observed_at": timestamp(-1)} if payload is None and kind == "call_result" else payload or {"request_text": "사용자가 확인한 용어"})
-        ref = self.store.write_record(self.task["task_id"], kind, payload, timestamp(30))
+        ref = self.store.write_record(self.task["task_id"], kind, payload, changes.get("expires_at", timestamp(30)))
         fields = ["/rows/0/term", "/rows/0/meaning"] if kind == "call_result" else ["/request_text"]
         record = {"record_kind": kind, "payload": payload, "provided_paths": fields, "retained_paths": fields,
                   "allowed_paths": fields, "expires_at": timestamp(30), **changes}
@@ -248,3 +248,33 @@ def test_memory_records_original_export_proof_independently_of_model_recall(runt
     memory_ref = stored["data"]["memory_ref"]
     assert runtime.memory.get(runtime.profile["profile_id"], memory_ref)["statement"]
     assert runtime.memory.can_export(runtime.profile["profile_id"], memory_ref) is allowed
+
+
+def test_unbounded_memory_update_and_replay_keep_active_null_expiry(runtime):
+    runtime.profile = runtime.store.put_profile("knowledge-profile", resources=[runtime.resource],
+        memory_policy=runtime.profile["memory_policy"], long_term_memory_days=None)
+    runtime.task["profile_snapshot"]["long_term_memory_days"] = None
+    args = arguments(runtime, [runtime.record()])
+    first = update(runtime, args, runtime.task)
+    assert first["data"]["expires_at"] is None
+    assert first["data"]["memory_state"] == "active"
+    second = replay(runtime, args, first)
+    assert second["data"]["memory_state"] == "active"
+    assert second["data"]["expires_at"] is None
+    assert runtime.memory.get(runtime.profile["profile_id"], second["data"]["memory_ref"])["expires_at"] is None
+
+
+@pytest.mark.parametrize("retention", ["source_bound", "long_term"])
+def test_memory_update_accepts_unbounded_task_and_observation_without_losing_sources(runtime, retention):
+    runtime.profile = runtime.store.put_profile("knowledge-profile", resources=[runtime.resource],
+        memory_policy=runtime.profile["memory_policy"], retention_days=None, long_term_memory_days=None)
+    runtime.task["profile_snapshot"].update(retention_days=None, long_term_memory_days=None)
+    runtime.plan["draft"]["output"]["resource_rules"][0]["memory"]["retention"] = retention
+    reference = runtime.record(expires_at=None)
+    args = arguments(runtime, [reference])
+    first = update(runtime, args, runtime.task)
+    assert first["data"]["expires_at"] is None
+    item = runtime.memory.get(runtime.profile["profile_id"], first["data"]["memory_ref"])
+    assert item["retention"] == retention
+    assert item["sources"][0]["record_ref"] == reference
+    assert replay(runtime, args, first)["data"]["memory_state"] == "active"

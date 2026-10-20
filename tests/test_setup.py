@@ -48,6 +48,23 @@ def test_import_and_export_keep_only_portable_configuration(store, tmp_path):
     assert import_profile(store, config_file(tmp_path, config))['revision'] == 2
 
 
+def test_unlimited_memory_retention_round_trips_without_replacing_other_settings(store, tmp_path):
+    config = {'name': 'service', 'core_context': ['UTC 운영'], 'resources': [resource()],
+              'retention_days': 15, 'long_term_memory_days': None, 'memory_policy': {}}
+    profile = import_profile(store, config_file(tmp_path, config))
+    assert profile['long_term_memory_days'] is None
+    assert export_profile(store, 'service') == config
+    assert import_profile(store, config_file(tmp_path, export_profile(store, 'service')))['retention_days'] == 15
+
+
+def test_all_retention_limits_can_be_unlimited_in_profile_import_export(store, tmp_path):
+    config = {'name': 'service', 'core_context': ['UTC 운영'], 'resources': [resource()],
+              'retention_days': None, 'long_term_memory_days': None, 'memory_policy': {}}
+    profile = import_profile(store, config_file(tmp_path, config))
+    assert profile['retention_days'] is None
+    assert export_profile(store, 'service') == config
+
+
 def test_memory_policy_import_derives_target_binding_and_export_omits_internal_hash(store, tmp_path):
     policy = {'categories': ['procedure', 'lesson'], 'instance_ids': ['source-one'],
               'model_allowed': True, 'retain_allowed': True,
@@ -122,6 +139,8 @@ def test_templates_use_only_catalog_pins_and_deny_data_by_default(store):
     assert len(catalog) == 5
     for recipe_id, item in catalog.items():
         template = profile_template(store, recipe_id, 'service', 'resource-one')
+        assert template['retention_days'] is None
+        assert template['long_term_memory_days'] is None
         configured = template['resources'][0]
         assert configured['policy'] == {}
         assert configured['connection']['command'] == str(prepared_executable(store, recipe_id))

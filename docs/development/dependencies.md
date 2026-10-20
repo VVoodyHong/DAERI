@@ -76,6 +76,10 @@ macOS는 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`이며 관리 
 | `cleanup` | 만료된 업무 본문·기억·색인 정리 |
 
 일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
+새 profile의 `--retention-days`와 `--long-term-memory-days`는 각각 생략하거나 `unlimited`로 지정하면 무기한이며 양의 정수로 유한 기간을 선택한다.
+기존 profile의 기간 변경은 전체 export 설정에서 해당 `retention_days`·`long_term_memory_days`만 수정해 import하고 다른 설정을 유지한다.
+변경은 새 업무에 적용하며 기존 유한 기한의 자동 연장·만료 자료 복구를 허용하지 않는다.
+저장 의미와 기한 승계는 [보존 설정](../spec/configuration/profiles.md#구현한-profile-입력과-공개-설정)을 따른다.
 제공자 로그인만 공개 확인 URL·사용자 코드를 `pending` JSON으로 먼저 전달하고 완료 또는 실패를 반환한다.
 모델 준비·로그인·연결 진단이 실제 운영 업무 조회를 포함하지 않으며 업무 계획 승인은 별도로 받는다.
 

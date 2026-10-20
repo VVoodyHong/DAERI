@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -43,8 +44,8 @@ def test_profiles_persist_with_immutable_revisions(tmp_path):
     profile = first.put_profile("alpha", core_context=["운영 규칙"])
     assert profile.get("name") == "alpha"
     assert profile["revision"] == 1
-    assert profile["retention_days"] == 30
-    assert profile["long_term_memory_days"] == 365
+    assert profile["retention_days"] is None
+    assert profile["long_term_memory_days"] is None
     original = next((data / "profiles").glob("*.json"))
     original_bytes = original.read_bytes()
     revised = first.put_profile("alpha", core_context=["새 규칙"])
@@ -67,7 +68,8 @@ def test_profile_name_cannot_escape_managed_storage(store, name):
 
 
 @pytest.mark.parametrize("options", [
-    {"retention_days": 0}, {"retention_days": True},
+    {"retention_days": 0}, {"retention_days": True}, {"retention_days": -1}, {"retention_days": 1.5},
+    {"long_term_memory_days": 0}, {"long_term_memory_days": True},
     {"long_term_memory_days": -1}, {"long_term_memory_days": 1.5},
     {"core_context": "plaintext"}, {"core_context": [42]},
     {"resources": [{"connection": {"password": "do-not-echo"}}]},
@@ -82,6 +84,38 @@ def test_invalid_policy_or_plaintext_credentials_are_rejected(store, options):
 def test_unconnected_resources_are_not_silently_published(store):
     with pytest.raises(StoreError, match="INVALID_INPUT"):
         store.put_profile("alpha", resources=[{"auth_ref": "credential-one"}])
+
+
+@pytest.mark.parametrize("days", [None, 90, 365])
+def test_memory_retention_choice_survives_reopen_without_changing_body_retention(tmp_path, days):
+    data = tmp_path / "retention"
+    with closing(Store(data)) as store:
+        profile = store.put_profile("service", long_term_memory_days=days)
+    with closing(Store(data)) as reopened:
+        assert reopened.get_profile(profile["profile_id"])["long_term_memory_days"] == days
+        assert reopened.get_profile(profile["profile_id"])["retention_days"] is None
+
+
+@pytest.mark.parametrize("days", [None, 15, 30])
+def test_body_retention_choice_survives_reopen(tmp_path, days):
+    with closing(Store(tmp_path)) as store:
+        profile = store.put_profile("service", retention_days=days)
+    with closing(Store(tmp_path)) as reopened:
+        assert reopened.get_profile(profile["profile_id"])["retention_days"] == days
+
+
+def test_unlimited_task_retention_never_removes_an_existing_finite_record_limit(store):
+    task = task_for(store)
+    limit = (datetime.now(UTC) + timedelta(days=2)).isoformat()
+    limited = store.write_record(task["task_id"], "report", {"summary": "finite"}, limit)
+    unlimited = store.write_record(task["task_id"], "report", {"summary": "unlimited"})
+    store.set_task_expiry(task["task_id"], None)
+    assert store.read_record(task["task_id"], limited)["expires_at"] == limit
+    assert store.read_record(task["task_id"], unlimited)["expires_at"] is None
+    store.cleanup(now=datetime.now(UTC) + timedelta(days=3650))
+    with pytest.raises(StoreError, match="RECORD_EXPIRED"):
+        store.read_record(task["task_id"], limited)
+    assert store.read_record(task["task_id"], unlimited)["payload"] == {"summary": "unlimited"}
 
 
 def test_edited_profile_blocks_reads_and_further_publication(store, tmp_path):

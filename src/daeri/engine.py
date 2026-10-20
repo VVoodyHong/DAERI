@@ -864,8 +864,10 @@ class Engine:
                     "provided_paths": paths, "allowed_paths": paths}
         record = self.store.read_record(task["task_id"], ref)
         payload, kind = record["payload"], record["record_kind"]
-        days = (task.get("profile_snapshot") or {"retention_days": 30})["retention_days"]
-        expiry = record["expires_at"] or (datetime.now(UTC) + timedelta(days=days)).isoformat()
+        days = (task.get("profile_snapshot") or {}).get("retention_days")
+        expiry = record["expires_at"]
+        if expiry is None and days is not None:
+            expiry = (datetime.now(UTC) + timedelta(days=days)).isoformat()
         metadata = {"record_kind": kind, "payload": copy.deepcopy(payload), "expires_at": expiry,
                     "observed_at": task.get("created_at", task["last_activity_at"]), "evidence_refs": []}
         if kind == "call_result":
@@ -948,8 +950,8 @@ class Engine:
         if task.get("finished_at"):
             return
         task["state"], task["waiting_reason"], task["finished_at"] = state, None, now()
-        days = (task.get("profile_snapshot") or {"retention_days": 30})["retention_days"]
-        expiry = (datetime.fromisoformat(task["finished_at"]) + timedelta(days=days)).isoformat()
+        days = (task.get("profile_snapshot") or {}).get("retention_days")
+        expiry = (datetime.fromisoformat(task["finished_at"]) + timedelta(days=days)).isoformat() if days is not None else None
         self.store.set_task_expiry(task["task_id"], expiry)
         for call in task.get("calls", []):
             self._reduce_call(task, call)

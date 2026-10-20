@@ -69,8 +69,12 @@ def _parser():
     create = profile.add_parser('create')
     create.add_argument('name')
     create.add_argument('--context', action='append', default=[])
-    create.add_argument('--retention-days', type=int, default=30)
-    create.add_argument('--long-term-memory-days', type=int, default=365)
+    create.add_argument('--retention-days',
+                        type=lambda value: None if value == 'unlimited' else int(value), default=None,
+                        help='Positive retention days or unlimited (default)')
+    create.add_argument('--long-term-memory-days',
+                        type=lambda value: None if value == 'unlimited' else int(value), default=None,
+                        help='Positive retention days or unlimited (default)')
     profile.add_parser('list')
     for action in ('show', 'export'):
         profile.add_parser(action).add_argument('name_or_id')
@@ -149,7 +153,7 @@ def _with_store(args):
     try:
         if args.command == 'profile':
             if args.profile_command == 'create':
-                return store.put_profile(args.name, core_context=redact(args.context),
+                return store.put_profile(args.name, create_only=True, core_context=redact(args.context),
                                          retention_days=args.retention_days,
                                          long_term_memory_days=args.long_term_memory_days)
             if args.profile_command == 'list': return store.list_profiles()

@@ -43,6 +43,14 @@ def _digest(value):
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
+def _finite_min(*values):
+    return min((value for value in values if value is not None), default=None)
+
+
+def _expiry(value):
+    return _instant(value) if value is not None else None
+
+
 class LocalEmbedder:
     """ONNX CPU embeddings. Only prepare() may download the selected public model."""
 
@@ -112,7 +120,7 @@ class MemoryService:
                     memory_ref TEXT PRIMARY KEY, memory_id TEXT NOT NULL REFERENCES memory_heads(memory_id),
                     profile_id TEXT NOT NULL REFERENCES profiles(profile_id), version INTEGER NOT NULL,
                     body TEXT, content_hash TEXT NOT NULL, source_hash TEXT NOT NULL,
-                    created_at TEXT NOT NULL, expires_at TEXT NOT NULL, index_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL, expires_at TEXT, index_state TEXT NOT NULL,
                     UNIQUE(memory_id,version))""",
                 """CREATE TABLE IF NOT EXISTS memory_vectors (
                     memory_ref TEXT PRIMARY KEY REFERENCES memory_versions(memory_ref),
@@ -122,6 +130,7 @@ class MemoryService:
             ]
             for statement in statements:
                 self.store._db.execute(statement)
+            self._upgrade_expiry(statements[1])
         if self.embedder is None and auto_load and (store.data_dir / "models" / "prepared.json").is_file():
             try:
                 self.embedder = LocalEmbedder.load(store.data_dir / "models")
@@ -142,6 +151,32 @@ class MemoryService:
                 self.vector_ready = False
         self.cleanup()
 
+    def _upgrade_expiry(self, schema):
+        columns = self.store._db.execute("PRAGMA table_info(memory_versions)").fetchall()
+        if not next(column for column in columns if column["name"] == "expires_at")["notnull"]:
+            return
+        names = "memory_ref,memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state"
+        _require({column["name"] for column in columns} == set(names.split(",")),
+                 "STORE_UNAVAILABLE", "알려진 기억 스키마만 보존기한 형식을 이관할 수 있습니다.")
+        db = self.store._db
+        vector_schema = db.execute("SELECT sql FROM sqlite_schema WHERE name='memory_vectors'").fetchone()[0]
+        dependencies = db.execute("""SELECT sql FROM sqlite_schema
+            WHERE tbl_name IN ('memory_versions','memory_vectors') AND type IN ('index','trigger') AND sql IS NOT NULL""").fetchall()
+        # Rebuild the child in the same transaction so foreign-key enforcement stays enabled.
+        db.execute("CREATE TEMP TABLE memory_vectors_backup AS SELECT * FROM memory_vectors")
+        db.execute(schema.replace("IF NOT EXISTS memory_versions", "memory_versions_next"))
+        db.execute(f"INSERT INTO memory_versions_next({names}) SELECT {names} FROM memory_versions")
+        db.execute("DROP TABLE memory_vectors")
+        db.execute("DROP TABLE memory_versions")
+        db.execute("ALTER TABLE memory_versions_next RENAME TO memory_versions")
+        db.execute(vector_schema)
+        db.execute("INSERT INTO memory_vectors SELECT * FROM memory_vectors_backup")
+        db.execute("DROP TABLE memory_vectors_backup")
+        for dependency in dependencies:
+            db.execute(dependency[0])
+        _require(not db.execute("PRAGMA foreign_key_check").fetchall(),
+                 "STORE_UNAVAILABLE", "기억 스키마 이관 뒤 출처 연결을 확인할 수 없습니다.")
+
     def _policy(self, profile_id):
         profile = self.store.get_profile(profile_id)
         return profile, profile.get("memory_policy", {})
@@ -161,15 +196,16 @@ class MemoryService:
             record = self.store.read_record(task["task_id"], value.get("record_ref"))
             _require(record["record_kind"] in {"request", "clarification", "local_check", "call_result"},
                      "RESULT_VALIDATION_FAILED", "말단 관찰·사용자 확인 기록으로 출처를 해소해야 합니다.")
-            expiry = min(_instant(value.get("expires_at")), _instant(record["expires_at"])) if record["expires_at"] else _instant(value.get("expires_at"))
+            _require("expires_at" in value, "RESULT_VALIDATION_FAILED", "출처의 보존기한 또는 명시적인 무기한 값이 필요합니다.")
+            expiry = _finite_min(_expiry(value["expires_at"]), _expiry(record["expires_at"]))
             verified = _instant(value.get("verified_at"))
-            _require(verified <= datetime.now(UTC) and expiry > datetime.now(UTC),
+            _require(verified <= datetime.now(UTC) and (expiry is None or expiry > datetime.now(UTC)),
                      "RECORD_EXPIRED", "사용 가능한 확인 시각·출처 보존기한이 필요합니다.")
             keys = {"task_id", "record_ref", "fields", "instance_ids", "target_bindings",
                     "available", "model_allowed", "retain_allowed", "long_term_allowed"}
             checked.append({**{key: value[key] for key in keys if key in value},
                             "record_kind": record["record_kind"], "export_allowed": value.get("export_allowed") is True,
-                            "expires_at": expiry.isoformat(), "verified_at": verified.isoformat()})
+                            "expires_at": expiry.isoformat() if expiry is not None else None, "verified_at": verified.isoformat()})
         return checked
 
     def _resource_allowed(self, item, profile, *, export=False):
@@ -232,11 +268,13 @@ class MemoryService:
         _require(row["current_ref"] == memory_ref and not row["invalidated"],
                  "MEMORY_CONFLICT", "기억이 정정되거나 무효화되어 현재 개정을 다시 확인해야 합니다.")
         if not allow_expired:
-            _require(_instant(row["expires_at"]) > datetime.now(UTC) and row["body"] is not None,
+            _require((row["expires_at"] is None or _instant(row["expires_at"]) > datetime.now(UTC)) and row["body"] is not None,
                      "RECORD_EXPIRED", "기억의 보존기한이 끝났습니다.")
         item = json.loads(row["body"]) if row["body"] is not None else {}
         # The canonical expiry column controls access even while cleanup is pending.
         item["expires_at"] = row["expires_at"]
+        _require(row["body"] is None or row["expires_at"] is not None or item.get("retention") in {"source_bound", "long_term"},
+                 "RESULT_VALIDATION_FAILED", "기억의 보존 유형을 확인할 수 없습니다.")
         if check_policy:
             profile, policy = self._policy(profile_id)
             _require(self._allowed(item, policy, profile=profile), "ACCESS_DENIED", "현재 profile 정책·실제 대상이 기억 제공을 허용하지 않습니다.")
@@ -250,7 +288,7 @@ class MemoryService:
                 self.store.read_record(source["task_id"], source["record_ref"])
             except StoreError:
                 continue
-            if _instant(source["expires_at"]) > datetime.now(UTC):
+            if source["expires_at"] is None or _instant(source["expires_at"]) > datetime.now(UTC):
                 result["sources"].append({key: source[key] for key in ("task_id", "record_ref", "fields")})
         return result
 
@@ -307,11 +345,14 @@ class MemoryService:
             if retention == "long_term":
                 _require(all(source.get("long_term_allowed") is True for source in sources),
                          "ACCESS_DENIED", "모든 출처가 독립적인 장기 운영지식 보존을 허용해야 합니다.")
-                days = min(profile["long_term_memory_days"], policy.get("retention_days", profile["long_term_memory_days"]))
-                _require(type(days) is int and days > 0, "INVALID_INPUT", "서버가 해소한 장기 보존기간이 필요합니다.")
-                expiry = datetime.now(UTC) + timedelta(days=days)
+                limits = [profile["long_term_memory_days"], policy.get("retention_days", profile["long_term_memory_days"])]
+                _require(all(value is None or (type(value) is int and value > 0) for value in limits),
+                         "INVALID_INPUT", "서버가 해소한 장기 보존기간은 null 또는 양의 정수여야 합니다.")
+                days = _finite_min(*limits)
+                expiry = datetime.now(UTC) + timedelta(days=days) if days is not None else None
             else:
-                expiry = min(*(_instant(source["expires_at"]) for source in sources), _instant(policy.get("expires_at")))
+                _require("expires_at" in policy, "RESULT_VALIDATION_FAILED", "업무 보존기한 또는 명시적인 무기한 값이 필요합니다.")
+                expiry = _finite_min(*(_expiry(source["expires_at"]) for source in sources), _expiry(policy["expires_at"]))
             content_hash = _digest({key: item[key] for key in required})
             source_hash = _digest(sorted([{
                 key: source[key] for key in ("task_id", "record_ref", "fields", "verified_at")}
@@ -319,14 +360,18 @@ class MemoryService:
             earlier = self.store._db.execute("SELECT min(expires_at) FROM memory_versions WHERE profile_id=? AND source_hash=?",
                                               (profile_id, source_hash)).fetchone()[0]
             if earlier:
-                expiry = min(expiry, _instant(earlier))
-            _require(expiry > datetime.now(UTC), "RECORD_EXPIRED", "기존 출처를 반복 사용해 기억의 기한을 연장할 수 없습니다.")
+                expiry = _finite_min(expiry, _instant(earlier))
+            _require(expiry is None or expiry > datetime.now(UTC), "RECORD_EXPIRED", "기존 출처를 반복 사용해 기억의 기한을 연장할 수 없습니다.")
+            removed = self.store._db.execute("""SELECT 1 FROM memory_versions v JOIN memory_heads h USING(memory_id)
+                WHERE v.profile_id=? AND v.source_hash=? AND (h.invalidated=1 OR v.body IS NULL) LIMIT 1""",
+                (profile_id, source_hash)).fetchone()
+            _require(removed is None, "MEMORY_CONFLICT", "사용 차단·정리한 기억의 출처는 새로 확인한 자료 없이 다시 사용할 수 없습니다.")
             previous = None
             if memory_ref is not None:
                 previous, old = self._row(profile_id, memory_ref)
                 _require(old["_target_bindings"] == bindings, "ACCESS_DENIED", "다른 실제 대상의 기억을 같은 ID로 정정할 수 없습니다.")
                 if previous["source_hash"] == source_hash:
-                    expiry = min(expiry, _instant(previous["expires_at"]))
+                    expiry = _finite_min(expiry, _instant(previous["expires_at"]) if previous["expires_at"] else None)
             duplicate = self.store._db.execute("""SELECT v.memory_ref FROM memory_versions v JOIN memory_heads h USING(memory_id)
                 WHERE v.profile_id=? AND v.content_hash=? AND v.source_hash=? AND h.current_ref=v.memory_ref
                 AND h.invalidated=0""", (profile_id, content_hash, source_hash)).fetchone()
@@ -338,13 +383,13 @@ class MemoryService:
             reference = f"memory_{uuid4().hex}"
             version = previous["version"] + 1 if previous else 1
             item.update(memory_ref=reference, verified_at=max(source["verified_at"] for source in sources),
-                        expires_at=expiry.isoformat())
+                        expires_at=expiry.isoformat() if expiry is not None else None)
             self.store._db.execute("""INSERT INTO memory_heads(memory_id,profile_id,current_ref) VALUES(?,?,?)
                 ON CONFLICT(memory_id) DO UPDATE SET current_ref=excluded.current_ref,invalidated=0""",
                 (identity, profile_id, reference))
             self.store._db.execute("INSERT INTO memory_versions VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (reference, identity, profile_id, version, _json(item), content_hash, source_hash, instant,
-                 expiry.isoformat(), "pending"))
+                 item["expires_at"], "pending"))
             if previous:
                 self._drop_indexes(previous["memory_ref"])
         state = self._index(profile_id, reference)
@@ -392,7 +437,7 @@ class MemoryService:
                      "ACCESS_DENIED", "현재 profile의 기억 조회 허용 대상만 선택할 수 있습니다.")
             rows = self.store._db.execute("""SELECT v.* FROM memory_versions v JOIN memory_heads h USING(memory_id)
                 WHERE h.profile_id=? AND h.current_ref=v.memory_ref AND h.invalidated=0 AND v.body IS NOT NULL
-                AND v.expires_at>? ORDER BY v.memory_ref LIMIT 10001""", (profile_id, datetime.now(UTC).isoformat())).fetchall()
+                AND (v.expires_at IS NULL OR v.expires_at>?) ORDER BY v.memory_ref LIMIT 10001""", (profile_id, datetime.now(UTC).isoformat())).fetchall()
             eligible = {}
             for row in rows[:10000]:
                 item = json.loads(row["body"])
@@ -471,7 +516,7 @@ class MemoryService:
         with self.store.transaction():
             rows = self.store._db.execute("""SELECT v.profile_id,v.memory_ref FROM memory_versions v
                 JOIN memory_heads h USING(memory_id) WHERE h.current_ref=v.memory_ref AND h.invalidated=0
-                AND v.body IS NOT NULL AND v.expires_at>?""", (datetime.now(UTC).isoformat(),)).fetchall()
+                AND v.body IS NOT NULL AND (v.expires_at IS NULL OR v.expires_at>?)""", (datetime.now(UTC).isoformat(),)).fetchall()
         states = [self._index(row["profile_id"], row["memory_ref"]) for row in rows
                   if profile_id is None or row["profile_id"] == profile_id]
         return {"ready": states.count("ready"), "pending": states.count("pending")}
@@ -484,7 +529,7 @@ class MemoryService:
             for row in rows:
                 if row["profile_id"] not in policies:
                     policies[row["profile_id"]] = self._policy(row["profile_id"])
-                if (_instant(row["expires_at"]) <= datetime.now(UTC)
+                if ((row["expires_at"] is not None and _instant(row["expires_at"]) <= datetime.now(UTC))
                         or not self._allowed(json.loads(row["body"]), policies[row["profile_id"]][1], profile=policies[row["profile_id"]][0])):
                     self._drop_indexes(row["memory_ref"])
                     self.store._db.execute("UPDATE memory_versions SET body=NULL,index_state='pending' WHERE memory_ref=?", (row["memory_ref"],))

@@ -69,6 +69,29 @@ def response_args(saved, waiting, key="response-1", decision="approve", text="Ïù
     return {"request_id": key, "task_id": saved["task_id"], "expected_task_revision": waiting["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "stage": "respond", "approval_request_id": waiting["approval_request_id"], "decision": decision, "user_response": text}
 
 
+@pytest.mark.parametrize("days", [None, 30])
+def test_task_retention_is_explicit_in_plan_and_preserved_at_termination(runtime, days):
+    engine, _ = runtime
+    profile = engine.store.put_profile("retention", retention_days=days)
+    task = create(engine, profile)
+    saved = plan(engine, task)
+    assert saved["retention_context"]["task_body_days"] == days
+    cancelled = engine.call("daeri_task_cancel", {"request_id": "cancel", "task_id": task["task_id"],
+        "expected_task_revision": saved["task_revision"]})
+    assert cancelled["status"] == "ok", cancelled
+    current = engine.store.get_task(task["task_id"])
+    expiry = engine.store.read_record(task["task_id"], current["request_ref"])["expires_at"]
+    if days is None:
+        assert expiry is None
+    else:
+        assert datetime.fromisoformat(expiry) == datetime.fromisoformat(current["finished_at"]) + timedelta(days=days)
+    engine.store.cleanup(now=datetime.now(UTC) + timedelta(days=3650))
+    result = engine.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": current["request_ref"]})
+    assert result["status"] == ("ok" if days is None else "error"), result
+    if days is not None:
+        assert result["error"]["code"] == "RECORD_EXPIRED"
+
+
 def test_task_survives_restart_without_request_body_in_sqlite(runtime):
     engine, profile = runtime
     body = "UNIQUE_PRIVATE_REQUEST_BODY"

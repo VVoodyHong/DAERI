@@ -140,7 +140,7 @@ def profile_template(store, recipe_id, profile_name, instance_id):
                                             for name in item['auth_env']}},
                 'capabilities': copy.deepcopy(item['capabilities']), 'policy': {}}
     return {'name': profile_name, 'core_context': [], 'resources': [resource],
-            'retention_days': 30, 'long_term_memory_days': 365, 'memory_policy': {}}
+            'retention_days': None, 'long_term_memory_days': None, 'memory_policy': {}}
 
 
 def _run(arguments, **kwargs):

@@ -1,5 +1,6 @@
 {
   "db-postgres": {
+    "display_name": "PostgreSQL",
     "type": "DB",
     "adapter": "sql_read",
     "package": "postgres-mcp",
@@ -12,6 +13,7 @@
     "source": "https://github.com/crystaldba/postgres-mcp"
   },
   "cache-redis": {
+    "display_name": "Redis",
     "type": "Cache",
     "adapter": "redis_read",
     "package": "redis-mcp-server",
@@ -24,6 +26,7 @@
     "source": "https://github.com/redis/mcp-redis"
   },
   "infra-aws": {
+    "display_name": "AWS",
     "type": "Infra",
     "adapter": "aws_read",
     "package": "awslabs.aws-api-mcp-server",
@@ -36,6 +39,7 @@
     "source": "https://awslabs.github.io/mcp/servers/aws-api-mcp-server/"
   },
   "source-gitlab": {
+    "display_name": "GitLab",
     "type": "Source",
     "adapter": "source_read",
     "package": "mcp-gitlab",
@@ -48,6 +52,7 @@
     "source": "https://github.com/vish288/mcp-gitlab"
   },
   "document-confluence": {
+    "display_name": "Confluence",
     "type": "Document",
     "adapter": "document_read",
     "package": "mcp-atlassian",

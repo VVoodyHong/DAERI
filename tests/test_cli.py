@@ -2,6 +2,8 @@ import json
 import subprocess
 import sys
 
+import pytest
+
 
 def run_cli(*args):
     return subprocess.run(
@@ -28,12 +30,43 @@ def test_profile_round_trip_across_processes(tmp_path):
     assert created.returncode == 0, created.stderr
     profile = json.loads(created.stdout)
     assert profile["name"] == "service-prod"
+    assert profile["retention_days"] is None
+    assert profile["long_term_memory_days"] is None
     shown = run_cli("--data-dir", data_dir, "profile", "show", profile["profile_id"])
     assert shown.returncode == 0, shown.stderr
     assert json.loads(shown.stdout)["core_context"] == ["UTC 기준 운영"]
     listed = run_cli("--data-dir", data_dir, "profile", "list")
     assert listed.returncode == 0, listed.stderr
     assert [p["name"] for p in json.loads(listed.stdout)] == ["service-prod"]
+
+
+@pytest.mark.parametrize('value,expected', [('unlimited', None), ('90', 90)])
+def test_profile_creation_accepts_explicit_memory_retention(tmp_path, value, expected):
+    result = run_cli('--data-dir', str(tmp_path), 'profile', 'create', 'service',
+                     '--long-term-memory-days', value)
+    assert result.returncode == 0, result.stdout + result.stderr
+    profile = json.loads(result.stdout)
+    assert profile['long_term_memory_days'] == expected
+    assert profile['retention_days'] is None
+
+
+@pytest.mark.parametrize('value,expected', [('unlimited', None), ('30', 30)])
+def test_profile_creation_accepts_explicit_body_retention(tmp_path, value, expected):
+    result = run_cli('--data-dir', str(tmp_path), 'profile', 'create', 'service', '--retention-days', value)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)['retention_days'] == expected
+
+
+def test_repeated_profile_creation_preserves_existing_settings(tmp_path):
+    arguments = ('--data-dir', str(tmp_path), 'profile')
+    first = run_cli(*arguments, 'create', 'service', '--context', '기존 운영 규칙',
+                    '--retention-days', '15', '--long-term-memory-days', '365')
+    assert first.returncode == 0
+    repeated = run_cli(*arguments, 'create', 'service')
+    assert repeated.returncode != 0
+    assert json.loads(repeated.stdout)['error']['code'] == 'PROFILE_ALREADY_EXISTS'
+    shown = run_cli(*arguments, 'show', 'service')
+    assert json.loads(shown.stdout) == json.loads(first.stdout)
 
 
 def test_profile_error_does_not_leak_traceback(tmp_path):

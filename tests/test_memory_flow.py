@@ -12,15 +12,16 @@ from test_execution_flow import ROOT, approve, begin, comparison_report, executi
 
 
 @pytest.fixture
-def remembered(tmp_path):
+def remembered(tmp_path, request):
+    options = getattr(request, "param", {})
     store = Store(tmp_path)
     resources = [resource(), resource("cache-b", "7.00")]
     for item in resources:
         item["policy"]["memory"] = {"categories": ["procedure"], "source_fields": [ROOT],
-            "context_sources": ["request", "clarification"], "retention": "long_term", "allow_model_recall": True}
+            "context_sources": ["request", "clarification"], "retention": options.get("memory_retention", "long_term"), "allow_model_recall": True}
     targets = {item["instance_id"]: hashlib.sha256(json.dumps(item["target"], sort_keys=True,
         separators=(",", ":"), ensure_ascii=False).encode()).hexdigest() for item in resources}
-    profile = store.put_profile("remembered-service", resources=resources, memory_policy={
+    profile = store.put_profile("remembered-service", resources=resources, retention_days=options.get("retention_days"), memory_policy={
         "categories": ["procedure"], "instance_ids": list(targets), "target_bindings": targets,
         "model_allowed": True, "retain_allowed": True, "long_term_allowed": True, "exports_allowed": True})
     registry = ResourceRegistry(store)
@@ -67,6 +68,9 @@ def test_actual_tasks_report_memory_update_retrieval_and_new_plan_still_requires
     assert update["error"]["code"] == "MEMORY_INDEX_INCOMPLETE"
     item = update["data"]
     assert item["memory_state"] == "active" and item["index_state"] == "pending"
+    assert item["expires_at"] is None
+    task_expiry = engine.store._db.execute("SELECT expires_at FROM tasks WHERE task_id=?", (saved["task_id"],)).fetchone()[0]
+    assert task_expiry is None
     repeated = engine.call("daeri_memory_update", args)
     assert repeated["data"] == item
     assert engine.store.get_task(saved["task_id"])["state"] == "succeeded"
@@ -138,6 +142,32 @@ def test_exportable_past_memory_can_be_included_in_current_report_file(remembere
     artifact = engine.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": result["data"]["artifact_refs"][0]})
     assert artifact["status"] == "ok", artifact
     assert artifact["data"]["managed_file"]["local_path"]
+
+
+@pytest.mark.parametrize("remembered", [{"memory_retention": "source_bound"}], indirect=True)
+def test_actual_source_bound_memory_and_artifact_share_unbounded_original_retention(remembered):
+    engine, profile, saved, draft, approved, first, second, report = remembered
+    update = engine.call("daeri_memory_update", knowledge_args(remembered))
+    assert update["status"] == "partial", update
+    assert update["data"]["expires_at"] is None
+    item = engine.memory.get(profile["profile_id"], update["data"]["memory_ref"])
+    assert item["retention"] == "source_bound"
+    assert len(item["sources"]) == 2
+    artifact = engine.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": report["artifact_refs"][0]})
+    assert artifact["status"] == "ok", artifact
+    assert artifact["data"]["managed_file"]["expires_at"] is None
+
+
+@pytest.mark.parametrize("remembered", [{"memory_retention": "source_bound", "retention_days": 2}], indirect=True)
+def test_actual_finite_profile_still_limits_observations_reports_files_and_memory(remembered):
+    engine, profile, saved, draft, approved, first, second, report = remembered
+    update = engine.call("daeri_memory_update", knowledge_args(remembered))
+    assert update["status"] == "partial", update
+    expiry = datetime.fromisoformat(update["data"]["expires_at"])
+    assert datetime.now(UTC) + timedelta(days=1.99) < expiry <= datetime.now(UTC) + timedelta(days=2)
+    for reference in (first["result_ref"], second["result_ref"], report["report_ref"], *report["artifact_refs"]):
+        record = engine.store.read_record(saved["task_id"], reference)
+        assert datetime.fromisoformat(record["expires_at"]) <= datetime.now(UTC) + timedelta(days=2)
 
 
 @pytest.mark.parametrize("format_id", ["text", "json"])

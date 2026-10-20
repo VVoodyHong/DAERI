@@ -209,13 +209,14 @@ class Store:
             raise StoreError(error_code, "The registered file is missing or has changed.") from None
 
     def put_profile(self, name, *, core_context=None, resources=None,
-                    retention_days=30, long_term_memory_days=365, memory_policy=None) -> dict:
+                    retention_days=None, long_term_memory_days=None, memory_policy=None, create_only=False) -> dict:
         core_context = [] if core_context is None else core_context
         resources = [] if resources is None else resources
         if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name)
                 or not isinstance(core_context, list) or any(not isinstance(item, str) for item in core_context)
                 or not isinstance(resources, list)
-                or any(type(days) is not int or days <= 0 for days in (retention_days, long_term_memory_days))):
+                or any(days is not None and (type(days) is not int or days <= 0)
+                       for days in (retention_days, long_term_memory_days))):
             raise StoreError("INVALID_INPUT", "Invalid profile name, context, or retention policy.")
         if resources:
             from .resources import validate_resource
@@ -232,6 +233,8 @@ class Store:
         memory_policy = _profile_memory_policy({} if memory_policy is None else memory_policy, resources)
         with self.transaction():
             current = self._db.execute("SELECT * FROM profiles WHERE name=?", (name,)).fetchone()
+            if current and create_only:
+                raise StoreError("PROFILE_ALREADY_EXISTS", "The profile already exists; inspect it before updating its configuration.")
             if current:
                 self.get_profile(current["profile_id"])
             profile = {"profile_id": current["profile_id"] if current else f"profile_{uuid4().hex}",
@@ -394,10 +397,12 @@ class Store:
             return {"artifact_ref": record_ref, **record["payload"], "local_path": str(path.resolve()),
                     "expires_at": record["expires_at"]}
 
-    def set_task_expiry(self, task_id, expires_at: str) -> None:
-        expiry = _time(expires_at)
+    def set_task_expiry(self, task_id, expires_at: str | None) -> None:
+        expiry = _time(expires_at) if expires_at is not None else None
         with self.transaction():
             self.get_task(task_id)
+            if expiry is None:
+                return
             self._db.execute("UPDATE tasks SET expires_at=? WHERE task_id=? AND (expires_at IS NULL OR expires_at>?)",
                              (expiry, task_id, expiry))
             self._db.execute("UPDATE records SET expires_at=? WHERE task_id=? AND (expires_at IS NULL OR expires_at>?)",

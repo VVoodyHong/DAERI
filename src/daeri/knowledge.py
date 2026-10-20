@@ -128,7 +128,10 @@ def update(engine, args, task):
         resolved, retentions, bindings = [], [], {}
         expiry_row = engine.store._db.execute("SELECT expires_at FROM tasks WHERE task_id=?", (task["task_id"],)).fetchone()[0]
         finished = task.get("finished_at") or task.get("first_finished_at")
-        common_expiry = instant(expiry_row) if expiry_row else instant(finished) + timedelta(days=(task.get("profile_snapshot") or {}).get("retention_days", 30)) if storing else None
+        common_expiry = instant(expiry_row) if expiry_row is not None else None
+        days = (task.get("profile_snapshot") or {}).get("retention_days", profile.get("retention_days"))
+        if storing and common_expiry is None and days is not None:
+            common_expiry = instant(finished) + timedelta(days=days)
         for reference, record in leaves.items():
             kind = record["record_kind"]
             body = record.get("result") if kind == "call_result" else record["payload"]
@@ -173,9 +176,10 @@ def update(engine, args, task):
             if verified_at is None and not storing:
                 verified_at = task.get("last_activity_at") or datetime.now(UTC).isoformat()
             verified_at = instant(verified_at).isoformat()
-            source_expiry = instant(record["expires_at"])
-            if common_expiry:
-                source_expiry = min(source_expiry, common_expiry)
+            finite_expiries = [instant(record["expires_at"])] if record["expires_at"] is not None else []
+            if common_expiry is not None:
+                finite_expiries.append(common_expiry)
+            source_expiry = min(finite_expiries, default=None)
             origin_task = record.get("task_id", task["task_id"])
             if origin_task != task["task_id"] and storing:
                 require(reference in plan["draft"].get("carried_evidence_refs", []), "ACCESS_DENIED", "이전 업무의 원출처는 명시적으로 승계해야 합니다.")
@@ -191,7 +195,7 @@ def update(engine, args, task):
             resolved.append({"task_id": origin_task, "record_ref": reference,
                 "fields": [selector(path) for path in sorted(provided, key=as_pointer)],
                 "instance_ids": sorted(instances), "target_bindings": source_bindings,
-                "verified_at": verified_at, "expires_at": source_expiry.isoformat(),
+                "verified_at": verified_at, "expires_at": source_expiry.isoformat() if source_expiry is not None else None,
                 "available": True, "model_allowed": True, "retain_allowed": storing, "long_term_allowed": long_term,
                 "export_allowed": export_allowed})
         if storing:
@@ -199,7 +203,7 @@ def update(engine, args, task):
             retain_long_term = bool(retentions) and all(value == "long_term" for value in retentions) and profile.get("memory_policy", {}).get("long_term_allowed") is True
             policy = {"categories": [draft["category"]], "instance_ids": sorted(candidate_ids), "target_bindings": bindings,
                 "model_allowed": True, "retain_allowed": True, "long_term_allowed": retain_long_term,
-                "retention": "long_term" if retain_long_term else "source_bound", "expires_at": common_expiry.isoformat(),
+                "retention": "long_term" if retain_long_term else "source_bound", "expires_at": common_expiry.isoformat() if common_expiry is not None else None,
                 "retention_days": (task.get("profile_snapshot") or {}).get("long_term_memory_days", profile["long_term_memory_days"])}
             item = engine.memory.save(profile["profile_id"], draft, source_records=resolved, policy=policy, memory_ref=args.get("memory_ref"))
             data = {"memory_ref": item["memory_ref"], "memory_state": "active", "expires_at": item["expires_at"], "index_state": item["index_state"]}
@@ -222,11 +226,12 @@ def replay(engine, args, cached):
     profile = engine._current_profile(task)
     data = dict(cached.get("data", cached))
     with engine.store.transaction():
-        row = engine.store._db.execute("""SELECT v.memory_ref,v.expires_at,v.index_state,h.current_ref,h.invalidated
+        row = engine.store._db.execute("""SELECT v.memory_ref,v.expires_at,v.index_state,v.body,h.current_ref,h.invalidated
             FROM memory_versions v JOIN memory_heads h USING(memory_id) WHERE v.profile_id=? AND v.memory_ref=?""",
             (profile["profile_id"], data["memory_ref"])).fetchone()
         require(row is not None, "NOT_FOUND", "원래 갱신한 기억 개정을 찾을 수 없습니다.")
-        active = row["current_ref"] == row["memory_ref"] and not row["invalidated"] and instant(row["expires_at"]) > datetime.now(UTC)
+        active = (row["current_ref"] == row["memory_ref"] and not row["invalidated"] and row["body"] is not None
+                  and (row["expires_at"] is None or instant(row["expires_at"]) > datetime.now(UTC)))
         data.update(task_revision=task["task_revision"], memory_state="active" if active else "invalidated",
                     expires_at=row["expires_at"] if active else None,
                     index_state=row["index_state"] if active else "ready")

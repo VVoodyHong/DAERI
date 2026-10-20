@@ -73,6 +73,20 @@ def instant(value):
         raise StoreError("RESULT_VALIDATION_FAILED", "유효한 보존기한이 필요합니다.") from None
 
 
+def evidence_expiry(current, record):
+    require("expires_at" in record, "출처의 보존기한 또는 명시적인 무기한 값이 필요합니다.")
+    value = record["expires_at"]
+    return earliest_expiry(current, instant(value) if value is not None else None)
+
+
+def earliest_expiry(*values):
+    return min((value for value in values if value is not None), default=None)
+
+
+def expiry_text(value):
+    return value.isoformat() if value is not None else None
+
+
 FORMATS = [
     {"format_id": "text", "contract_ref": "format_text_v1", "description": "UTF-8 텍스트 또는 검증한 보고 파일",
      "media_type": "text/plain; charset=utf-8", "extensions": ["txt"], "input_kinds": ["text", "report"]},
@@ -198,7 +212,7 @@ class ResultService:
                 and isinstance(table["rows"], list) and len(table["rows"]) <= rule["max_rows"], "표의 구조·행 한도가 승인과 다릅니다.")
         rules = {item["source_id"]: item for item in rule["sources"]}
         require(len(rules) == len(rule["sources"]) and bool(rules), "고유한 승인 소스가 필요합니다.")
-        sources, refs, used_steps, dates, limitations = {}, [], set(), [expiry], []
+        sources, refs, used_steps, limitations = {}, [], set(), []
         steps = {item["step_id"]: item for item in plan["draft"]["steps"]}
         for source in table["sources"]:
             object_fields(source, {"source_id", "record_refs"})
@@ -217,7 +231,7 @@ class ResultService:
                         "표의 기록과 승인 단계·리소스·기능 계약이 일치하지 않습니다.")
                 require((record.get("plan_id") == plan["plan_id"] and record.get("plan_version") == plan["plan_version"])
                         or ref in plan["draft"].get("carried_evidence_refs", []), "이전 계획의 자료는 명시적으로 승계해야 합니다.")
-                dates.append(instant(record["expires_at"]))
+                expiry = evidence_expiry(expiry, record)
                 complete = complete and record.get("source_complete") is True
                 fingerprints.add(record.get("query_fingerprint"))
                 value = self._input(record)
@@ -313,13 +327,12 @@ class ResultService:
                     require(type(cell["value"]) is type(expected_value) and cell["value"] == expected_value,
                             "모델이 제출한 셀이 원본·연산 결과와 다릅니다.")
         require(rule["coverage"] != "complete" or received == expected, "전체 표의 행이 누락되었습니다.")
-        expiry = min(dates)
-        require(expiry > datetime.now(UTC), "표에 기한이 끝난 출처가 있습니다.")
+        require(expiry is None or expiry > datetime.now(UTC), "표에 기한이 끝난 출처가 있습니다.")
         if len({source["records"][ref].get("observed_at") for source in sources.values() for ref in source["records"]}) > 1:
             limitations.append("원본의 관찰 시각이 다르며 동일 시점의 원자적 조회를 보장하지 않습니다.")
         validation = {"table_id": table["table_id"], "source_refs": list(dict.fromkeys(refs)), "row_count": len(received),
                       "coverage": rule["coverage"], "checks": ["structure", "sources", "join", "arithmetic", "field_access", "retention"],
-                      "limitations": list(dict.fromkeys(limitations)), "expires_at": expiry.isoformat()}
+                      "limitations": list(dict.fromkeys(limitations)), "expires_at": expiry_text(expiry)}
         return normalized, validation, used_steps
 
     def _compute(self, cell, inputs, rule, sources, token, limitations):
@@ -414,8 +427,10 @@ class ResultService:
         require(task["state"] != "paused", "일시중지한 업무에는 새 결과를 제출할 수 없습니다.")
         with self.store.transaction():
             task_expiry = self.store._db.execute("SELECT expires_at FROM tasks WHERE task_id=?", (task["task_id"],)).fetchone()[0]
-            expiry = instant(task_expiry) if task_expiry else datetime.now(UTC) + timedelta(days=(task.get("profile_snapshot") or {}).get("retention_days", 30))
-            require(expiry > datetime.now(UTC), "보고의 보존기한이 끝났습니다.")
+            days = (task.get("profile_snapshot") or {}).get("retention_days")
+            expiry = instant(task_expiry) if task_expiry is not None else (
+                datetime.now(UTC) + timedelta(days=days) if days is not None else None)
+            require(expiry is None or expiry > datetime.now(UTC), "보고의 보존기한이 끝났습니다.")
             normalized = redact(copy.deepcopy(report))
             tables, table_validations, table_steps, evidence = {}, [], {}, {}
             draft = plan["draft"] if plan else {"steps": [], "completion_criteria": [], "memory_refs": [], "output": {"table_rules": [], "artifact_rules": []}}
@@ -427,7 +442,7 @@ class ResultService:
                 value, validation, steps = self._table(task, plan, table, table_rules[tid], load_evidence, expiry)
                 tables[tid], table_steps[tid] = value, steps
                 table_validations.append(validation)
-                expiry = min(expiry, instant(validation["expires_at"]))
+                expiry = evidence_expiry(expiry, validation)
 
             def load(ref):
                 if ref not in evidence:
@@ -446,7 +461,7 @@ class ResultService:
                     record = load(ref)
                     require(finding["kind"] != "memory" or (ref in draft.get("memory_refs", []) and record.get("record_kind") == "memory"), "현재 계획에 선택한 기억만 인용할 수 있습니다.")
                     require(finding["kind"] != "observation" or record.get("record_kind") in {"request", "clarification", "local_check", "call_result"}, "관찰은 실제 요청·검사·호출 기록이 필요합니다.")
-                    expiry = min(expiry, instant(record["expires_at"]))
+                    expiry = evidence_expiry(expiry, record)
             criteria = {item["criterion_id"]: item for item in draft["completion_criteria"]}
             checks = {}
             for check in normalized["checks"]:
@@ -474,7 +489,7 @@ class ResultService:
                             or self._branch_excluded(criteria[cid], plan, records),
                             "필수 조건은 모든 해당 단계의 승인 분기가 실제 허용 관찰에서 false여야 적용 제외할 수 있습니다.")
                 for record in records:
-                    expiry = min(expiry, instant(record["expires_at"]))
+                    expiry = evidence_expiry(expiry, record)
                 checks[cid] = check
             require(set(checks) == set(criteria), "계획의 모든 완료 조건을 한 번씩 검사해야 합니다.")
             completion = "met" if criteria and all(checks[cid]["status"] in {"met", "not_applicable"} for cid in criteria if criteria[cid]["required"]) else "unknown" if not criteria else "unmet"
@@ -487,8 +502,9 @@ class ResultService:
                         and record.get("payload", {}).get("outcome") == "failed" for record in evidence.values()), "계획 전 실패에는 실제 실패한 로컬 검사가 필요합니다.")
             normalized["tables"] = list(tables.values())
             for table, validation in zip(normalized["tables"], table_validations):
+                validation["expires_at"] = expiry_text(evidence_expiry(expiry, validation))
                 validation["table_ref"] = self.store.write_record(task["task_id"], "table", table,
-                                                                  min(expiry, instant(validation["expires_at"])).isoformat())
+                                                                  validation["expires_at"])
             artifact_refs, artifact_validations, artifact_ids, artifact_checks = [], [], copy.deepcopy(task.get("artifact_ids", {})), []
             format_map = {item["format_id"]: item for item in self.formats()}
             artifact_rules = {item["artifact_id"]: item for item in draft["output"]["artifact_rules"]}
@@ -512,6 +528,7 @@ class ResultService:
                 source_refs = []
                 if kind == "existing":
                     file = self.store.artifact_file(task["task_id"], artifact["artifact_ref"])
+                    artifact_expiry = evidence_expiry(artifact_expiry, file)
                     require(file["format_id"] == rule["format_id"] and file["media_type"] == descriptor["media_type"]
                             and file["size_bytes"] <= rule["max_bytes"], "첨부 파일의 실제 형식·크기가 승인과 다릅니다.")
                     load_evidence(artifact["artifact_ref"], mode="export")
@@ -535,13 +552,15 @@ class ResultService:
                             contributing.add(task["request_ref"])
                         contributing.update(call["result_ref"] for call in task.get("calls", []) if call.get("result_ref"))
                         source_refs = self._report_exports(contributing, load_evidence)
+                        for reference in source_refs:
+                            artifact_expiry = evidence_expiry(artifact_expiry, load(reference))
                     else:
                         source = load_evidence(artifact["source_ref"], mode="export")
                         if source.get("record_kind") in {"report", "table", "artifact", "memory"}:
                             self._report_exports({artifact["source_ref"]}, load_evidence)
                         value = self._input(source)
                         require(rule["input_kind"] == ("text" if isinstance(value, str) else "json"), "원자료의 입력 종류가 승인과 다릅니다.")
-                        artifact_expiry = min(artifact_expiry, instant(source["expires_at"]))
+                        artifact_expiry = evidence_expiry(artifact_expiry, source)
                         source_refs = [artifact["source_ref"]]
                     content, changed = self._render(rule["format_id"], rule["input_kind"], value)
                     require(len(content) <= rule["max_bytes"], "생성 파일이 승인한 최대 크기를 초과했습니다.")
@@ -549,10 +568,12 @@ class ResultService:
                     previous = artifact_ids.get(aid)
                     if previous:
                         require(previous.get("fingerprint") == fingerprint, "기존 산출물 ID로 다른 내용·형식을 덮어쓸 수 없습니다.")
-                        self.store.artifact_file(task["task_id"], previous["artifact_ref"])
+                        stored_file = self.store.artifact_file(task["task_id"], previous["artifact_ref"])
+                        artifact_expiry = evidence_expiry(artifact_expiry, stored_file)
                         ref = previous["artifact_ref"]
                     else:
-                        ref = self.store.write_artifact(task["task_id"], content, rule["format_id"], descriptor["media_type"], descriptor["extensions"][0], artifact_expiry.isoformat())
+                        ref = self.store.write_artifact(task["task_id"], content, rule["format_id"], descriptor["media_type"], descriptor["extensions"][0], expiry_text(artifact_expiry))
+                expiry = earliest_expiry(expiry, artifact_expiry)
                 if aid in artifact_ids:
                     require(artifact_ids[aid]["artifact_ref"] == ref, "같은 산출물 ID는 기존 파일만 재사용할 수 있습니다.")
                 artifact_ids[aid] = {"artifact_ref": ref, "fingerprint": fingerprint, "source_refs": sorted(set(source_refs))}
@@ -566,7 +587,7 @@ class ResultService:
                           "checks": list(checks.values()), "issues": [*normalized["limitations"], *artifact_checks]}
             report_ref = self.store.write_record(task["task_id"], "report", {**normalized,
                 "validation": validation, "table_validations": table_validations, "artifact_refs": artifact_refs,
-                "artifact_validations": artifact_validations}, expiry.isoformat())
+                "artifact_validations": artifact_validations}, expiry_text(expiry))
             task["artifact_ids"] = artifact_ids
             state = task["state"] if task["state"] in {"succeeded", "partial", "failed", "cancelled"} else proposed
             return {"report_ref": report_ref, "table_validations": table_validations, "artifact_refs": artifact_refs,

@@ -321,9 +321,11 @@ null도 실제 확인한 값일 때만 비교하며 추정한 null을 사용하�
 `is_active`·승인 요청 상태·예산 맥락은 조회 당시 기록이며 계획 내용과 구분한다.
 표시본은 [호스트 대화의 계획 제시](../hosts/approval.md#화면과-사용자-흐름)에 필요한 전체 조건에 대응하며 비밀값·내부 인증 참조를 제외한다.
 
-`RetentionContext`는 필수 `task_body_days:PositiveInt`, `long_term_memory_days:PositiveInt`를 갖는다.
-모델 입력이 아닌 고정 설정에서 구하며 표시본에 같은 기간을 보여 준다.
-기억 저장·기간 확대를 허용하는 값이 아니며 개별 기억에는 원출처·승인 조건에 따른 더 짧은 기한을 적용한다.
+`RetentionContext`는 필수 `task_body_days:PositiveInt|null`, `long_term_memory_days:PositiveInt|null`을 갖는다.
+모델 입력이 아닌 고정 설정에서 구하며 표시본에 같은 기간 또는 무기한 여부를 보여 준다.
+`task_body_days=null`은 업무 본문에, `long_term_memory_days=null`은 별도 허용한 장기 운영지식에 시간 제한을 두지 않는 설정이다.
+업무·기여 출처·기존 자료에 유한 기한이 남아 있으면 [업무 보존 조건](../tasks/workflow.md#이력과-완료-근거)에 따라 승계한다.
+이 맥락 자체는 기억 저장·기간 확대의 허가가 아니며 개별 기억에는 [기억 보존 기준](../tasks/memory.md#보존과-장기-운영지식)의 원출처·승인·기존 기한을 적용한다.
 
 `BudgetContext`의 필수 필드는 `previous_budget: PlanBudget/null`, `consumed: BudgetAmounts`, `reserved: BudgetAmounts`, `remaining: BudgetRemaining`다.
 `BudgetRemaining`은 [기능 실행 규격](resources.md)의 자료형을 사용한다.
