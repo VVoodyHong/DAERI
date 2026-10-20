@@ -66,7 +66,7 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 Codex에서는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 터미널에서 추가·설치한다.
 
 ```shell
-codex plugin marketplace add https://gitlab.example.com/team/DAERI.git --ref release/v0.1.0
+codex plugin marketplace add https://gitlab.example.com/team/DAERI.git --ref main
 codex plugin add daeri@daeri-marketplace
 ```
 
@@ -80,7 +80,7 @@ Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/
 브랜치 지정은 URL의 `#ref`이며 Codex의 `--ref`와 구분한다.
 
 ```text
-/plugin marketplace add https://gitlab.example.com/team/DAERI.git#release/v0.1.0
+/plugin marketplace add https://gitlab.example.com/team/DAERI.git#main
 /plugin install daeri@daeri-marketplace
 ```
 
@@ -109,6 +109,7 @@ Codex의 command는 `${PLUGIN_ROOT}/.venv/bin/python.exe`, Claude Code는 `${CLA
 
 배포자는 새 코드가 캐시에 반영되도록 플러그인·실행 패키지 버전을 함께 올린다.
 사용자는 처음 등록한 Git 브랜치를 갱신하므로 다른 브랜치나 고정된 태그로 설치했으면 배포 대상을 먼저 확인한다.
+기본 배포 대상은 `main`이며 이전 릴리즈 브랜치로 등록한 마켓플레이스는 `main`을 보도록 다시 등록한다.
 마켓플레이스 목록 갱신과 설치한 플러그인 갱신은 구분하며 아래 명령은 호스트 대화가 아닌 터미널에서 실행한다.
 
 ```shell
