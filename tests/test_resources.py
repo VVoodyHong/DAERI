@@ -8,7 +8,7 @@ import pytest
 
 from daeri.resources import ResourceRegistry, validate_resource
 from daeri.storage import Store, StoreError
-from daeri.adapters import normalize as interpret
+from daeri.adapters import get_adapter, normalize as interpret
 
 
 def config():
@@ -272,48 +272,43 @@ def test_infra_sso_binding_checks_account_and_provider_changes(registry, tmp_pat
 
 
 def test_legacy_json_and_sql_literals_preserve_actual_types():
-    from daeri.resources import _legacy_result
     from mcp.types import CallToolResult, TextContent
     def result(text):
         return CallToolResult(content=[TextContent(type="text", text=text)])
-    assert _legacy_result(result('[{"id":9007199254740993,"amount":"10.25"}]'), "source_read") == {"data": [{"id": 9007199254740993, "amount": "10.25"}]}
-    assert _legacy_result(result("[{'id': 1, 'active': True, 'memo': None}]"), "sql_read") == {"data": [{"id": 1, "active": True, "memo": None}]}
+    assert get_adapter('source_read').legacy_result(result('[{"id":9007199254740993,"amount":"10.25"}]')) == {"data": [{"id": 9007199254740993, "amount": "10.25"}]}
+    assert get_adapter('sql_read').legacy_result(result("[{'id': 1, 'active': True, 'memo': None}]")) == {"data": [{"id": 1, "active": True, "memo": None}]}
     expression = "[{'created': datetime.date(2026, 1, 1)}]"
-    assert _legacy_result(result(expression), "sql_read") == {"data": expression}
-    assert _legacy_result(result("[{'id':1}]"), "source_read") == {"data": "[{'id':1}]"}
+    assert get_adapter('sql_read').legacy_result(result(expression)) == {"data": expression}
+    assert get_adapter('source_read').legacy_result(result("[{'id':1}]")) == {"data": "[{'id':1}]"}
 
 
 @pytest.mark.parametrize("text", ['{"key":1,"key":2}', '[NaN]', '[Infinity]'])
 def test_legacy_json_ambiguity_is_not_usable_data(text):
-    from daeri.resources import _legacy_result
     from mcp.types import CallToolResult, TextContent
     with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
-        _legacy_result(CallToolResult(content=[TextContent(type="text", text=text)]), "source_read")
+        get_adapter('source_read').legacy_result(CallToolResult(content=[TextContent(type='text', text=text)]))
 
 
 def test_lower_provider_error_conventions_are_failures():
-    from daeri.resources import _legacy_result, _provider_error
     from mcp.types import CallToolResult, TextContent
     with pytest.raises(StoreError, match="EXTERNAL_EXECUTION_FAILED"):
-        _legacy_result(CallToolResult(content=[TextContent(type="text", text="Error: permission denied")]), "sql_read")
+        get_adapter('sql_read').legacy_result(CallToolResult(content=[TextContent(type='text', text='Error: permission denied')]))
     with pytest.raises(StoreError, match="EXTERNAL_EXECUTION_FAILED"):
-        _provider_error({"result": [{"cli_command": "aws ec2 describe-instances", "error": "not allowed"}]}, "aws_read")
+        get_adapter('aws_read').provider_error({'result': [{'cli_command': 'aws ec2 describe-instances', 'error': 'not allowed'}]})
 
 
 def test_sdk_generated_content_wrapper_is_normalized_to_rows():
-    from daeri.resources import _legacy_result
     from mcp.types import CallToolResult, TextContent
     text = "[{'order_id':1,'amount':'10.25'}]"
     wire = CallToolResult(content=[TextContent(type="text", text=text)],
                           structuredContent={"result": [{"type": "text", "text": text}]})
-    assert _legacy_result(wire, "sql_read") == {"data": [{"order_id": 1, "amount": "10.25"}]}
+    assert get_adapter('sql_read').legacy_result(wire) == {"data": [{"order_id": 1, "amount": "10.25"}]}
 
 
 def test_decimal_repr_is_exact_and_marked_by_the_adapter():
-    from daeri.resources import _legacy_result
     from mcp.types import CallToolResult, TextContent
     types = {}
-    result = _legacy_result(CallToolResult(content=[TextContent(type="text", text="[{'amount': Decimal('12345678901234567890.125'), 'memo': '10.25'}]")]), "sql_read", value_types=types)
+    result = get_adapter('sql_read').legacy_result(CallToolResult(content=[TextContent(type='text', text="[{'amount': Decimal('12345678901234567890.125'), 'memo': '10.25'}]")]), value_types=types)
     assert result == {"data": [{"amount": "12345678901234567890.125", "memo": "10.25"}]}
     assert types == {"/data/0/amount": "decimal"}
 
@@ -436,4 +431,19 @@ def test_remote_auth_headers_cannot_change_http_authority():
     resource = config()
     resource["connection"] = {"transport": "streamable_http", "url": "https://mcp.example.test/mcp", "auth_headers": {"Host": "auth_other_authority"}}
     with pytest.raises(StoreError):
+        validate_resource(resource)
+
+
+def test_canonical_product_adapter_preserves_registered_configuration():
+    resource = config()
+    resource["adapter"] = "gitlab_read"
+    original = copy.deepcopy(resource)
+    assert validate_resource(resource) == original
+    assert resource == original
+
+
+def test_legacy_adapter_cannot_be_registered_as_another_resource_type():
+    resource = config()
+    resource["type"] = "DB"
+    with pytest.raises(StoreError, match="INVALID_INPUT"):
         validate_resource(resource)

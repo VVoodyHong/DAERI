@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -159,6 +160,37 @@ def test_templates_use_only_catalog_pins_and_deny_data_by_default(store):
         assert all(value.startswith('credential:') for value in configured['connection']['auth_env'].values())
 
 
+def test_templates_use_product_specific_adapter_identifiers(store):
+    expected = {
+        'db-postgres': 'postgres_read', 'cache-redis': 'redis_read', 'infra-aws': 'aws_read',
+        'source-gitlab': 'gitlab_read', 'document-confluence': 'confluence_read',
+    }
+    for recipe, adapter_id in expected.items():
+        template = profile_template(store, recipe, 'service', 'resource-one')
+        assert template['resources'][0]['adapter'] == adapter_id
+
+
+def test_template_uses_registered_adapter_target_without_sharing_mutable_values(store, monkeypatch):
+    adapter = SimpleNamespace(adapter_id='postgres_read', resource_type='DB',
+                              target_template={'host': 'SET-ME', 'port': 6000,
+                                               'options': {'read_only': True}})
+    monkeypatch.setattr('daeri.setup.get_adapter', lambda identifier: adapter)
+    template = profile_template(store, 'db-postgres', 'service', 'database')['resources'][0]
+    assert template['target'] == {'host': 'SET-ME', 'port': 6000, 'options': {'read_only': True}}
+    template['target']['options']['read_only'] = False
+    assert adapter.target_template['options']['read_only'] is True
+    assert profile_template(store, 'db-postgres', 'service', 'database')['resources'][0]['target']['options']['read_only'] is True
+
+
+@pytest.mark.parametrize('changes', [{'adapter': 'unsupported_read'}, {'type': 'Cache'}])
+def test_template_rejects_unknown_adapter_or_wrong_resource_type(store, monkeypatch, changes):
+    catalog = load_catalog()
+    catalog['db-postgres'].update(changes)
+    monkeypatch.setattr('daeri.setup.load_catalog', lambda: catalog)
+    with pytest.raises(StoreError):
+        profile_template(store, 'db-postgres', 'service', 'database')
+
+
 def test_prepare_refuses_unselected_recipe_and_arbitrary_command(store):
     value = resource()
     store.put_profile('service', resources=[value])
@@ -179,8 +211,11 @@ def prepared_resource(store):
     return value
 
 
-def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, private_uv, monkeypatch):
-    prepared_resource(store)
+@pytest.mark.parametrize('adapter_id', ['source_read', 'gitlab_read'])
+def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, private_uv, monkeypatch, adapter_id):
+    configured = prepared_resource(store)
+    configured['adapter'] = adapter_id
+    store.put_profile('service', resources=[configured])
     calls = []
     def run(args, **kwargs):
         calls.append(args)
@@ -202,6 +237,9 @@ def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, 
     count = len(calls)
     assert prepare_resource(store, 'service', 'source-one', 'source-gitlab')['reused'] is True
     assert len(calls) == count + 1
+    profile = store.get_profile('service')
+    assert profile['revision'] == 2
+    assert profile['resources'][0]['adapter'] == adapter_id
 
 
 def test_failed_prepare_never_changes_profile_or_publishes_program(store, private_uv, monkeypatch):
@@ -216,7 +254,8 @@ def test_failed_prepare_never_changes_profile_or_publishes_program(store, privat
     assert not Path(configured['connection']['command']).exists()
 
 
-def test_login_forwards_only_public_device_authorization_and_keeps_profile_revision(store, monkeypatch):
+@pytest.mark.parametrize('invalid_response', [None, 'prompt-profile', 'result-account', 'extra-field'])
+def test_login_forwards_only_public_device_authorization_and_keeps_profile_revision(store, monkeypatch, invalid_response):
     from daeri.setup import login_resource
     value = profile_template(store, 'infra-aws', 'service', 'infra-one')['resources'][0]
     value['target'] = {'profile': 'operations', 'region': 'ap-northeast-2', 'account': '111111111111'}
@@ -228,8 +267,14 @@ def test_login_forwards_only_public_device_authorization_and_keeps_profile_revis
 assert sys.flags.isolated
 assert 'PYTHONHOME' not in os.environ and 'UV_PROJECT_ENVIRONMENT' not in os.environ
 request=json.load(sys.stdin)
-print(json.dumps({'status':'pending','data':{'provider':'infra_sso','verification_uri':'https://device.sso.ap-northeast-2.amazonaws.com/','user_code':'ABCD-EFGH','provider_profile':request['profile']},'error':None}),flush=True)
-print(json.dumps({'status':'ok','data':{'authenticated':True,'provider_profile':request['profile'],'account':request['account'],'role':'Reader','expires_at':'2099-01-01T00:00:00Z'},'error':None}),flush=True)
+prompt={'provider':'infra_sso','verification_uri':'https://device.sso.ap-northeast-2.amazonaws.com/','user_code':'ABCD-EFGH','provider_profile':request['profile']}
+completion={'authenticated':True,'provider_profile':request['profile'],'account':request['account'],'role':'Reader','expires_at':'2099-01-01T00:00:00Z'}
+""" + f"invalid={invalid_response!r}\n" + """
+if invalid=='prompt-profile': prompt['provider_profile']='different-profile'
+if invalid=='result-account': completion['account']='222222222222'
+if invalid=='extra-field': prompt['access_token']='PRIVATE_SENTINEL'
+print(json.dumps({'status':'pending','data':prompt,'error':None}),flush=True)
+print(json.dumps({'status':'ok','data':completion,'error':None}),flush=True)
 """
     monkeypatch.setenv('PYTHONHOME', '/unrelated-python')
     monkeypatch.setenv('UV_PROJECT_ENVIRONMENT', '/unrelated-environment')
@@ -237,10 +282,27 @@ print(json.dumps({'status':'ok','data':{'authenticated':True,'provider_profile':
                         real_popen([sys.executable, *args[1:-1], '-c', child], **kwargs))
     monkeypatch.setattr('daeri.setup._verify', lambda environment, item: None)
     events = []
-    result = login_resource(store, 'service', 'infra-one', role='Reader', emit=events.append)
-    assert result['authenticated'] is True
-    assert events[0]['user_code'] == 'ABCD-EFGH'
+    if invalid_response is None:
+        result = login_resource(store, 'service', 'infra-one', role='Reader', emit=events.append)
+        assert result['authenticated'] is True
+        assert events[0]['user_code'] == 'ABCD-EFGH'
+    else:
+        with pytest.raises(StoreError) as caught:
+            login_resource(store, 'service', 'infra-one', role='Reader', emit=events.append)
+        assert caught.value.code == 'INVALID_INPUT'
+        assert 'PRIVATE_SENTINEL' not in str(caught.value)
+        if invalid_response != 'result-account':
+            assert events == []
     assert store.get_profile('service')['revision'] == 1
+
+
+def test_login_rejects_adapters_without_a_registered_login_hook(store, monkeypatch):
+    from daeri.setup import login_resource
+    prepared_resource(store)
+    monkeypatch.setattr('daeri.setup._verify', lambda *args: pytest.fail('Unsupported login must not inspect or start a prepared program'))
+    with pytest.raises(StoreError) as caught:
+        login_resource(store, 'service', 'source-one')
+    assert caught.value.code == 'INVALID_INPUT'
 
 
 def test_preparation_child_drops_program_overrides_but_keeps_explicit_user_context(tmp_path, monkeypatch):

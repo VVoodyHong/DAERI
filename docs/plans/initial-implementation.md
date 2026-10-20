@@ -24,7 +24,7 @@
 | 최초 준비 | OS별 검사, user-local uv·Python·잠긴 환경의 명시적 준비·실패 복구 | [환경](../spec/installation/environment.md) |
 | 사용자 구성 | 복수 profile·인스턴스, 설정 가져오기·내보내기, 인증 참조·recipe 준비·진단·제공자 로그인 | [profile](../spec/configuration/profiles.md) |
 | 업무·승인 | 접수·보완·최근 목록·상태 복구, 불변 계획·대화 응답 연결, 일시중지·재승인·취소 | [업무](../spec/tasks/workflow.md)·[승인](../spec/hosts/approval.md) |
-| 리소스 | stdio·HTTPS MCP의 선택 도구 등록, 실제 요청 정규화·읽기·검증 호출·누적 예산 검사 | [연결](../spec/resources/initial-adapters.md)·[계약](../spec/resources/contract.md) |
+| 리소스 | 등록한 제품별 어댑터 선택, stdio·HTTPS MCP의 선택 도구 등록, 실제 요청 정규화·읽기·검증 호출·누적 예산 검사 | [연결](../spec/resources/initial-adapters.md)·[계약](../spec/resources/contract.md) |
 | 결과 | 완료 근거·부분 결과·파생 표·텍스트/JSON/CSV 파일·보존 자료 조회 | [결과](../spec/mcp/tasks.md#결과-dto) |
 | 기억 | 출처·정책을 갖춘 선별 지식, 키워드·로컬 벡터 검색, 갱신·정정·무효화·재색인 | [기억](../spec/tasks/memory.md) |
 | 저장 | profile JSON·SQLite·관리 파일·인증 저장소 분리, 기한·무결성·멱등 기록 | [저장](../spec/configuration/profiles.md#로컬-저장-구조) |
@@ -48,6 +48,7 @@
 |---|---|
 | 로컬 단위·계약 검사 | 입력·비밀 거부, 승인·범위·개정·멱등성, 필드·표·파일·보존·기억 정책의 허용·실패 경계 |
 | 실제 stdio 통합 | 별도 리소스 프로세스 두 개의 조회 → 승인된 실행 → 계산 표·CSV·보고 → 결과 조회 → 기억 갱신 → 다음 업무 회상 |
+| 어댑터 확장·호환 | 추가 시험 어댑터의 공통 stdio 실행, 식별자·범주·등록 충돌 거부, 기존 Source 등록본의 계약·인증 지문 유지와 실행, 기존 결과 해석 대조 |
 | 실제 로컬 임베딩 | 준비한 다국어 모델로 DNS를 차단한 로딩·임베딩·한국어 질의와 영어 지식 검색 |
 | 프로그램 준비 | 임시 HOME·빈 전용 캐시의 공식 uv·관리 Python·잠긴 환경 준비, 전역 도구·shell 보존; 공통 Python 진입의 15개 도구 MCP 시작 |
 | 하위 MCP 조합 | 격리한 잠금 환경의 실제 패키지 설치·import·선택 도구 메타데이터; 업무 자료 접근은 제외 |

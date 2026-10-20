@@ -12,6 +12,7 @@ import sys
 import tomllib
 from uuid import uuid4
 
+from .adapters import get_adapter
 from .security import redact
 from .storage import StoreError
 
@@ -95,6 +96,9 @@ def load_catalog():
 def _recipe(recipe_id):
     catalog = load_catalog()
     _require(recipe_id in catalog, 'Select a registered preparation recipe.')
+    item = catalog[recipe_id]
+    _require(item['type'] == get_adapter(item['adapter']).resource_type,
+             'The preparation recipe resource type differs from its registered adapter.')
     bundled = Path(__file__).with_name('recipes')
     root = bundled if bundled.is_dir() else Path(__file__).resolve().parents[2] / 'recipes'
     project = root / recipe_id
@@ -103,7 +107,6 @@ def _recipe(recipe_id):
         lock = (project / 'uv.lock').read_bytes()
     except (OSError, ValueError):
         raise StoreError('CONNECTION_NOT_READY', 'The pinned resource preparation recipe is unavailable.') from None
-    item = catalog[recipe_id]
     _require(metadata.get('project', {}).get('dependencies') == [item['package'] + '==' + item['version']],
              'The preparation recipe and catalog version do not match.')
     return item, project, hashlib.sha256(lock).hexdigest()
@@ -126,15 +129,9 @@ def profile_template(store, recipe_id, profile_name, instance_id):
     item, _, _ = _recipe(recipe_id)
     _require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', profile_name)))
     _require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', instance_id)))
-    targets = {
-        'DB': {'host': 'SET-ME', 'port': 5432, 'database': 'SET-ME', 'username': 'SET-ME'},
-        'Cache': {'host': 'SET-ME', 'port': 6379, 'db': 0},
-        'Infra': {'profile': 'SET-ME', 'region': 'SET-ME', 'account': 'SET-ME'},
-        'Source': {'server': 'https://SET-ME.invalid', 'project': 'SET-ME'},
-        'Document': {'server': 'https://SET-ME.invalid', 'space': 'SET-ME'},
-    }
     resource = {'instance_id': instance_id, 'type': item['type'], 'adapter': item['adapter'],
-                'target': targets[item['type']], 'identity_ref': 'identity:' + profile_name + ':' + instance_id,
+                'target': copy.deepcopy(get_adapter(item['adapter']).target_template),
+                'identity_ref': 'identity:' + profile_name + ':' + instance_id,
                 'connection': {'transport': 'stdio', 'command': str(prepared_executable(store, recipe_id)),
                                'args': copy.deepcopy(item['args']), 'env': copy.deepcopy(item['env']),
                                'auth_env': {name: 'credential:' + profile_name + '.' + instance_id + '.' + name.lower()
@@ -183,7 +180,8 @@ def prepare_resource(store, profile_name, instance_id, recipe_id):
     _require(resource is not None, 'Select an instance registered in the requested profile.')
     connection = resource['connection']
     expected = prepared_executable(store, recipe_id)
-    _require(resource['adapter'] == item['adapter'] and resource['type'] == item['type'] and
+    _require(get_adapter(resource['adapter']).adapter_id == get_adapter(item['adapter']).adapter_id and
+             resource['type'] == item['type'] and
              connection['transport'] == 'stdio' and connection['command'] == str(expected) and
              connection.get('args', []) == item['args'], 'The selected resource does not use this preparation recipe.')
     _require(all(connection.get('env', {}).get(key) == value for key, value in item['env'].items() if value),
@@ -242,23 +240,26 @@ def login_resource(store, profile_name, instance_id, *, start_url=None, sso_regi
     import time
     profile = store.get_profile(profile_name)
     resource = next((value for value in profile['resources'] if value['instance_id'] == instance_id), None)
-    _require(resource is not None and resource['adapter'] == 'aws_read', 'This resource does not provide the selected login flow.')
-    item, _, _ = _recipe('infra-aws')
-    environment = _tool_directory(store, 'infra-aws') / '.venv'
+    _require(resource is not None, 'Select an instance registered in the requested profile.')
+    adapter = get_adapter(resource['adapter'])
+    recipe_id, helper = adapter.login_recipe_id, adapter.login_helper
+    _require(isinstance(recipe_id, str) and isinstance(helper, str) and helper.endswith('.py') and
+             '/' not in helper and '\\' not in helper, 'This resource does not provide the selected login flow.')
+    item, _, _ = _recipe(recipe_id)
+    _require(get_adapter(item['adapter']).adapter_id == adapter.adapter_id and
+             resource['type'] == item['type'], 'Use the prepared provider recipe for this login flow.')
+    environment = _tool_directory(store, recipe_id) / '.venv'
     expected = _program(environment, item['executable'])
     connection = resource['connection']
     _require(connection['transport'] == 'stdio' and connection['command'] == str(expected.resolve()) and
              connection.get('args', []) == item['args'], 'Use the prepared provider recipe for this login flow.')
     _verify(environment, item)
-    target = resource['target']
-    _require(connection.get('env', {}).get('AWS_PROFILE') == target.get('profile') and
-             connection.get('env', {}).get('AWS_REGION') == target.get('region'), 'The selected provider profile differs from the resource target.')
-    request = {'profile': target.get('profile'), 'account': target.get('account'), 'region': target.get('region'),
-               'start_url': start_url, 'sso_region': sso_region, 'role': role, 'no_browser': no_browser}
+    request = adapter.login_request(resource, start_url=start_url, sso_region=sso_region,
+                                    role=role, no_browser=no_browser)
     _no_secrets(request)
     if emit is None:
         emit = lambda value: print(json.dumps({'status': 'pending', 'data': value, 'error': None}), flush=True)
-    process = subprocess.Popen([str(_program(environment, 'python')), '-I', str(Path(__file__).with_name('provider_login.py'))],
+    process = subprocess.Popen([str(_program(environment, 'python')), '-I', str(Path(__file__).with_name(helper))],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                text=True, env=_process_environment())
     events = queue.Queue()
@@ -282,14 +283,11 @@ def login_resource(store, profile_name, instance_id, *, start_url=None, sso_regi
             value = json.loads(line)
             if value.get('status') == 'pending':
                 data = value['data']
-                _require(set(data) == {'provider', 'verification_uri', 'user_code', 'provider_profile'} and
-                         data['provider_profile'] == target['profile'], 'Provider login returned an invalid prompt.')
+                adapter.validate_login_prompt(data, resource)
                 emit(data)
             elif value.get('status') == 'ok':
                 data = value['data']
-                _require(set(data) == {'authenticated', 'provider_profile', 'account', 'role', 'expires_at'} and
-                         data['authenticated'] is True and data['provider_profile'] == target['profile'] and
-                         data['account'] == target['account'], 'Provider login returned an invalid completion.')
+                adapter.validate_login_result(data, resource)
                 result = data
             else:
                 raise StoreError('AUTHENTICATION_REQUIRED', 'The provider requires authentication or rejected the device authorization.')

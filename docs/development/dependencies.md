@@ -104,7 +104,9 @@ profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 |---|---|
 | `server.py`·`contracts.py` | 15개 MCP 도구의 입력·응답을 검사하고 공통 실행기에 전달 |
 | `engine.py`·`planning.py` | 업무 상태·소유권·멱등 처리, 계획·승인·실행·예산과 근거 연결 |
-| `resources.py`·`adapters/` | 등록 기능·하위 MCP 세션·실제 제품별 요청 의미·대상·범위 검사 |
+| `resources.py` | 공통 기능 등록·계약 지문·인증 참조 해소·하위 MCP 세션·스키마 및 전송 검사 |
+| `adapters/__init__.py`·`adapters/base.py` | 신뢰하는 어댑터 등록·식별자 조회와 공통 읽기 검사·결과 처리 계약 |
+| `adapters/`의 제품별 모듈 | 제품별 대상 설정안·인증·로그인·요청 의미·접속 대상·범위·결과 검사 |
 | `policy.py`·`security.py` | 필드 제공·마스킹·출처 경로와 알려진 인증 문자열 보조 검사 |
 | `results.py` | 실제 근거·완료 조건·표 계산·허용 파일 생성·보고 검증 |
 | `memory.py`·`knowledge.py` | profile별 지식의 출처·정책·기한·개정·검색·갱신 검사 |
@@ -112,6 +114,9 @@ profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 | `cli.py`·`setup.py` | 명시적인 사용자 구성·환경·recipe 준비·진단 진입 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
 | `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 setup·profile·work·list-profiles 지침 전달 |
+
+리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
+어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [첫 연결 사양](../spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)을 따른다.
 
 ## 저장 위치와 데이터 역할
 

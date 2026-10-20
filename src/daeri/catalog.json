@@ -2,7 +2,7 @@
   "db-postgres": {
     "display_name": "PostgreSQL",
     "type": "DB",
-    "adapter": "sql_read",
+    "adapter": "postgres_read",
     "package": "postgres-mcp",
     "version": "0.3.0",
     "executable": "postgres-mcp",
@@ -41,7 +41,7 @@
   "source-gitlab": {
     "display_name": "GitLab",
     "type": "Source",
-    "adapter": "source_read",
+    "adapter": "gitlab_read",
     "package": "mcp-gitlab",
     "version": "0.21.0",
     "executable": "mcp-gitlab",
@@ -54,7 +54,7 @@
   "document-confluence": {
     "display_name": "Confluence",
     "type": "Document",
-    "adapter": "document_read",
+    "adapter": "confluence_read",
     "package": "mcp-atlassian",
     "version": "0.23.1",
     "executable": "mcp-atlassian",
