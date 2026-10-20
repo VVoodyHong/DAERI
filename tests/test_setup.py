@@ -254,6 +254,48 @@ def test_failed_prepare_never_changes_profile_or_publishes_program(store, privat
     assert not Path(configured['connection']['command']).exists()
 
 
+@pytest.mark.parametrize('changed', [{'port': 6380}, {'db': 1}, {'tls': False}])
+def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp_path, monkeypatch, changed):
+    from daeri.setup import configure_resource, validate_setup
+    values = {'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'tls': True,
+              'keys': ['service:status'], **changed}
+    path = config_file(tmp_path, values)
+    assert validate_setup('cache-redis', path)['complete'] is True
+    store.put_profile('service')
+    configured = configure_resource(store, 'cache-redis', 'service', 'cache-one', path, expected_revision=1)
+
+    def run(args, **kwargs):
+        if args[1] == 'venv':
+            Path(args[-1]).mkdir(parents=True)
+        elif args[1] == 'sync':
+            candidate = Path(kwargs['env']['UV_PROJECT_ENVIRONMENT'])
+            program = candidate / ('Scripts' if os.name == 'nt' else 'bin')
+            program.mkdir()
+            suffix = '.exe' if os.name == 'nt' else ''
+            (program / ('python' + suffix)).touch()
+            (program / ('redis-mcp-server' + suffix)).touch()
+        elif args[1:3] == ['-I', '-c']:
+            return subprocess.CompletedProcess(args, 0, stdout='0.5.1\n', stderr='')
+        return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+    monkeypatch.setattr('daeri.setup.subprocess.run', run)
+    result = prepare_resource(store, 'service', 'cache-one', 'cache-redis')
+    assert result['ready'] is True
+    assert Path(result['command']).is_file()
+    assert store.get_profile('service') == configured
+
+
+def test_prepare_still_rejects_a_disabled_recipe_safety_setting(store, private_uv, monkeypatch):
+    configured = prepared_resource(store)
+    configured['connection']['env']['MCP_READ_ONLY'] = 'false'
+    store.put_profile('service', resources=[configured])
+    monkeypatch.setattr('daeri.setup.subprocess.run', lambda *args, **kwargs:
+                        pytest.fail('Unsafe recipe settings must not start program preparation'))
+    with pytest.raises(StoreError) as caught:
+        prepare_resource(store, 'service', 'source-one', 'source-gitlab')
+    assert caught.value.code == 'INVALID_INPUT'
+
+
 @pytest.mark.parametrize('invalid_response', [None, 'prompt-profile', 'result-account', 'extra-field'])
 def test_login_forwards_only_public_device_authorization_and_keeps_profile_revision(store, monkeypatch, invalid_response):
     from daeri.setup import login_resource

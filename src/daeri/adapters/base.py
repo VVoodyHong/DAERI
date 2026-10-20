@@ -68,6 +68,7 @@ class ReadAdapter:
     resource_type = ""
     read_tools = frozenset()
     target_template = {}
+    setup_fields = {}
     environment_prefixes = ()
     control_fields = frozenset()
     authentication_fields = frozenset()

@@ -11,7 +11,9 @@ from mcp.types import CallToolResult, TextContent, Tool
 server = Server("data-fixture")
 schema = {"type": "object", "properties": {"rows": {"type": "array", "items": {
     "type": "object", "properties": {"id": {"type": "string"}, "amount": {"type": "string", "format": "decimal", "x-daeri-unit": "count"}},
-    "required": ["id", "amount"], "additionalProperties": False}}}, "required": ["rows"], "additionalProperties": False}
+    "required": ["id", "amount"], "additionalProperties": False}}, "metadata": {
+        "type": "object", "properties": {"truncated": {"type": "boolean"}},
+        "required": ["truncated"], "additionalProperties": False}}, "required": ["rows"], "additionalProperties": False}
 
 
 @server.list_tools()
@@ -27,6 +29,8 @@ async def call(name, arguments):
     if arguments["key"] == "failed":
         return CallToolResult(isError=True, content=[TextContent(type="text", text="private provider failure")])
     data = {"rows": [{"id": "one", "amount": os.environ.get("FIXTURE_AMOUNT", "10.00")}]}
+    if os.environ.get("FIXTURE_TRUNCATED") == "true":
+        data["metadata"] = {"truncated": True}
     return CallToolResult(structuredContent=data, content=[TextContent(type="text", text=json.dumps(data))])
 
 

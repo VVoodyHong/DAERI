@@ -7,6 +7,7 @@ import re
 import shlex
 
 from .base import ReadAdapter, _guard, denied
+from ..provider_login import PROFILE_NAME_PATTERN, provider_section
 from ..storage import StoreError
 
 
@@ -57,6 +58,21 @@ class AwsReadAdapter(ReadAdapter):
         'call_aws_api',
     })
     target_template = {"profile": "SET-ME", "region": "SET-ME", "account": "SET-ME"}
+    setup_fields = {
+        "profile": {"schema": {"title": "Infra 제공자 프로파일", "description": "DAERI profile과 구분되는 제공자 인증 설정의 프로파일 이름입니다.",
+                               "type": "string", "minLength": 1, "maxLength": 128,
+                               "pattern": PROFILE_NAME_PATTERN, "examples": ["operations-reader"]},
+                    "required": True, "paths": [["target", "profile"], ["connection", "env", "AWS_PROFILE"]]},
+        "region": {"schema": {"title": "Infra 리전", "description": "연결 대상과 조회 명령에 동일하게 적용할 제공자 리전입니다.",
+                              "type": "string", "minLength": 1, "maxLength": 64,
+                              "pattern": r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$", "examples": ["ap-northeast-2"]},
+                   "required": True, "paths": [["target", "region"], ["connection", "env", "AWS_REGION"],
+                                               ["capabilities", 0, "constraints", "region"]]},
+        "account": {"schema": {"title": "Infra 계정 식별자", "description": "제공자 인증 결과와 대조할 12자리 계정 식별자입니다.",
+                               "type": "string", "pattern": r"^[0-9]{12}$", "minLength": 12, "maxLength": 12,
+                               "examples": ["111111111111"]},
+                    "required": True, "paths": [["target", "account"]]},
+    }
     environment_prefixes = ("AWS_",)
     control_fields = frozenset({
         "READ_OPERATIONS_ONLY", "MCP_READ_ONLY", "READ_ONLY_MODE", "ENABLED_TOOLS",
@@ -105,7 +121,7 @@ class AwsReadAdapter(ReadAdapter):
             alias = aws / "cli" / "alias"
             if alias.exists() and (alias.is_symlink() or alias.read_bytes().strip()):
                 raise ValueError
-            section = "default" if profile_name == "default" else "profile " + profile_name
+            section = provider_section(parser, "profile", profile_name)
             settings = parser[section]
             if settings.get("region", target["region"]) != target["region"]:
                 raise ValueError
@@ -114,7 +130,7 @@ class AwsReadAdapter(ReadAdapter):
                 if current in visited or len(visited) >= 16:
                     raise ValueError
                 visited.add(current)
-                selected = "default" if current == "default" else "profile " + current
+                selected = provider_section(parser, "profile", current)
                 values = dict(parser[selected]) if parser.has_section(selected) else {}
                 if credential_settings.has_section(current):
                     values.update(credential_settings[current])

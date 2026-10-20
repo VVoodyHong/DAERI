@@ -87,8 +87,13 @@ setup으로 준비한 뒤 MCP를 다시 연결하며 필요한 경우 호스트�
 |---|---|---|
 | 환경·profile 설정 | `/daeri:setup service-prod` | setup |
 | 이 대화의 profile 전환 | `/daeri:profile service-prod` | profile |
+| profile과 관련 로컬 자료 삭제 | `/daeri:profile delete service-prod` | profile에서 삭제 요청 |
 | 업무 지시 | `/daeri:work 요청 내용` | work |
 | profile 목록 | `/daeri:list-profiles` | list-profiles |
+
+삭제는 대상·범위를 확인한 뒤 진행합니다.
+해당 profile의 업무·기억·관리 파일·설정을 정리하며 공유 설치 자산·공유 인증·원격 리소스는 유지합니다.
+자세한 범위와 실패 시 재시도는 [profile 삭제](docs/spec/configuration/profiles.md#profile-삭제)를 참고하세요.
 
 가상 업무 요청 예시입니다.
 실제로 등록된 기능과 권한 안에서 계획을 세웁니다.

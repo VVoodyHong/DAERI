@@ -9,11 +9,38 @@ import logging
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import time
 from urllib.parse import urlsplit
 from uuid import uuid4
 import webbrowser
+
+
+# A strict end assertion also works with JSON Schema's pattern search semantics.
+PROFILE_NAME_PATTERN = r'^[^\[\]\x00-\x1f\x7f]{1,128}(?![\s\S])'
+
+
+def provider_section(parser, kind, name):
+    matches = []
+    for section in parser.sections():
+        if kind == 'profile' and name == 'default' and section == 'default':
+            matches.append(section)
+            continue
+        # The provider SDK recognizes section kinds by prefix, not exact token.
+        if not section.startswith(kind):
+            continue
+        try:
+            parts = shlex.split(section)
+        except ValueError:
+            continue
+        if len(parts) == 2 and parts[1] == name:
+            matches.append(section)
+    if len(matches) > 1:
+        raise ValueError('Provider section names must be unambiguous.')
+    if matches:
+        return matches[0]
+    return 'default' if kind == 'profile' and name == 'default' else kind + ' ' + shlex.quote(name)
 
 
 class ProviderLoginError(Exception):
@@ -47,7 +74,7 @@ def _directory(path):
 
 def _configuration(request, home):
     profile = request['profile']
-    _require(isinstance(profile, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', profile))
+    _require(isinstance(profile, str) and re.fullmatch(PROFILE_NAME_PATTERN, profile))
     _require(isinstance(request['account'], str) and re.fullmatch(r'\d{12}', request['account']))
     _require(isinstance(request['region'], str) and re.fullmatch(r'[a-z]{2}(?:-[a-z]+)+-\d+', request['region']))
     aws = home / '.aws'
@@ -57,12 +84,12 @@ def _configuration(request, home):
     _require(original is None or len(original) <= 2 * 1024 * 1024)
     parser = configparser.ConfigParser(interpolation=None)
     if original: parser.read_string(original.decode('utf-8'))
-    section = 'default' if profile == 'default' else 'profile ' + profile
+    section = provider_section(parser, 'profile', profile)
     existing = dict(parser[section]) if parser.has_section(section) else {}
     _require(not existing.get('sso_account_id') or existing['sso_account_id'] == request['account'],
              'The configured provider account differs from the selected DAERI target.')
     session_name = existing.get('sso_session')
-    session_section = 'sso-session ' + session_name if session_name else None
+    session_section = provider_section(parser, 'sso-session', session_name) if session_name else None
     session = dict(parser[session_section]) if session_section and parser.has_section(session_section) else existing
     start_url = request.get('start_url') or session.get('sso_start_url')
     region = request.get('sso_region') or session.get('sso_region')
@@ -80,7 +107,7 @@ def _configuration(request, home):
     if not parser.has_section(section):
         parser.add_section(section)
         session_name = 'daeri-' + profile
-        session_section = 'sso-session ' + session_name
+        session_section = provider_section(parser, 'sso-session', session_name)
         if not parser.has_section(session_section): parser.add_section(session_section)
         parser[section]['sso_session'] = session_name
     if session_name:

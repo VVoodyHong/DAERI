@@ -1,10 +1,12 @@
 """Private local persistence; body files are published only through SQLite refs."""
 
+import copy
 import hashlib
 import json
 import os
 import re
 import sqlite3
+import sys
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -19,12 +21,49 @@ class StoreError(Exception):
         super().__init__(f"{code}: {message}")
 
 
+def process_alive(pid):
+    """Probe ownership without signaling; uncertain access keeps the owner active."""
+    if type(pid) is not int or not 0 < pid <= 0xffffffff:
+        raise ValueError('A positive process ID is required.')
+    if sys.platform == 'win32':
+        import _winapi
+        try:
+            handle = _winapi.OpenProcess(_winapi.SYNCHRONIZE, False, pid)
+        except OSError as error:
+            return getattr(error, 'winerror', None) != 87  # ERROR_INVALID_PARAMETER: no such PID.
+        try:
+            return _winapi.WaitForSingleObject(handle, 0) != _winapi.WAIT_OBJECT_0
+        except OSError:
+            return True
+        finally:
+            _winapi.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    return True
+
+
 def _json(value) -> bytes:
     try:
         return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
                           separators=(",", ":")).encode("utf-8")
     except (TypeError, ValueError, UnicodeError):
         raise StoreError("INVALID_INPUT", "A JSON-compatible value is required.") from None
+
+
+def _task_json(task):
+    metadata = dict(task)
+    if isinstance(task.get('profile_snapshot'), dict):
+        snapshot = copy.deepcopy(task['profile_snapshot'])
+        snapshot.pop('core_context', None)
+        for resource in snapshot.get('resources', []):
+            for capability in resource.get('capabilities', []):
+                capability.pop('description', None)
+        metadata['profile_snapshot'] = snapshot
+    return _json(metadata).decode()
 
 
 def _profile_memory_policy(value, resources):
@@ -130,6 +169,11 @@ class Store:
                     artifact_ref TEXT PRIMARY KEY REFERENCES records(record_ref),
                     task_id TEXT NOT NULL REFERENCES tasks(task_id), path TEXT NOT NULL,
                     size INTEGER NOT NULL, sha256 TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS profile_references (
+                    profile_id TEXT NOT NULL REFERENCES profiles(profile_id), kind TEXT NOT NULL,
+                    reference TEXT NOT NULL, PRIMARY KEY(profile_id,kind,reference));
+                CREATE TABLE IF NOT EXISTS profile_deletions (
+                    profile_id TEXT PRIMARY KEY, state TEXT NOT NULL, manifest TEXT);
                 """
                 for statement in schema.split(";"):
                     if statement.strip():
@@ -164,6 +208,38 @@ class Store:
     def close(self):
         with self._lock:
             self._db.close()
+
+    def assert_profile_available(self, profile_id):
+        row = self._db.execute('SELECT state FROM profile_deletions WHERE profile_id=?', (profile_id,)).fetchone()
+        if row:
+            raise StoreError('PROFILE_DELETING' if row[0] == 'deleting' else 'PROFILE_DELETED',
+                             'This profile is being deleted or has been deleted.')
+
+    def track_profile_reference(self, profile_id, kind, reference):
+        self.assert_profile_available(profile_id)
+        reserved = self._db.execute('''SELECT 1 FROM profile_references r JOIN profile_deletions d USING(profile_id)
+            WHERE r.kind=? AND r.reference=? AND r.profile_id<>? AND d.state='deleting' LIMIT 1''',
+            (kind, reference, profile_id)).fetchone()
+        if reserved:
+            raise StoreError('PROFILE_DELETING', 'A referenced resource is being removed; retry after deletion finishes.')
+        self._db.execute('INSERT OR IGNORE INTO profile_references VALUES(?,?,?)', (profile_id, kind, reference))
+
+    @contextmanager
+    def profile_operation(self, profile_id):
+        """Keep resource I/O and deletion mutually exclusive without holding a DB lock."""
+        reference = f'{os.getpid()}:{uuid4().hex}'
+        with self.transaction():
+            self.assert_profile_available(profile_id)
+            managed = self._db.execute('SELECT 1 FROM profiles WHERE profile_id=?', (profile_id,)).fetchone()
+            if managed:
+                self.track_profile_reference(profile_id, 'operation', reference)
+        try:
+            yield
+        finally:
+            if managed:
+                with self.transaction():
+                    self._db.execute("DELETE FROM profile_references WHERE profile_id=? AND kind='operation' AND reference=?",
+                                     (profile_id, reference))
 
     def _path(self, reference: str, folder: str) -> Path:
         extension = r"[a-z0-9]{1,8}" if folder == "artifacts" else "json"
@@ -233,6 +309,8 @@ class Store:
         memory_policy = _profile_memory_policy({} if memory_policy is None else memory_policy, resources)
         with self.transaction():
             current = self._db.execute("SELECT * FROM profiles WHERE name=?", (name,)).fetchone()
+            if current:
+                self.assert_profile_available(current['profile_id'])
             if current and create_only:
                 raise StoreError("PROFILE_ALREADY_EXISTS", "The profile already exists; inspect it before updating its configuration.")
             if current:
@@ -246,6 +324,9 @@ class Store:
             self._db.execute("""INSERT INTO profiles VALUES (?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
                 revision=excluded.revision, path=excluded.path, size=excluded.size, sha256=excluded.sha256""",
                 (profile["profile_id"], name, profile["revision"], path, size, digest))
+            self.track_profile_reference(profile['profile_id'], 'file', path)
+            from .profile_deletion import track_resources
+            track_resources(self, profile)
             return profile
 
     def get_profile(self, name_or_id) -> dict:
@@ -257,6 +338,7 @@ class Store:
             if len(rows) != 1:
                 raise StoreError("CONTEXT_REQUIRED", "The profile name and ID refer to different profiles.")
             row = rows[0]
+            self.assert_profile_available(row['profile_id'])
             profile = self._read(row, "STORE_UNAVAILABLE")
             if any(profile.get(key) != row[key] for key in ("profile_id", "name", "revision")):
                 raise StoreError("STORE_UNAVAILABLE", "The active profile revision does not match.")
@@ -264,26 +346,31 @@ class Store:
 
     def list_profiles(self) -> list:
         with self.transaction():
-            return [self.get_profile(row[0]) for row in self._db.execute("SELECT profile_id FROM profiles ORDER BY name")]
+            return [self.get_profile(row[0]) for row in self._db.execute('''SELECT p.profile_id FROM profiles p
+                LEFT JOIN profile_deletions d USING(profile_id) WHERE d.profile_id IS NULL ORDER BY p.name''')]
 
     def insert_task(self, task: dict) -> None:
         with self.transaction():
             if task["profile_id"] is not None:
                 self.get_profile(task["profile_id"])
             self._db.execute("INSERT INTO tasks(task_id,profile_id,revision,metadata) VALUES(?,?,?,?)",
-                             (task["task_id"], task["profile_id"], task["task_revision"], _json(task).decode()))
+                             (task["task_id"], task["profile_id"], task["task_revision"], _task_json(task)))
 
     def get_task(self, task_id) -> dict:
         with self.transaction():
             row = self._db.execute("SELECT metadata FROM tasks WHERE task_id=?", (task_id,)).fetchone()
             if row is None:
                 raise StoreError("NOT_FOUND", "Task was not found.")
-            return json.loads(row[0])
+            task = json.loads(row[0])
+            if task.get('profile_id'):
+                self.assert_profile_available(task['profile_id'])
+            return task
 
     def list_tasks(self, profile_id, limit=20, *, offset=0) -> list:
         if type(limit) is not int or limit <= 0 or type(offset) is not int or offset < 0:
             raise StoreError("INVALID_INPUT", "A positive task limit and nonnegative integer offset are required.")
         with self.transaction():
+            self.assert_profile_available(profile_id)
             return [json.loads(row[0]) for row in self._db.execute(
                 """SELECT metadata FROM tasks WHERE profile_id=?
                 ORDER BY COALESCE(json_extract(metadata,'$.last_activity_at'),json_extract(metadata,'$.created_at')) DESC,
@@ -306,27 +393,38 @@ class Store:
             if task["profile_id"] is not None:
                 self.get_profile(task["profile_id"])
             self._db.execute("UPDATE tasks SET revision=?,metadata=?,profile_id=? WHERE task_id=?",
-                             (task["task_revision"], _json(task).decode(), task["profile_id"], task["task_id"]))
+                             (task["task_revision"], _task_json(task), task["profile_id"], task["task_id"]))
 
     def request_get(self, scope, key) -> dict | None:
         with self.transaction():
+            reference = json.dumps([scope, key], separators=(',', ':'))
+            for row in self._db.execute("SELECT profile_id FROM profile_references WHERE kind='request' AND reference=?", (reference,)):
+                self.assert_profile_available(row[0])
             row = self._db.execute("SELECT fingerprint,response FROM requests WHERE scope=? AND request_key=?",
                                    (scope, key)).fetchone()
             return {"fingerprint": row[0], "response": json.loads(row[1])} if row else None
 
-    def request_put(self, scope, key, fingerprint, response) -> None:
+    def request_put(self, scope, key, fingerprint, response, *, profile_id=None) -> None:
         with self.transaction():
             existing = self.request_get(scope, key)
             if existing and existing["fingerprint"] != fingerprint:
                 raise StoreError("REQUEST_ID_CONFLICT", "The request key already has different input.")
             if not existing:
                 self._db.execute("INSERT INTO requests VALUES (?,?,?,?)", (scope, key, fingerprint, _json(response).decode()))
+            task_id = scope.partition(':')[2]
+            if isinstance(response, dict) and isinstance(response.get('data'), dict):
+                task_id = response['data'].get('task_id', task_id)
+            if profile_id is None:
+                row = self._db.execute('SELECT profile_id FROM tasks WHERE task_id=?', (task_id,)).fetchone()
+                profile_id = row[0] if row else None
+            if profile_id:
+                self.track_profile_reference(profile_id, 'request', json.dumps([scope, key], separators=(',', ':')))
 
     def write_record(self, task_id, kind, payload, expires_at=None) -> str:
         if not isinstance(kind, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", kind):
             raise StoreError("INVALID_INPUT", "A record kind is required.")
         with self.transaction():
-            self.get_task(task_id)
+            task = self.get_task(task_id)
             task_expiry = self._db.execute("SELECT expires_at FROM tasks WHERE task_id=?", (task_id,)).fetchone()[0]
             expiries = [value for value in (task_expiry, _time(expires_at) if expires_at else None) if value]
             expiry = min(expiries) if expiries else None
@@ -336,10 +434,13 @@ class Store:
             ref = f"record_{uuid4().hex}"
             self._db.execute("INSERT INTO records(record_ref,task_id,kind,path,size,sha256,expires_at) VALUES(?,?,?,?,?,?,?)",
                              (ref, task_id, kind, path, size, digest, expiry))
+            if task.get('profile_id'):
+                self.track_profile_reference(task['profile_id'], 'file', path)
             return ref
 
     def read_record(self, task_id, record_ref) -> dict:
         with self.transaction():
+            self.get_task(task_id)
             row = self._db.execute("SELECT * FROM records WHERE record_ref=? AND task_id=?", (record_ref, task_id)).fetchone()
             if row is None:
                 raise StoreError("NOT_FOUND", "Record was not found for this task.")
@@ -360,7 +461,12 @@ class Store:
             record = self.read_record(task_id, record_ref)
             if record["record_kind"] != "call_result":
                 raise StoreError("INVALID_INPUT", "Only call bodies can be reduced at task termination.")
+            task = self.get_task(task_id)
+            previous = self._db.execute('SELECT path FROM records WHERE record_ref=?', (record_ref,)).fetchone()[0]
             path, size, digest = self._prepare("records", payload)
+            if task.get('profile_id'):
+                for reference in (previous, path):
+                    self.track_profile_reference(task['profile_id'], 'file', reference)
             self._db.execute("UPDATE records SET path=?,size=?,sha256=? WHERE record_ref=? AND task_id=?",
                              (path, size, digest, record_ref, task_id))
 
@@ -369,11 +475,13 @@ class Store:
                 or not isinstance(extension, str) or not re.fullmatch(r"[a-z0-9]{1,8}", extension)):
             raise StoreError("INVALID_INPUT", "A bounded managed artifact is required.")
         with self.transaction():
-            self.get_task(task_id)
+            task = self.get_task(task_id)
             path, size, digest = self._prepare_bytes("artifacts", content, extension)
             ref = self.write_record(task_id, "artifact", {
                 "format_id": format_id, "media_type": media_type, "size_bytes": size}, expires_at)
             self._db.execute("INSERT INTO artifact_files VALUES (?,?,?,?,?)", (ref, task_id, path, size, digest))
+            if task.get('profile_id'):
+                self.track_profile_reference(task['profile_id'], 'file', path)
             return ref
 
     def artifact_file(self, task_id, record_ref):
@@ -411,6 +519,14 @@ class Store:
     def cleanup(self, now: datetime | None = None) -> dict:
         deleted = 0
         with self.transaction():
+            # Remove prose copied by earlier runtimes without changing task control revisions.
+            for row in self._db.execute("""SELECT task_id,metadata FROM tasks
+                WHERE json_type(metadata,'$.profile_snapshot.core_context') IS NOT NULL
+                OR EXISTS (SELECT 1 FROM json_each(tasks.metadata,'$.profile_snapshot.resources') r,
+                    json_each(r.value,'$.capabilities') c WHERE json_type(c.value,'$.description') IS NOT NULL)""").fetchall():
+                metadata = _task_json(json.loads(row['metadata']))
+                if metadata != row['metadata']:
+                    self._db.execute('UPDATE tasks SET metadata=? WHERE task_id=?', (metadata, row['task_id']))
             self._db.execute("UPDATE records SET blocked=1 WHERE expires_at<=?", (_time(now or datetime.now(UTC)),))
             for artifact in self._db.execute("SELECT a.path FROM artifact_files a JOIN records r ON a.artifact_ref=r.record_ref WHERE r.blocked=1"):
                 try:

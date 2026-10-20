@@ -59,3 +59,14 @@ class Credentials:
             self._native().delete_password("DAERI", name)
         except Exception:
             raise StoreError("AUTHENTICATION_REQUIRED", "The credential could not be removed.") from None
+
+    def delete_if_present(self, ref):
+        name = self._name(ref)
+        try:
+            backend = self._native()
+            if backend.get_password('DAERI', name) is None:
+                return False
+            backend.delete_password('DAERI', name)
+            return True
+        except Exception:
+            raise StoreError('AUTHENTICATION_REQUIRED', 'The credential store is unavailable or locked.') from None

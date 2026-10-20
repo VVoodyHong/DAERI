@@ -501,7 +501,11 @@ def test_unbounded_default_does_not_make_source_bound_memory_permanent(memory):
 def test_legacy_nonnull_expiry_schema_upgrades_atomically_with_vectors_and_fts(memory, interrupt):
     original, profile = memory
     service = MemoryService(original.store, NumericalFixtureEmbedder(), auto_load=False)
-    # Reproduce the released schema before creating data through the real service.
+    item = save(service, profile)
+    columns = "memory_ref,memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state"
+    legacy = tuple(service.store._db.execute(f"SELECT {columns} FROM memory_versions").fetchone())
+    vector = tuple(service.store._db.execute("SELECT * FROM memory_vectors").fetchone())
+    # Reproduce the released schema with data created through the real service.
     with service.store.transaction():
         service.store._db.execute("DROP TABLE memory_vectors")
         service.store._db.execute("DROP TABLE memory_versions")
@@ -514,8 +518,8 @@ def test_legacy_nonnull_expiry_schema_upgrades_atomically_with_vectors_and_fts(m
         service.store._db.execute("""CREATE TABLE memory_vectors (
             memory_ref TEXT PRIMARY KEY REFERENCES memory_versions(memory_ref),
             model_id TEXT NOT NULL, dimensions INTEGER NOT NULL, embedding BLOB NOT NULL)""")
-    item = save(service, profile)
-    vector = tuple(service.store._db.execute("SELECT * FROM memory_vectors").fetchone())
+        service.store._db.execute("INSERT INTO memory_versions VALUES(?,?,?,?,?,?,?,?,?,?)", legacy)
+        service.store._db.execute("INSERT INTO memory_vectors VALUES(?,?,?,?)", vector)
     reopened = Store(service.store.data_dir)
     try:
         if interrupt:
@@ -534,7 +538,9 @@ def test_legacy_nonnull_expiry_schema_upgrades_atomically_with_vectors_and_fts(m
         assert restored.get(profile["profile_id"], item["memory_ref"])["expires_at"] == item["expires_at"]
         with pytest.raises(StoreError, match="STORE_UNAVAILABLE"):
             with reopened.transaction():
-                reopened._db.execute("INSERT INTO memory_versions SELECT 'duplicate-ref',memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state FROM memory_versions")
+                reopened._db.execute("""INSERT INTO memory_versions(memory_ref,memory_id,profile_id,version,body,
+                    content_hash,source_hash,created_at,expires_at,index_state)
+                    SELECT 'duplicate-ref',memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state FROM memory_versions""")
         current = unbounded_profile(restored, profile)
         permanent = save(restored, current, sources=[source(restored, current, key="after-upgrade")],
                          policy={"retention": "long_term", "retention_days": None})

@@ -1,7 +1,12 @@
 from datetime import datetime, timezone
+import configparser
 import hashlib
 import json
 import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
 
 import pytest
 
@@ -118,3 +123,143 @@ def test_expiry_during_poll_delay_prevents_late_token_request(tmp_path):
         device_login(settings(), client=client, home=tmp_path, emit=lambda _: None,
                      sleep=sleep, monotonic=lambda: clock[0])
     assert len(client.requests) == 2
+
+
+@pytest.mark.parametrize('profile', ['operations reader@example.test', "operations 'reader'@example.test"])
+def test_provider_profile_names_survive_login_reuse_and_target_binding(tmp_path, monkeypatch, profile):
+    from daeri.adapters import get_adapter
+    result = device_login(settings(profile=profile), client=Client(), home=tmp_path,
+                          emit=lambda _: None, sleep=lambda _: None, monotonic=lambda: 0)
+    assert result['provider_profile'] == profile
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(tmp_path / '.aws/config')
+    sections = [shlex.split(section) for section in parser.sections()]
+    assert ['profile', profile] in sections
+    assert ['sso-session', 'daeri-' + profile] in sections
+    before = (tmp_path / '.aws/config').read_text()
+    device_login(settings(profile=profile, start_url=None, sso_region=None, role=None),
+                 client=Client(), home=tmp_path, emit=lambda _: None,
+                 sleep=lambda _: None, monotonic=lambda: 0)
+    assert (tmp_path / '.aws/config').read_text() == before
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    resource = {'target': {'profile': profile, 'account': '111111111111', 'region': 'ap-northeast-2'},
+                'connection': {'transport': 'stdio', 'env': {'AWS_PROFILE': profile, 'AWS_REGION': 'ap-northeast-2'}}}
+    assert 'config' in get_adapter('aws_read').binding_files(resource, {})
+
+
+@pytest.mark.parametrize('profile', ['operations[reader', 'operations]reader', 'operations\nreader',
+                                    'operations\rreader', 'operations\x00reader', 'operations\n', '', 'a' * 129])
+def test_provider_profile_name_rejection_never_starts_login_or_writes_configuration(tmp_path, profile):
+    client = Client()
+    with pytest.raises(ProviderLoginError):
+        device_login(settings(profile=profile), client=client, home=tmp_path, emit=lambda _: None)
+    assert client.requests == []
+    assert not (tmp_path / '.aws').exists()
+
+
+def test_provider_login_remains_a_standalone_isolated_script(tmp_path):
+    from daeri import provider_login
+    result = subprocess.run([sys.executable, '-I', provider_login.__file__],
+                            input=json.dumps(settings(profile='invalid[profile')),
+                            text=True, capture_output=True, timeout=10, cwd=tmp_path)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['error']['code'] == 'AUTHENTICATION_REQUIRED'
+    assert result.stderr == ''
+
+
+def test_existing_quoted_provider_profile_and_sso_session_are_reused(tmp_path):
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    path = aws / 'config'
+    path.write_text('[profile "operations reader@example.test"]\nsso_session = existing reader\n'
+                    'sso_account_id = 111111111111\nsso_role_name = Reader\nregion = ap-northeast-2\n'
+                    '[sso-session "existing reader"]\nsso_start_url = https://example.awsapps.com/start\n'
+                    'sso_region = ap-northeast-2\n')
+    result = device_login(settings(profile='operations reader@example.test', start_url=None,
+                                   sso_region=None, role=None), client=Client(), home=tmp_path,
+                          emit=lambda _: None, sleep=lambda _: None, monotonic=lambda: 0)
+    assert result['authenticated'] is True
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(path)
+    assert parser.sections() == ['profile "operations reader@example.test"', 'sso-session "existing reader"']
+    assert (aws / 'sso/cache' / (hashlib.sha1(b'existing reader').hexdigest() + '.json')).is_file()
+
+
+AMBIGUOUS_PROFILES = [
+    ('operations', 'profile operations', 'profile "operations"'),
+    ('default', 'default', 'profile default'),
+    ('default', 'default', 'profile "default"'),
+    ('operations', 'profile operations', 'profileX operations'),
+]
+
+
+@pytest.mark.parametrize('profile,first,second', AMBIGUOUS_PROFILES)
+def test_ambiguous_provider_profile_sections_are_not_overwritten(tmp_path, profile, first, second):
+    from daeri.provider_login import _configuration
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    path = aws / 'config'
+    original = f'[{first}]\nsso_account_id = 111111111111\n[{second}]\nsso_account_id = 222222222222\n'
+    path.write_text(original)
+    with pytest.raises((ProviderLoginError, ValueError)):
+        _configuration(settings(profile=profile), tmp_path)
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize('profile,first,second', AMBIGUOUS_PROFILES)
+def test_infra_binding_rejects_ambiguous_provider_profiles(tmp_path, monkeypatch, profile, first, second):
+    from daeri.adapters import get_adapter
+    from daeri.storage import StoreError
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    (aws / 'config').write_text(f'[{first}]\nsso_account_id = 111111111111\n'
+                              f'[{second}]\nsso_account_id = 222222222222\n')
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    resource = {'target': {'profile': profile, 'account': '111111111111', 'region': 'ap-northeast-2'},
+                'connection': {'transport': 'stdio', 'env': {'AWS_PROFILE': profile, 'AWS_REGION': 'ap-northeast-2'}}}
+    with pytest.raises(StoreError) as caught:
+        get_adapter('aws_read').binding_files(resource, {})
+    assert caught.value.code == 'UNSUPPORTED_CONSTRAINT'
+
+
+def test_infra_binding_checks_default_source_profile_aliases(tmp_path, monkeypatch):
+    from daeri.adapters import get_adapter
+    from daeri.storage import StoreError
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    (aws / 'config').write_text('[profile operations]\nrole_arn = arn:aws:iam::111111111111:role/reader\n'
+                               'source_profile = default\n[default]\nregion = ap-northeast-2\n'
+                               '[profile default]\ncredential_process = /unapproved/helper\n')
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    resource = {'target': {'profile': 'operations', 'account': '111111111111', 'region': 'ap-northeast-2'},
+                'connection': {'transport': 'stdio', 'env': {'AWS_PROFILE': 'operations', 'AWS_REGION': 'ap-northeast-2'}}}
+    with pytest.raises(StoreError) as caught:
+        get_adapter('aws_read').binding_files(resource, {})
+    assert caught.value.code == 'UNSUPPORTED_CONSTRAINT'
+
+
+def test_provider_login_rejects_ambiguous_sdk_sso_session_prefixes(tmp_path):
+    from daeri.provider_login import _configuration
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    original = ('[profile operations]\nsso_session = operations\nsso_account_id = 111111111111\n'
+                '[sso-session operations]\nsso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-2\n'
+                '[sso-sessionX operations]\nsso_start_url = https://other.awsapps.com/start\nsso_region = ap-northeast-2\n')
+    (aws / 'config').write_text(original)
+    with pytest.raises((ProviderLoginError, ValueError)):
+        _configuration(settings(), tmp_path)
+    assert (aws / 'config').read_text() == original
+
+
+def test_unambiguous_default_provider_profile_can_login_and_bind(tmp_path, monkeypatch):
+    from daeri.adapters import get_adapter
+    result = device_login(settings(profile='default'), client=Client(), home=tmp_path,
+                          emit=lambda _: None, sleep=lambda _: None, monotonic=lambda: 0)
+    assert result['provider_profile'] == 'default'
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(tmp_path / '.aws/config')
+    assert parser.sections() == ['default', 'sso-session daeri-default']
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    resource = {'target': {'profile': 'default', 'account': '111111111111', 'region': 'ap-northeast-2'},
+                'connection': {'transport': 'stdio', 'env': {'AWS_PROFILE': 'default', 'AWS_REGION': 'ap-northeast-2'}}}
+    assert 'config' in get_adapter('aws_read').binding_files(resource, {})

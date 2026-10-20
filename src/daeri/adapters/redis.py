@@ -28,6 +28,33 @@ class RedisReadAdapter(ReadAdapter):
         'zrange',
     })
     target_template = {"host": "SET-ME", "port": 6379, "db": 0}
+    setup_fields = {
+        "host": {"schema": {"title": "Cache 주소", "description": "접속할 Cache의 호스트 이름 또는 IP 주소입니다.",
+                            "type": "string", "minLength": 1, "maxLength": 253,
+                            "pattern": r"^[^\s/@?#\\\x00-\x1f\x7f]+$", "examples": ["cache.example.test"]},
+                 "required": True, "paths": [["target", "host"], ["connection", "env", "REDIS_HOST"]]},
+        "port": {"schema": {"title": "Cache 포트", "description": "Cache에 접속할 포트 번호입니다.",
+                            "type": "integer", "minimum": 1, "maximum": 65535,
+                            "default": 6379, "examples": [6379]},
+                 "required": True, "paths": [["target", "port"], ["connection", "env", "REDIS_PORT"]]},
+        "db": {"schema": {"title": "Cache 저장 영역", "description": "접속할 논리 데이터베이스의 번호입니다.",
+                          "type": "integer", "minimum": 0, "maximum": 2147483647,
+                          "default": 0, "examples": [0]},
+               "required": True, "paths": [["target", "db"], ["connection", "env", "REDIS_DB"]]},
+        "tls": {"schema": {"title": "Cache TLS 사용", "description": "암호화된 TLS 연결을 사용할지 선택합니다.",
+                           "type": "boolean", "default": True, "examples": [True]},
+                "required": True, "paths": [["connection", "env", "REDIS_SSL"]]},
+        "username": {"schema": {"title": "Cache 사용자 이름", "description": "사용자 이름 인증을 사용하는 경우 계정 이름을 지정합니다.",
+                                "type": "string", "minLength": 1, "maxLength": 128,
+                                "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["readonly_user"]},
+                     "required": False, "paths": [["connection", "env", "REDIS_USERNAME"]]},
+        "keys": {"schema": {"title": "조회할 Cache 키", "description": "패턴이 아닌 정확한 키 이름으로 조회 허용 범위를 지정합니다.",
+                            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 1024,
+                                      "pattern": r"^[^*?\[\]\x00-\x1f\x7f]+$"},
+                            "examples": [["service:status"]]},
+                 "required": True, "paths": [["capabilities", 0, "constraints", "allowed_values", "key"]]},
+    }
     environment_prefixes = ("REDIS_",)
     control_fields = frozenset({
         "READ_OPERATIONS_ONLY", "MCP_READ_ONLY", "READ_ONLY_MODE", "ENABLED_TOOLS",

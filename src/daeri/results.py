@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 
 from .policy import pointer_get, pointer_path
+from .planning import evidence_matches_step
 from .security import redact
 from .storage import StoreError
 
@@ -188,9 +189,10 @@ class ResultService:
                 if not binding or condition["operator"] not in {"eq", "in"}:
                     continue
                 source = steps.get(binding["source_step_id"], {})
-                observations = [record for record in records if record.get("record_kind") == "call_result"
-                    and all(record.get(key) == source.get(key) for key in ("step_id", "instance_id", "capability_id", "contract_ref"))
-                    and record.get("plan_id") == plan["plan_id"] and record.get("plan_version") == plan["plan_version"]]
+                observations = [record for ref, record in records.items() if record.get("record_kind") == "call_result"
+                    and evidence_matches_step(record, source)
+                    and ((record.get("plan_id") == plan["plan_id"] and record.get("plan_version") == plan["plan_version"])
+                         or ref in plan["draft"].get("carried_evidence_refs", []))]
                 if not observations:
                     continue
                 try:
@@ -226,9 +228,8 @@ class ResultService:
             source_rows, records, complete, fingerprints = {}, {}, True, set()
             for ref in record_refs:
                 record = load(ref, mode="export")
-                require(record.get("record_kind") == "call_result" and all(record.get(key) == step.get(key)
-                        for key in ("step_id", "instance_id", "capability_id", "contract_ref")),
-                        "표의 기록과 승인 단계·리소스·기능 계약이 일치하지 않습니다.")
+                require(evidence_matches_step(record, step),
+                        "표의 기록과 승인 단계·리소스·기능 계약·범위가 일치하지 않습니다.")
                 require((record.get("plan_id") == plan["plan_id"] and record.get("plan_version") == plan["plan_version"])
                         or ref in plan["draft"].get("carried_evidence_refs", []), "이전 계획의 자료는 명시적으로 승계해야 합니다.")
                 expiry = evidence_expiry(expiry, record)
@@ -463,6 +464,7 @@ class ResultService:
                     require(finding["kind"] != "observation" or record.get("record_kind") in {"request", "clarification", "local_check", "call_result"}, "관찰은 실제 요청·검사·호출 기록이 필요합니다.")
                     expiry = evidence_expiry(expiry, record)
             criteria = {item["criterion_id"]: item for item in draft["completion_criteria"]}
+            steps = {item["step_id"]: item for item in draft["steps"]}
             checks = {}
             for check in normalized["checks"]:
                 object_fields(check, {"criterion_id", "status", "method", "evidence_refs"}, {"table_ids", "reason"})
@@ -473,7 +475,8 @@ class ResultService:
                 require(set(tids) <= set(tables), "검사에 인용한 표가 없습니다.")
                 records = [load(ref) for ref in refs]
                 used_steps = set().union(*(table_steps[tid] for tid in tids)) if tids else set()
-                used_steps |= {record.get("step_id") for record in records if record.get("record_kind") == "call_result"}
+                used_steps |= {record["step_id"] for record in records
+                    if evidence_matches_step(record, steps.get(record.get("step_id"), {}))}
                 if check["status"] == "met":
                     require(bool(refs or tids) and set(criteria[cid]["step_ids"]) <= used_steps,
                             "완료 조건의 실제 단계·근거가 빠졌습니다.")
@@ -486,7 +489,7 @@ class ResultService:
                 else:
                     require(isinstance(check.get("reason"), str) and check["reason"].strip(), "미완료·미확인·적용 제외 이유가 필요합니다.")
                     require(check["status"] != "not_applicable" or not criteria[cid]["required"]
-                            or self._branch_excluded(criteria[cid], plan, records),
+                            or self._branch_excluded(criteria[cid], plan, dict(zip(refs, records))),
                             "필수 조건은 모든 해당 단계의 승인 분기가 실제 허용 관찰에서 false여야 적용 제외할 수 있습니다.")
                 for record in records:
                     expiry = evidence_expiry(expiry, record)

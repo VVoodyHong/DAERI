@@ -205,7 +205,8 @@ def update(engine, args, task):
                 "model_allowed": True, "retain_allowed": True, "long_term_allowed": retain_long_term,
                 "retention": "long_term" if retain_long_term else "source_bound", "expires_at": common_expiry.isoformat() if common_expiry is not None else None,
                 "retention_days": (task.get("profile_snapshot") or {}).get("long_term_memory_days", profile["long_term_memory_days"])}
-            item = engine.memory.save(profile["profile_id"], draft, source_records=resolved, policy=policy, memory_ref=args.get("memory_ref"))
+            item = engine.memory.save(profile["profile_id"], draft, source_records=resolved, policy=policy,
+                                      memory_ref=args.get("memory_ref"), index=False)
             data = {"memory_ref": item["memory_ref"], "memory_state": "active", "expires_at": item["expires_at"], "index_state": item["index_state"]}
         else:
             _, current = engine.memory._row(profile["profile_id"], args["memory_ref"], check_policy=False, allow_expired=True)

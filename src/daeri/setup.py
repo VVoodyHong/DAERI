@@ -89,6 +89,17 @@ def export_profile(store, name):
     return value
 
 
+def preview_profile_deletion(store, name_or_id):
+    from .profile_deletion import preview
+    return preview(store, name_or_id)
+
+
+def delete_profile(store, name_or_id, confirmation, *, credentials=None):
+    from .credentials import Credentials
+    from .profile_deletion import delete
+    return delete(store, name_or_id, confirmation, credentials or Credentials())
+
+
 def load_catalog():
     return json.loads(Path(__file__).with_name('catalog.json').read_text(encoding='utf-8'))
 
@@ -141,6 +152,125 @@ def profile_template(store, recipe_id, profile_name, instance_id):
             'retention_days': None, 'long_term_memory_days': None, 'memory_policy': {}}
 
 
+def setup_schema(recipe_id):
+    """Describe trusted non-secret inputs; defaults are hints, never answers."""
+    from jsonschema import Draft202012Validator
+    item, _, _ = _recipe(recipe_id)
+    adapter = get_adapter(item['adapter'])
+    fields = adapter.setup_fields
+    _require(bool(fields), 'The selected adapter has no structured setup contract.')
+    schema = {'type': 'object', 'properties': {
+        name: copy.deepcopy(field['schema']) for name, field in fields.items()},
+        'required': [name for name, field in fields.items() if field['required']],
+        'additionalProperties': False}
+    Draft202012Validator.check_schema(schema)
+    return {'recipe_id': recipe_id, 'adapter': adapter.adapter_id, 'type': item['type'],
+            'display_name': item['display_name'], 'input_schema': schema,
+            'configuration_paths': {name: copy.deepcopy(field['paths']) for name, field in fields.items()},
+            'authentication': {'credential_environment': copy.deepcopy(item['auth_env']),
+                               'provider_login': adapter.login_recipe_id == recipe_id}}
+
+
+def _validate_setup_values(contract, values):
+    from jsonschema import Draft202012Validator, FormatChecker, validators
+    # JSON Schema accepts 1.0 as an integer; setup preserves exact configuration types.
+    validator = validators.extend(Draft202012Validator, type_checker=
+        Draft202012Validator.TYPE_CHECKER.redefine('integer', lambda checker, value: type(value) is int))
+    schema = contract['input_schema']
+    if not isinstance(values, dict):
+        return {'valid': False, 'complete': False, 'missing_fields': [],
+                'issues': [{'field': '', 'code': 'INVALID_TYPE'}]}
+    try:
+        _no_secrets(values)
+    except StoreError:
+        return {'valid': False, 'complete': False, 'missing_fields': [],
+                'issues': [{'field': '', 'code': 'SECRET_NOT_ALLOWED'}]}
+    issues = set()
+    for error in validator(schema, format_checker=FormatChecker()).iter_errors(values):
+        if error.validator == 'required' and not error.path:
+            continue
+        field = next(iter(error.path), '')
+        field = field if field in schema['properties'] else ''
+        code = ('UNKNOWN_FIELD' if error.validator == 'additionalProperties' else
+                'INVALID_TYPE' if error.validator == 'type' else 'INVALID_VALUE')
+        issues.add((field, code))
+    missing = [name for name in schema['required'] if name not in values]
+    return {'valid': not issues, 'complete': not issues and not missing,
+            'missing_fields': missing,
+            'issues': [{'field': field, 'code': code} for field, code in sorted(issues)]}
+
+
+def validate_setup(recipe_id, path):
+    """Validate even partial input without storage, credential access, or networking."""
+    return _validate_setup_values(setup_schema(recipe_id), read_config(path))
+
+
+def _setup_pointer(path):
+    return '/' + '/'.join(str(token).replace('~', '~0').replace('/', '~1') for token in path)
+
+
+def _current_setup_values(resource, contract):
+    from .policy import pointer_get
+    values = {}
+    for name, paths in contract['configuration_paths'].items():
+        path = paths[0]
+        try:
+            value = pointer_get(resource, _setup_pointer(path))
+        except StoreError:
+            continue
+        if path[:2] == ['connection', 'env']:
+            kind = contract['input_schema']['properties'][name].get('type')
+            if kind == 'integer' and isinstance(value, str) and value.isascii() and value.isdigit():
+                value = int(value)
+            elif kind == 'boolean' and isinstance(value, str):
+                if value.lower() in {'true', '1', 't'}: value = True
+                elif value.lower() in {'false', '0', 'f'}: value = False
+        values[name] = copy.deepcopy(value)
+    return values
+
+
+def configure_resource(store, recipe_id, profile_name, instance_id, path, *, expected_revision):
+    """Apply explicit answers to one recipe resource in an unchanged profile revision."""
+    from .policy import pointer_set
+    contract = setup_schema(recipe_id)
+    supplied = read_config(path)
+    _require(_validate_setup_values(contract, supplied)['valid'], 'Setup answers are invalid.')
+    _require(type(expected_revision) is int, 'An inspected profile revision is required.')
+    template = profile_template(store, recipe_id, profile_name, instance_id)['resources'][0]
+    with store.transaction():
+        profile = store.get_profile(profile_name)
+        if profile['revision'] != expected_revision:
+            raise StoreError('REVISION_CONFLICT', 'Inspect the changed profile before applying setup answers.')
+        resources = copy.deepcopy(profile['resources'])
+        existing = next((resource for resource in resources if resource['instance_id'] == instance_id), None)
+        if existing is not None:
+            _require(get_adapter(existing['adapter']).adapter_id == contract['adapter'],
+                     'An existing resource cannot be replaced with a different adapter.')
+            _require(existing['connection']['transport'] == 'stdio'
+                     and existing['connection']['command'] == template['connection']['command']
+                     and existing['connection'].get('args', []) == template['connection']['args']
+                     and [(c['capability_id'], c['tool_name']) for c in existing['capabilities']]
+                     == [(c['capability_id'], c['tool_name']) for c in template['capabilities']],
+                     'Use configuration import for connections outside this preparation recipe.')
+        values = _current_setup_values(existing, contract) if existing is not None else {}
+        values.update(supplied)
+        _require(_validate_setup_values(contract, values)['complete'], 'Required setup answers are missing or invalid.')
+        resource = existing if existing is not None else template
+        for name, value in supplied.items():
+            for destination in contract['configuration_paths'][name]:
+                bound = str(value).lower() if type(value) is bool else str(value)
+                pointer_set(resource, _setup_pointer(destination),
+                            bound if destination[:2] == ['connection', 'env'] else value)
+        if existing is None:
+            resources.append(resource)
+        if resources == profile['resources']:
+            return profile
+        config = {key: copy.deepcopy(profile[key]) for key in PROFILE_FIELDS}
+        config['resources'] = resources
+        _no_secrets(config)
+        return store.put_profile(**config)
+
+
 def _process_environment():
     excluded = {'VIRTUAL_ENV', 'VIRTUAL_ENV_PROMPT', '__PYVENV_LAUNCHER__',
                 '_OLD_VIRTUAL_PATH', '_OLD_VIRTUAL_PYTHONHOME', 'PYLAUNCHER_DEBUG'}
@@ -174,6 +304,12 @@ def _verify(environment, item):
 
 
 def prepare_resource(store, profile_name, instance_id, recipe_id):
+    profile = store.get_profile(profile_name)
+    with store.profile_operation(profile['profile_id']):
+        return _prepare_resource(store, profile_name, instance_id, recipe_id)
+
+
+def _prepare_resource(store, profile_name, instance_id, recipe_id):
     item, project, lock_hash = _recipe(recipe_id)
     profile = store.get_profile(profile_name)
     resource = next((value for value in profile['resources'] if value['instance_id'] == instance_id), None)
@@ -184,7 +320,10 @@ def prepare_resource(store, profile_name, instance_id, recipe_id):
              resource['type'] == item['type'] and
              connection['transport'] == 'stdio' and connection['command'] == str(expected) and
              connection.get('args', []) == item['args'], 'The selected resource does not use this preparation recipe.')
-    _require(all(connection.get('env', {}).get(key) == value for key, value in item['env'].items() if value),
+    configurable_env = {path[2] for field in get_adapter(item['adapter']).setup_fields.values()
+                        for path in field['paths'] if len(path) == 3 and path[:2] == ['connection', 'env']}
+    _require(all(connection.get('env', {}).get(key) == value for key, value in item['env'].items()
+                 if value and key not in configurable_env),
              'The recipe requires its fixed read-only and connection-safety settings.')
     destination = _tool_directory(store, recipe_id)
     marker = destination / 'prepared.json'
@@ -234,6 +373,14 @@ def prepare_resource(store, profile_name, instance_id, recipe_id):
 
 def login_resource(store, profile_name, instance_id, *, start_url=None, sso_region=None,
                    role=None, no_browser=False, emit=None):
+    profile = store.get_profile(profile_name)
+    with store.profile_operation(profile['profile_id']):
+        return _login_resource(store, profile_name, instance_id, start_url=start_url,
+                               sso_region=sso_region, role=role, no_browser=no_browser, emit=emit)
+
+
+def _login_resource(store, profile_name, instance_id, *, start_url=None, sso_region=None,
+                    role=None, no_browser=False, emit=None):
     """Run explicit provider authorization in its installed SDK; forward public prompts only."""
     import queue
     import threading

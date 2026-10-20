@@ -29,6 +29,28 @@ class GitlabReadAdapter(ReadAdapter):
         'list_repository_tree',
     })
     target_template = {"server": "https://SET-ME.invalid", "project": "SET-ME"}
+    setup_fields = {
+        "server": {"schema": {"title": "Source 서버 주소", "description": "인증 정보와 쿼리를 포함하지 않은 HTTPS 서버 주소입니다.",
+                              "type": "string", "minLength": 1, "maxLength": 2048,
+                              "pattern": r"^https://[^/?#@\s\\\x00-\x1f\x7f]+(?:/[^?#\s\\\x00-\x1f\x7f]*)?$", "examples": ["https://git.example.test"]},
+                   "required": True, "paths": [["target", "server"], ["connection", "env", "GITLAB_URL"]]},
+        "project": {"schema": {"title": "Source 프로젝트", "description": "조회할 프로젝트의 경로 또는 숫자 식별자입니다.",
+                               "type": "string", "minLength": 1, "maxLength": 1024,
+                               "pattern": r"^(?!/)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))[^\\%:\x00-\x1f\x7f?#]+(?<!/)$",
+                               "examples": ["team/service"]},
+                    "required": True, "paths": [["target", "project"], ["capabilities", 0, "constraints", "fixed", "project_id"]]},
+        "refs": {"schema": {"title": "Source 리비전", "description": "조회할 브랜치·태그·커밋의 정확한 이름을 지정합니다.",
+                            "type": "array", "minItems": 1, "maxItems": 128, "uniqueItems": True,
+                            "items": {"type": "string", "minLength": 1, "maxLength": 255,
+                                      "pattern": r"^[^\x00-\x1f\x7f]+$"}, "examples": [["main"]]},
+                 "required": True, "paths": [["capabilities", 0, "constraints", "allowed_values", "ref"]]},
+        "path_prefixes": {"schema": {"title": "Source 조회 경로", "description": "저장소 안에서 조회를 허용할 상대 경로 또는 디렉토리를 지정합니다.",
+                                     "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True,
+                                     "items": {"type": "string", "minLength": 1, "maxLength": 1024,
+                                               "pattern": r"^(?!/)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))[^\\%:\x00-\x1f\x7f?#]+(?<!/)$"},
+                                     "examples": [["src", "docs"]]},
+                          "required": True, "paths": [["capabilities", 0, "constraints", "path_prefixes", "file_path"]]},
+    }
     environment_prefixes = ("GITLAB_",)
     control_fields = frozenset({
         "READ_OPERATIONS_ONLY", "MCP_READ_ONLY", "READ_ONLY_MODE", "ENABLED_TOOLS",

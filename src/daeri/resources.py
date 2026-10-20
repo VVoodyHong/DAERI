@@ -249,6 +249,8 @@ class ResourceRegistry:
         return hmac.new(self.binding_key, _json([credentials, provider_files]).encode(), hashlib.sha256).hexdigest(), credentials
 
     def _resource(self, profile, instance_id):
+        with self.store.transaction():
+            self.store.assert_profile_available(profile['profile_id'])
         items = [resource for resource in profile.get("resources", []) if resource.get("instance_id") == instance_id]
         if len(items) != 1:
             raise StoreError("NOT_FOUND", "The resource is not registered in this profile.")
@@ -341,6 +343,10 @@ class ResourceRegistry:
         return result
 
     def diagnose(self, profile, instance_id, timeout=30):
+        with self.store.profile_operation(profile['profile_id']):
+            return self._diagnose(profile, instance_id, timeout)
+
+    def _diagnose(self, profile, instance_id, timeout):
         config = self._resource(profile, instance_id)
         binding_hash, credentials = self._binding(config)
         async def run():

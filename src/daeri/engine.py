@@ -14,11 +14,11 @@ from jsonschema import Draft202012Validator
 
 from .contracts import INPUT_MODELS
 from .security import redact
-from .storage import Store, StoreError
+from .storage import Store, StoreError, process_alive
 from .credentials import Credentials
 from .memory import MemoryService
 from .resources import ResourceRegistry
-from .planning import validate_plan
+from .planning import evidence_matches_step, validate_plan
 from .policy import as_pointer, disclosure, leaves, pointer_get, pointer_path, pointer_set, project
 
 TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
@@ -36,7 +36,7 @@ def response(data, status="ok", code=None, message=None):
     action = "fix_input"
     if code in {"REQUEST_ID_CONFLICT", "CALL_ID_CONFLICT", "ACCESS_DENIED", "STORE_UNAVAILABLE", "APPROVAL_UNAVAILABLE",
                 "CONTEXT_CHANGED", "CONNECTION_NOT_READY", "AUTHENTICATION_REQUIRED", "UNSUPPORTED_CONSTRAINT",
-                "RECORD_EXPIRED", "RECORD_UNAVAILABLE"}:
+                "RECORD_EXPIRED", "RECORD_UNAVAILABLE", "PROFILE_DELETING", "PROFILE_DELETED"}:
         action = "stop"
     elif code in {"NOT_FOUND", "REVISION_CONFLICT", "OWNER_CONFLICT", "CURSOR_INVALID", "TASK_STATE_INVALID",
                   "CONTRACT_CHANGED", "RESULT_TRUNCATED", "MEMORY_SEARCH_INCOMPLETE", "MEMORY_SEARCH_UNAVAILABLE",
@@ -81,6 +81,8 @@ class Engine:
             args = INPUT_MODELS[tool].model_validate(arguments).model_dump(exclude_unset=True)
             if tool == "daeri_capability_execute":
                 return self._execute(args)
+            if tool == "daeri_memory_search":
+                return self._memory_search(args, None)
             with self.store.transaction():
                 fingerprint = hashlib.sha256(json.dumps(redact(args), sort_keys=True,
                     ensure_ascii=False, allow_nan=False).encode()).hexdigest()
@@ -99,7 +101,12 @@ class Engine:
                 result = getattr(self, "_" + tool.removeprefix("daeri_"))(args, task)
                 if key:
                     self.store.request_put(scope, key, fingerprint, self._cache(tool, result))
-                return result
+            if tool == "daeri_memory_update" and args["operation"] == "store":
+                if result["data"]["index_state"] == "pending":
+                    self.memory._index(task["profile_id"], result["data"]["memory_ref"])
+                from .knowledge import replay
+                return replay(self, args, result)
+            return result
         except ValidationError:
             return response(None, "error", "INVALID_INPUT", "도구의 필드·자료형·필수값을 확인하세요.")
         except StoreError as error:
@@ -161,10 +168,9 @@ class Engine:
         if owner == self.owner:
             return "self"
         try:
-            os.kill(int(owner.split(":", 1)[0]), 0)
-        except ProcessLookupError:
-            return "recovery_required"
-        except (ValueError, PermissionError):
+            if not process_alive(int(owner.split(":", 1)[0])):
+                return "recovery_required"
+        except (ValueError, OverflowError, OSError):
             pass  # Uncertain ownership cannot justify takeover.
         return "other"
 
@@ -455,20 +461,28 @@ class Engine:
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], "descriptor": descriptor})
 
     def _memory_search(self, args, task):
-        require(task["profile_id"], "CONTEXT_REQUIRED", "profile을 먼저 선택하세요.")
-        profile = self._current_profile(task)
+        with self.store.transaction():
+            task = self._task(args["task_id"])
+            profile = self._current_profile(task)
+            revision = task["task_revision"]
         found = self.memory.search(profile["profile_id"], redact(args["query"]),
                                    limit=min(args.get("limit", 10), 50), instance_ids=args.get("instance_ids"))
-        payload = {"context": task["context"], "context_revision": task["context_revision"],
-                   "source_plan_ref": task["active_plan_ref"], "query": redact(args["query"]),
-                   "memory_refs": [item["memory_ref"] for item in found["items"]],
-                   "limitations": found["limitations"], "retrieval_state": found["retrieval_state"]}
-        ref = self.store.write_record(task["task_id"], "memory_search", payload)
-        status = "ok" if found["retrieval_state"] == "hybrid" and not found["limitations"] else "error" if found["retrieval_state"] == "unavailable" else "partial"
-        code = None if status == "ok" else "MEMORY_SEARCH_UNAVAILABLE" if status == "error" else "MEMORY_SEARCH_INCOMPLETE"
-        return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
-                         "memory_search_ref": ref, "core_context": redact(profile["core_context"]), **found},
-                         status, code, "현재 검색 상태와 제한을 계획에 반영하세요." if code else None)
+        with self.store.transaction():
+            task = self._task(args["task_id"])
+            profile = self._current_profile(task)
+            require(task["task_revision"] == revision, "REVISION_CONFLICT", "검색 중 변경된 업무의 현재 맥락을 다시 확인하세요.")
+            found["items"] = [self.memory.get(profile["profile_id"], item["memory_ref"], instance_ids=args.get("instance_ids"))
+                              for item in found["items"]]
+            payload = {"context": task["context"], "context_revision": task["context_revision"],
+                       "source_plan_ref": task["active_plan_ref"], "query": redact(args["query"]),
+                       "memory_refs": [item["memory_ref"] for item in found["items"]],
+                       "limitations": found["limitations"], "retrieval_state": found["retrieval_state"]}
+            ref = self.store.write_record(task["task_id"], "memory_search", payload)
+            status = "ok" if found["retrieval_state"] == "hybrid" and not found["limitations"] else "error" if found["retrieval_state"] == "unavailable" else "partial"
+            code = None if status == "ok" else "MEMORY_SEARCH_UNAVAILABLE" if status == "error" else "MEMORY_SEARCH_INCOMPLETE"
+            return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
+                             "memory_search_ref": ref, "core_context": redact(profile["core_context"]), **found},
+                             status, code, "현재 검색 상태와 제한을 계획에 반영하세요." if code else None)
 
     def _plan_header(self, task, plan_id):
         header = next((p for p in task["plans"] if p["plan_id"] == plan_id), None)
@@ -626,7 +640,7 @@ class Engine:
                     "decision": args["decision"]}, sort_keys=True).encode()).hexdigest()
                 existing = self.store.request_get(scope, "message")
                 require(not existing or existing["fingerprint"] == fingerprint, "APPROVAL_UNAVAILABLE", "사용자 메시지 참조를 다른 답변·계획에 재사용할 수 없습니다.")
-                self.store.request_put(scope, "message", fingerprint, {})
+                self.store.request_put(scope, "message", fingerprint, {}, profile_id=task['profile_id'])
             if args["decision"] == "approve":
                 self._validate_searches(task, body["draft"], header["source_plan_ref"])
             approval["feedback_ref"] = self.store.write_record(task["task_id"], "approval", redact({
@@ -671,6 +685,9 @@ class Engine:
                     "BINDING_INVALID", "같은 선행 단계는 동일한 출처 호출을 사용하세요.")
             sources[binding["source_step_id"]] = call["call_id"]
             evidence = self._load_evidence(task, call["result_ref"], mode="model")
+            source_step = next(item for item in plan["draft"]["steps"] if item["step_id"] == binding["source_step_id"])
+            require(evidence_matches_step(evidence, source_step), "BINDING_INVALID",
+                    "승계한 출처의 대상·기능·계약·범위가 현재 선행 단계와 다릅니다.")
             try:
                 value = pointer_get(evidence["result"], binding["source_pointer"])
                 path = pointer_path(evidence["result"], binding["source_pointer"])
@@ -695,8 +712,14 @@ class Engine:
                 type(value) is type(item) and value == item for item in condition["value"])
             require(permitted, "CONDITION_NOT_MET", "승인한 분기 조건이 충족되지 않았습니다.")
         for dependency in step["depends_on"]:
-            require(any(item["step_id"] == dependency and item["plan_id"] == plan["plan_id"] and item["call_state"] == "completed" and item.get("result_ref")
-                        for item in task["calls"]), "BINDING_INVALID", "선행 단계의 정상 완료 근거가 필요합니다.")
+            if dependency in sources:
+                continue
+            source_step = next(item for item in plan["draft"]["steps"] if item["step_id"] == dependency)
+            candidates = (item for item in task["calls"] if item["step_id"] == dependency
+                and item["call_state"] == "completed" and item.get("result_ref")
+                and (item["plan_id"] == plan["plan_id"] or item["result_ref"] in plan["draft"]["carried_evidence_refs"]))
+            require(any(evidence_matches_step(self._load_evidence(task, item["result_ref"]), source_step)
+                        for item in candidates), "BINDING_INVALID", "선행 단계의 정상 완료 근거가 필요합니다.")
         return parameters
 
     def _execution_allowed(self, task, plan, args):
@@ -728,7 +751,7 @@ class Engine:
             step = self._execution_allowed(task, plan, args)
             parameters = self._bindings(task, plan, step, args)
             invocation = self.registry.normalize(self._current_profile(task), step["instance_id"], step["capability_id"], parameters, step["scope"])
-            output_schema = self.registry.get(task["profile_snapshot"], step["instance_id"], step["capability_id"])["output_schema"]
+            output_schema = self.registry.get(self._current_profile(task), step["instance_id"], step["capability_id"])["output_schema"]
             require(invocation.contract_ref == step["contract_ref"], "CONTRACT_CHANGED", "실행할 계약이 승인 당시와 다릅니다.")
             header = self._plan_header(task, plan["plan_id"])
             budget = self._budget(header, task)["remaining"]
@@ -825,7 +848,7 @@ class Engine:
             **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}}
 
     def _call_reply(self, task, call):
-        inline, warnings, evidence_refs = None, [], []
+        inline, warnings, evidence_refs, truncated = None, [], [], False
         if call.get("result_ref"):
             evidence = self._load_evidence(task, call["result_ref"], mode="model", require_current_plan=False)
             if evidence.get("result") is not None:
@@ -835,10 +858,13 @@ class Engine:
                 except Exception:
                     warnings.append("제공 정책 적용 후 출력 스키마를 충족하지 않아 본문을 직접 반환하지 않습니다.")
                 evidence_refs = [call["result_ref"]]
+                truncated = evidence.get("source_complete") is False
             warnings.extend(evidence.get("warnings", []))
+        if truncated:
+            warnings.append("원격 조회의 일부가 누락되거나 잘렸습니다.")
         header = self._plan_header(task, (task["active_plan_ref"] or call)["plan_id"])
-        code = call.get("error_code")
-        status = "error" if code else "pending" if call["call_state"] == "pending" else "ok"
+        code = call.get("error_code") or ("RESULT_TRUNCATED" if truncated else None)
+        status = "partial" if truncated and code == "RESULT_TRUNCATED" else "error" if code else "pending" if call["call_state"] == "pending" else "ok"
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
             **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "call_state", "external_effect", "result_ref")},
             "inline_result": inline, "usage": {"logical_calls": int(call["dispatched"]), "external_requests": None if call["dispatched"] else 0,
@@ -881,6 +907,10 @@ class Engine:
             resource = next((item for item in profile["resources"] if item["instance_id"] == payload["instance_id"]), None)
             require(resource is not None, "ACCESS_DENIED", "현재 profile의 리소스가 아닙니다.")
             original = self._plan_get({"plan_id": payload["plan_id"]}, task)["data"]["plan"]
+            source_step = next((step for step in original["draft"]["steps"] if step["step_id"] == payload["step_id"]), {})
+            metadata["scope"] = copy.deepcopy(source_step.get("scope"))
+            require(payload["plan_version"] == original["plan_version"] and evidence_matches_step(metadata, source_step),
+                    "RESULT_VALIDATION_FAILED", "원 호출의 계획·대상·기능 계약을 확인할 수 없습니다.")
             active = self._current_plan(task)
             rule = self._resource_rule(original, payload["instance_id"])
             if require_current_plan and payload["plan_id"] != active["plan_id"]:
@@ -1015,11 +1045,14 @@ class Engine:
             payload = {key: record["payload"].get(key) for key in ("context", "source_plan_ref", "memory_refs", "retrieval_state", "limitations")}
         limit = args.get("limit_bytes", 65536)
         payload, cursor, more = self._payload_page(task, args, payload, limit)
+        truncated = kind == "call_result" and evidence.get("source_complete") is False and evidence.get("result") is not None
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], "record_kind": kind,
             "payload": payload, "next_cursor": cursor, "has_more": more, "redactions": [],
             "evidence_refs": evidence.get("evidence_refs", []), "integrity": "intact",
-            "coverage": {"source_complete": evidence.get("source_complete"), "returned_scope": "현재 허용된 보존 본문", "missing_scope": []},
-            "managed_file": managed_file})
+            "coverage": {"source_complete": evidence.get("source_complete"), "returned_scope": "현재 허용된 보존 본문",
+                         "missing_scope": ["원격 조회의 일부가 누락되거나 잘렸습니다."] if truncated else []},
+            "managed_file": managed_file}, "partial" if truncated else "ok", "RESULT_TRUNCATED" if truncated else None,
+            "원본 조회의 잘림을 포함한 보존 자료입니다." if truncated else None)
 
     def _payload_page(self, task, args, payload, limit):
         signature = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()

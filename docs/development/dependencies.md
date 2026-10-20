@@ -12,6 +12,7 @@
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
+| `adapters/`의 `setup_fields` | 어댑터별 비밀 없는 설정 입력 스키마·필수값·설정 목적지 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 로컬 모델 선정·임베딩·검색·모델 호환과 보존 기준 |
 
@@ -68,7 +69,12 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
 | `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
 | `profile export NAME` | 내부 상태·인증 비밀을 제외한 이동 가능한 설정 반환 |
+| `profile delete NAME` | 삭제할 대상·개정·관련 자료 수·확인값을 미리 반환 |
+| `profile delete NAME --confirm TOKEN` | 확인한 대상을 차단하고 귀속 자료를 정리한 뒤 profile을 마지막에 삭제 |
 | `resource catalog/template` | 지원 recipe와 사용자가 채울 대상·정책 설정안 반환 |
+| `resource setup-schema RECIPE` | 선택한 어댑터의 입력 JSON Schema·설정 목적지·인증 메타데이터 반환 |
+| `resource validate-setup RECIPE VALUES_JSON` | 값 객체 파일의 부분 검증; 유효성·완성 여부·누락 필드·값 없는 오류 반환 |
+| `resource configure RECIPE --profile NAME --instance ID --values VALUES_JSON --expected-revision N` | 전체 필수 입력과 현재 개정을 검사하고 기존 profile의 선택한 인스턴스만 추가·부분 갱신 |
 | `resource prepare PROFILE INSTANCE --recipe ID` | 선택한 고정 recipe만 격리 환경에 준비·검사 |
 | `resource login PROFILE INSTANCE` | 지원되는 제공자 로그인 시작·공개 확인 URL 표시·결과 반환 |
 | `resource diagnose PROFILE INSTANCE` | 인증·대상과 MCP 도구 목록을 확인해 기능 계약 등록 |
@@ -77,6 +83,11 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | `cleanup` | 만료된 업무 본문·기억·색인 정리 |
 
 일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
+`VALUES_JSON`은 UTF-8 JSON 파일 경로이며 값 객체의 원문을 명령 인자로 받지 않는다.
+스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
+Plan에서는 이미 있는 입력 파일만 검증하며 파일 작성 제한과 재입력은 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
+`resource configure`는 실행 모드에서 적용 요약을 확인할 때 사용한 profile 개정을 명시해 수행하며 새 profile은 먼저 `profile create`로 만든다.
+입력 스키마·기존값 재사용·검증 결과·동시 변경 거부·보존 경계는 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
 새 profile의 `--retention-days`와 `--long-term-memory-days`는 각각 생략하거나 `unlimited`로 지정하면 무기한이며 양의 정수로 유한 기간을 선택한다.
 기존 profile의 기간 변경은 전체 export 설정에서 해당 `retention_days`·`long_term_memory_days`만 수정해 import하고 다른 설정을 유지한다.
 변경은 새 업무에 적용하며 기존 유한 기한의 자동 연장·만료 자료 복구를 허용하지 않는다.
@@ -86,8 +97,9 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 
 profile·정책·인증 입력의 필드·실패·지원 경계는 [사용자 구성](../spec/configuration/profiles.md), 기억 준비와 부분 검색은 [기억 사양](../spec/tasks/memory.md)을 따른다.
 미완성 template·기본 거부 정책·누락 인증을 준비 성공으로 채우지 않는다.
-profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
+profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 대화 안의 대상 선택과 목록 표시 범위는 [profile 선택 계약](../spec/configuration/profiles.md#선택과-기본값)을 따르며 별도 전역 선택 CLI를 추가하지 않는다.
+삭제는 같은 profile Skill에서 사용자 확인 후 관리 CLI로 수행하며 귀속 범위·공유 자료 보존·실패 재시도는 [profile 삭제 계약](../spec/configuration/profiles.md#profile-삭제)을 따른다.
 
 ## 실행 진입점과 모듈
 
@@ -106,11 +118,12 @@ profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 | `engine.py`·`planning.py` | 업무 상태·소유권·멱등 처리, 계획·승인·실행·예산과 근거 연결 |
 | `resources.py` | 공통 기능 등록·계약 지문·인증 참조 해소·하위 MCP 세션·스키마 및 전송 검사 |
 | `adapters/__init__.py`·`adapters/base.py` | 신뢰하는 어댑터 등록·식별자 조회와 공통 읽기 검사·결과 처리 계약 |
-| `adapters/`의 제품별 모듈 | 제품별 대상 설정안·인증·로그인·요청 의미·접속 대상·범위·결과 검사 |
+| `adapters/`의 제품별 모듈 | 제품별 설정 입력 스키마·대상 설정안·인증·로그인·요청 의미·접속 대상·범위·결과 검사 |
 | `policy.py`·`security.py` | 필드 제공·마스킹·출처 경로와 알려진 인증 문자열 보조 검사 |
 | `results.py` | 실제 근거·완료 조건·표 계산·허용 파일 생성·보고 검증 |
 | `memory.py`·`knowledge.py` | profile별 지식의 출처·정책·기한·개정·검색·갱신 검사 |
-| `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리 |
+| `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
+| `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
 | `cli.py`·`setup.py` | 명시적인 사용자 구성·환경·recipe 준비·진단 진입 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
 | `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 setup·profile·work·list-profiles 지침 전달 |

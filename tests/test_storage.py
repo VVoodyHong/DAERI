@@ -431,3 +431,48 @@ def test_invalid_profile_memory_policy_never_creates_a_revision(store, policy):
     with pytest.raises(StoreError, match="INVALID_INPUT"):
         store.put_profile("alpha", memory_policy=policy)
     assert store.get_profile("alpha") == original
+
+
+@pytest.mark.parametrize('outcome,expected', [('running', True), ('exited', False),
+                                            ('missing', False), ('denied', True), ('unknown', True)])
+def test_windows_process_probe_never_sends_a_signal_and_closes_handles(monkeypatch, outcome, expected):
+    import sys
+    from types import SimpleNamespace
+    from daeri import storage
+    closed = []
+    def open_process(access, inherit, pid):
+        assert (access, inherit, pid) == (0x100000, False, 123)
+        if outcome in {'missing', 'denied'}:
+            error = OSError('probe failed')
+            error.winerror = 87 if outcome == 'missing' else 5
+            raise error
+        return 7
+    api = SimpleNamespace(SYNCHRONIZE=0x100000, WAIT_OBJECT_0=0, WAIT_TIMEOUT=258,
+                          OpenProcess=open_process, CloseHandle=closed.append,
+                          WaitForSingleObject=lambda handle, timeout: {'running': 258, 'exited': 0, 'unknown': 999}[outcome])
+    monkeypatch.setitem(sys.modules, '_winapi', api)
+    monkeypatch.setattr(storage, 'sys', SimpleNamespace(platform='win32'), raising=False)
+    monkeypatch.setattr(os, 'kill', lambda *args: pytest.fail('A Windows process probe must not send signals'))
+    assert storage.process_alive(123) is expected
+    assert closed == ([] if outcome in {'missing', 'denied'} else [7])
+
+
+@pytest.mark.parametrize('error,expected', [(None, True), (ProcessLookupError(), False), (PermissionError(), True)])
+def test_posix_process_probe_distinguishes_dead_from_uncertain_owners(monkeypatch, error, expected):
+    from types import SimpleNamespace
+    from daeri import storage
+    def probe(pid, signal):
+        assert (pid, signal) == (123, 0)
+        if error:
+            raise error
+    monkeypatch.setattr(storage, 'sys', SimpleNamespace(platform='darwin'), raising=False)
+    monkeypatch.setattr(os, 'kill', probe)
+    assert storage.process_alive(123) is expected
+
+
+@pytest.mark.parametrize('pid', [0, -1, 0x100000000, True])
+def test_invalid_process_ids_never_target_a_process_or_process_group(monkeypatch, pid):
+    from daeri.storage import process_alive
+    monkeypatch.setattr(os, 'kill', lambda *args: pytest.fail('Invalid owners cannot be probed'))
+    with pytest.raises(ValueError):
+        process_alive(pid)

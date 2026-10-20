@@ -28,7 +28,7 @@ def evidence(service, task, step="collect-a", rows=None, complete=True, retentio
     result = {"rows": rows}
     expiry = None if retention_days is None else (datetime.now(UTC) + timedelta(days=retention_days)).isoformat()
     payload = {"result": result, "step_id": step, "instance_id": step,
-               "capability_id": "read", "contract_ref": "contract-" + step, "source_complete": complete,
+               "capability_id": "read", "contract_ref": "contract-" + step, "scope": {}, "source_complete": complete,
                "observed_at": datetime.now(UTC).isoformat(), "plan_id": "plan-one", "plan_version": 1}
     ref = service.store.write_record(task["task_id"], "call_result", payload, expiry)
     resolved = {**payload, "payload": payload, "record_kind": "call_result", "expires_at": expiry,
@@ -50,7 +50,7 @@ def setup_plan(service, task, *, coverage="complete", join="inner", artifact=Fal
         "join_mode": join, "coverage": coverage, "allowed_operations": ["copy", "difference", "ratio", "missing"],
         "max_rows": 10, "ratio_scale": 2}
     plan = {"plan_id": "plan-one", "plan_version": 1, "draft": {
-        "steps": [{"step_id": step, "instance_id": step, "capability_id": "read", "contract_ref": "contract-" + step} for step in ("collect-a", "collect-b")],
+        "steps": [{"step_id": step, "instance_id": step, "capability_id": "read", "contract_ref": "contract-" + step, "scope": {}} for step in ("collect-a", "collect-b")],
         "completion_criteria": [{"criterion_id": "compared", "description": "모든 행 비교", "required": True,
                                   "step_ids": ["collect-a", "collect-b"]}],
         "carried_evidence_refs": [], "memory_refs": [], "output": {

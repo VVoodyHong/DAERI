@@ -1,5 +1,7 @@
 """Validate plans against registered capabilities, rather than model assurances."""
 
+import json
+
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
@@ -11,6 +13,16 @@ from .storage import StoreError
 def check(condition, message):
     if not condition:
         raise StoreError("PLAN_INVALID", message)
+
+
+def evidence_matches_step(record, step):
+    """A reused step ID cannot change the target or the approved observation scope."""
+    return (record.get("record_kind") == "call_result"
+            and all(record.get(key) == step.get(key) for key in
+                    ("step_id", "instance_id", "capability_id", "contract_ref"))
+            and "scope" in record and "scope" in step
+            and json.dumps(record["scope"], sort_keys=True, allow_nan=False) ==
+                json.dumps(step["scope"], sort_keys=True, allow_nan=False))
 
 
 def validate_plan(profile, draft, registry, formats, evidence_instances=()):

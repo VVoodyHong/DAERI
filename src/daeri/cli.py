@@ -88,8 +88,21 @@ def _parser():
     for action in ('show', 'export'):
         profile.add_parser(action).add_argument('name_or_id')
     profile.add_parser('import').add_argument('config_file', type=Path)
+    delete = profile.add_parser('delete', help='Preview a profile cascade; apply only with its confirmation token')
+    delete.add_argument('name_or_id')
+    delete.add_argument('--confirm', metavar='DELETION_TOKEN')
     resource = commands.add_parser('resource').add_subparsers(dest='resource_command', required=True)
     resource.add_parser('catalog')
+    resource.add_parser('setup-schema').add_argument('recipe')
+    validate = resource.add_parser('validate-setup', help='Validate partial non-secret answers without writing settings')
+    validate.add_argument('recipe')
+    validate.add_argument('values_file', type=Path)
+    configure = resource.add_parser('configure', help='Merge validated answers into one resource of an inspected profile')
+    configure.add_argument('recipe')
+    configure.add_argument('--profile', required=True)
+    configure.add_argument('--instance', required=True)
+    configure.add_argument('--values', dest='values_file', type=Path, required=True)
+    configure.add_argument('--expected-revision', type=int, required=True)
     template = resource.add_parser('template')
     template.add_argument('recipe')
     template.add_argument('--profile', required=True)
@@ -161,6 +174,10 @@ def _with_store(args):
     store = Store(data_directory(args.data_dir))
     try:
         if args.command == 'profile':
+            if args.profile_command == 'delete':
+                from .setup import delete_profile, preview_profile_deletion
+                return (delete_profile(store, args.name_or_id, args.confirm) if args.confirm is not None
+                        else preview_profile_deletion(store, args.name_or_id))
             if args.profile_command == 'create':
                 return store.put_profile(args.name, create_only=True, core_context=redact(args.context),
                                          retention_days=args.retention_days,
@@ -170,6 +187,10 @@ def _with_store(args):
             if args.profile_command == 'export': return export_profile(store, args.name_or_id)
             return store.get_profile(args.name_or_id)
         if args.command == 'resource':
+            if args.resource_command == 'configure':
+                from .setup import configure_resource
+                return configure_resource(store, args.recipe, args.profile, args.instance,
+                                          args.values_file, expected_revision=args.expected_revision)
             if args.resource_command == 'login':
                 return login_resource(store, args.profile, args.instance, start_url=args.start_url,
                                       sso_region=args.sso_region, role=args.role, no_browser=args.no_browser)
@@ -207,14 +228,16 @@ def main():
             code = 0 if result['ready'] else 1
         elif args.command == 'auth':
             result, code = _auth(args), 0
-        elif args.command == 'resource' and args.resource_command in {'catalog', 'template'}:
+        elif args.command == 'resource' and args.resource_command in {'catalog', 'template', 'setup-schema', 'validate-setup'}:
             from types import SimpleNamespace
-            from .setup import load_catalog, profile_template
+            from .setup import load_catalog, profile_template, setup_schema, validate_setup
             if args.resource_command == 'catalog': result = load_catalog()
+            elif args.resource_command == 'setup-schema': result = setup_schema(args.recipe)
+            elif args.resource_command == 'validate-setup': result = validate_setup(args.recipe, args.values_file)
             else:
                 result = profile_template(SimpleNamespace(data_dir=data_directory(args.data_dir)),
                                           args.recipe, args.profile, args.instance)
-            code = 0
+            code = 0 if args.resource_command != 'validate-setup' or result['valid'] else 1
         else:
             result, code = _with_store(args), 0
     except Exception as exc:

@@ -59,10 +59,10 @@ def begin(engine, profile, *, max_calls=3, max_runtime=30000, configure=None):
     return saved["data"], draft
 
 
-def approve(engine, saved):
+def approve(engine, saved, suffix=""):
     common = {"task_id": saved["task_id"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"]}
-    waiting = engine.call("daeri_approval_request", {**common, "request_id": "ask", "expected_task_revision": saved["task_revision"], "stage": "request"})["data"]
-    result = engine.call("daeri_approval_request", {**common, "request_id": "approve", "expected_task_revision": waiting["task_revision"], "stage": "respond", "approval_request_id": waiting["approval_request_id"], "decision": "approve", "user_response": "Approve this test plan"})
+    waiting = engine.call("daeri_approval_request", {**common, "request_id": "ask" + suffix, "expected_task_revision": saved["task_revision"], "stage": "request"})["data"]
+    result = engine.call("daeri_approval_request", {**common, "request_id": "approve" + suffix, "expected_task_revision": waiting["task_revision"], "stage": "respond", "approval_request_id": waiting["approval_request_id"], "decision": "approve", "user_response": "Approve this test plan"})
     assert result["status"] == "ok", result
     return result["data"]
 

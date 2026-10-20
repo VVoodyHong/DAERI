@@ -51,6 +51,27 @@ def _expiry(value):
     return _instant(value) if value is not None else None
 
 
+def _source_key(source):
+    return _digest([source["task_id"], source["record_ref"]])
+
+
+def purge_profile_memory(store, profile_id):
+    """Remove all profile memory revisions without loading shared model runtimes."""
+    tables = {"memory_heads", "memory_versions", "memory_vectors", "memory_fts"}
+    with store.transaction():
+        present = {row[0] for row in store._db.execute(
+            "SELECT name FROM sqlite_schema WHERE type='table' AND name IN (?,?,?,?)", sorted(tables))}
+        if not present:
+            return 0
+        _require(present == tables, "STORE_UNAVAILABLE", "기억 저장 구조가 완전하지 않아 profile을 삭제할 수 없습니다.")
+        references = "SELECT memory_ref FROM memory_versions WHERE profile_id=?"
+        for table in ("memory_fts", "memory_vectors"):
+            store._db.execute(f"DELETE FROM {table} WHERE memory_ref IN ({references})", (profile_id,))
+        deleted = store._db.execute("DELETE FROM memory_versions WHERE profile_id=?", (profile_id,)).rowcount
+        store._db.execute("DELETE FROM memory_heads WHERE profile_id=?", (profile_id,))
+        return deleted
+
+
 class LocalEmbedder:
     """ONNX CPU embeddings. Only prepare() may download the selected public model."""
 
@@ -131,6 +152,16 @@ class MemoryService:
             for statement in statements:
                 self.store._db.execute(statement)
             self._upgrade_expiry(statements[1])
+            columns = {row["name"] for row in self.store._db.execute("PRAGMA table_info(memory_versions)")}
+            if "source_lineage" not in columns:
+                self.store._db.execute("ALTER TABLE memory_versions ADD COLUMN source_lineage TEXT")
+            for row in self.store._db.execute("SELECT memory_ref,body FROM memory_versions WHERE source_lineage IS NULL").fetchall():
+                sources = json.loads(row["body"]).get("_sources") if row["body"] else None
+                # Missing old bodies cannot prove that an old observation was never blocked.
+                lineage = {"keys": sorted({_source_key(source) for source in sources}) if sources else None,
+                           "blocked_at": None if sources else datetime.now(UTC).isoformat()}
+                self.store._db.execute("UPDATE memory_versions SET source_lineage=? WHERE memory_ref=?",
+                                       (_json(lineage), row["memory_ref"]))
         if self.embedder is None and auto_load and (store.data_dir / "models" / "prepared.json").is_file():
             try:
                 self.embedder = LocalEmbedder.load(store.data_dir / "models")
@@ -238,7 +269,7 @@ class MemoryService:
                     return False
         return True
 
-    def _allowed(self, item, policy, instance_ids=None, *, profile):
+    def _allowed(self, item, policy, instance_ids=None, *, profile, check_sources=True):
         instances = set(item["instance_ids"])
         return (policy.get("model_allowed") is True and policy.get("retain_allowed") is True
                 and item["category"] in policy.get("categories", [])
@@ -247,7 +278,7 @@ class MemoryService:
                         for key, target in item["_target_bindings"].items())
                 and (instance_ids is None or instances <= set(instance_ids))
                 and (item["retention"] != "long_term" or policy.get("long_term_allowed") is True)
-                and self._sources_available(item) and self._resource_allowed(item, profile))
+                and (not check_sources or self._sources_available(item)) and self._resource_allowed(item, profile))
 
     def _sources_available(self, item):
         for source in item["_sources"]:
@@ -312,7 +343,7 @@ class MemoryService:
                 raise
             return False
 
-    def save(self, profile_id, candidate, *, source_records, policy, memory_ref=None):
+    def save(self, profile_id, candidate, *, source_records, policy, memory_ref=None, index=True):
         required = {"category", "statement", "applicability", "instance_ids", "verification_method"}
         _require(isinstance(candidate, dict) and set(candidate) == required
                  and candidate["category"] in CATEGORIES
@@ -357,21 +388,31 @@ class MemoryService:
             source_hash = _digest(sorted([{
                 key: source[key] for key in ("task_id", "record_ref", "fields", "verified_at")}
                 for source in sources], key=_json))
-            earlier = self.store._db.execute("SELECT min(expires_at) FROM memory_versions WHERE profile_id=? AND source_hash=?",
-                                              (profile_id, source_hash)).fetchone()[0]
-            if earlier:
-                expiry = _finite_min(expiry, _instant(earlier))
-            _require(expiry is None or expiry > datetime.now(UTC), "RECORD_EXPIRED", "기존 출처를 반복 사용해 기억의 기한을 연장할 수 없습니다.")
-            removed = self.store._db.execute("""SELECT 1 FROM memory_versions v JOIN memory_heads h USING(memory_id)
-                WHERE v.profile_id=? AND v.source_hash=? AND (h.invalidated=1 OR v.body IS NULL) LIMIT 1""",
-                (profile_id, source_hash)).fetchone()
-            _require(removed is None, "MEMORY_CONFLICT", "사용 차단·정리한 기억의 출처는 새로 확인한 자료 없이 다시 사용할 수 없습니다.")
             previous = None
             if memory_ref is not None:
                 previous, old = self._row(profile_id, memory_ref)
                 _require(old["_target_bindings"] == bindings, "ACCESS_DENIED", "다른 실제 대상의 기억을 같은 ID로 정정할 수 없습니다.")
-                if previous["source_hash"] == source_hash:
-                    expiry = _finite_min(expiry, _instant(previous["expires_at"]) if previous["expires_at"] else None)
+            source_times = {_source_key(source): _instant(source["verified_at"]) for source in sources}
+            keys = set(source_times)
+            history = self.store._db.execute("""SELECT v.memory_id,v.content_hash,v.created_at,v.expires_at,
+                v.source_lineage,v.body IS NOT NULL AS body_available,h.invalidated FROM memory_versions v
+                JOIN memory_heads h USING(memory_id) WHERE v.profile_id=?""", (profile_id,)).fetchall()
+            for version in history:
+                lineage = json.loads(version["source_lineage"]) if version["source_lineage"] else {"keys": None}
+                old_keys = set(lineage["keys"]) if lineage["keys"] is not None else None
+                if (old_keys is not None and not keys & old_keys and version["content_hash"] != content_hash
+                        and (previous is None or version["memory_id"] != previous["memory_id"])):
+                    continue
+                expired = version["expires_at"] is not None and _instant(version["expires_at"]) <= datetime.now(UTC)
+                cutoff = (lineage.get("blocked_at") or (version["expires_at"] if expired else None)
+                          or version["created_at"])
+                fresh = any(key not in (old_keys or set()) and verified > _instant(cutoff)
+                            for key, verified in source_times.items())
+                if not fresh:
+                    _require(not version["invalidated"] and (version["body_available"] or expired),
+                             "MEMORY_CONFLICT", "사용 차단·정리한 기억의 출처는 새로 확인한 자료 없이 다시 사용할 수 없습니다.")
+                    expiry = _finite_min(expiry, _expiry(version["expires_at"]))
+            _require(expiry is None or expiry > datetime.now(UTC), "RECORD_EXPIRED", "기존 출처를 반복 사용해 기억의 기한을 연장할 수 없습니다.")
             duplicate = self.store._db.execute("""SELECT v.memory_ref FROM memory_versions v JOIN memory_heads h USING(memory_id)
                 WHERE v.profile_id=? AND v.content_hash=? AND v.source_hash=? AND h.current_ref=v.memory_ref
                 AND h.invalidated=0""", (profile_id, content_hash, source_hash)).fetchone()
@@ -387,12 +428,13 @@ class MemoryService:
             self.store._db.execute("""INSERT INTO memory_heads(memory_id,profile_id,current_ref) VALUES(?,?,?)
                 ON CONFLICT(memory_id) DO UPDATE SET current_ref=excluded.current_ref,invalidated=0""",
                 (identity, profile_id, reference))
-            self.store._db.execute("INSERT INTO memory_versions VALUES(?,?,?,?,?,?,?,?,?,?)",
+            self.store._db.execute("""INSERT INTO memory_versions(memory_ref,memory_id,profile_id,version,body,
+                content_hash,source_hash,created_at,expires_at,index_state,source_lineage) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (reference, identity, profile_id, version, _json(item), content_hash, source_hash, instant,
-                 item["expires_at"], "pending"))
+                 item["expires_at"], "pending", _json({"keys": sorted(keys), "blocked_at": None})))
             if previous:
                 self._drop_indexes(previous["memory_ref"])
-        state = self._index(profile_id, reference)
+        state = self._index(profile_id, reference) if index else "pending"
         return {**self.get(profile_id, reference), "index_state": state}
 
     def _drop_indexes(self, memory_ref):
@@ -429,6 +471,12 @@ class MemoryService:
         _require(isinstance(query, str) and query.strip() and len(query.encode()) <= 4096
                  and type(limit) is int and 0 < limit <= 50,
                  "INVALID_INPUT", "검색어와 1~50건의 반환 한도를 지정하세요.")
+        query_vector = None
+        if self.vector_ready:
+            try:
+                query_vector = self._vector(self.embedder.embed_query(redact(query)))
+            except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
+                pass
         with self.store.transaction():
             profile, policy = self._policy(profile_id)
             _require(instance_ids is None or (isinstance(instance_ids, list) and bool(instance_ids)
@@ -461,9 +509,8 @@ class MemoryService:
                     limitations.append("키워드 색인 갱신이 대기 중인 기억이 있습니다.")
             except sqlite3.Error:
                 limitations.append("키워드 색인을 사용할 수 없습니다.")
-            if self.vector_ready:
+            if query_vector is not None:
                 try:
-                    query_vector = self._vector(self.embedder.embed_query(redact(query)))
                     vectors = self.store._db.execute(f"""SELECT memory_ref FROM memory_vectors
                         WHERE model_id=? AND dimensions=? AND memory_ref IN ({placeholders})
                         ORDER BY vec_distance_cosine(embedding,?),memory_ref LIMIT ?""",
@@ -509,29 +556,41 @@ class MemoryService:
             self._sources(profile_id, source_records, require_retention=False)
             self.store._db.execute("UPDATE memory_heads SET invalidated=1 WHERE memory_id=?", (row["memory_id"],))
             self._drop_indexes(memory_ref)
-            self.store._db.execute("UPDATE memory_versions SET body=NULL,index_state='pending' WHERE memory_id=?", (row["memory_id"],))
+            self.store._db.execute("""UPDATE memory_versions SET body=NULL,index_state='pending',
+                source_lineage=json_set(COALESCE(source_lineage,'{"keys":null}'),'$.blocked_at',?) WHERE memory_id=?""",
+                (datetime.now(UTC).isoformat(), row["memory_id"]))
             return {"memory_ref": memory_ref, "memory_state": "invalidated", "expires_at": None, "index_state": "ready"}
 
     def reindex(self, profile_id=None):
         with self.store.transaction():
             rows = self.store._db.execute("""SELECT v.profile_id,v.memory_ref FROM memory_versions v
                 JOIN memory_heads h USING(memory_id) WHERE h.current_ref=v.memory_ref AND h.invalidated=0
-                AND v.body IS NOT NULL AND (v.expires_at IS NULL OR v.expires_at>?)""", (datetime.now(UTC).isoformat(),)).fetchall()
+                AND v.body IS NOT NULL AND (v.expires_at IS NULL OR v.expires_at>?)
+                AND NOT EXISTS (SELECT 1 FROM profile_deletions d WHERE d.profile_id=v.profile_id)""",
+                (datetime.now(UTC).isoformat(),)).fetchall()
         states = [self._index(row["profile_id"], row["memory_ref"]) for row in rows
                   if profile_id is None or row["profile_id"] == profile_id]
         return {"ready": states.count("ready"), "pending": states.count("pending")}
 
     def cleanup(self):
         with self.store.transaction():
-            rows = self.store._db.execute("SELECT memory_ref,profile_id,body,expires_at FROM memory_versions WHERE body IS NOT NULL").fetchall()
+            rows = self.store._db.execute("""SELECT v.memory_ref,v.profile_id,v.body,v.expires_at
+                FROM memory_versions v WHERE v.body IS NOT NULL
+                AND NOT EXISTS (SELECT 1 FROM profile_deletions d WHERE d.profile_id=v.profile_id)""").fetchall()
             deleted = 0
             policies = {}
             for row in rows:
                 if row["profile_id"] not in policies:
                     policies[row["profile_id"]] = self._policy(row["profile_id"])
-                if ((row["expires_at"] is not None and _instant(row["expires_at"]) <= datetime.now(UTC))
-                        or not self._allowed(json.loads(row["body"]), policies[row["profile_id"]][1], profile=policies[row["profile_id"]][0])):
+                expired = row["expires_at"] is not None and _instant(row["expires_at"]) <= datetime.now(UTC)
+                item = json.loads(row["body"])
+                allowed = self._allowed(item, policies[row["profile_id"]][1],
+                                        profile=policies[row["profile_id"]][0], check_sources=False)
+                if expired or not allowed or not self._sources_available(item):
                     self._drop_indexes(row["memory_ref"])
-                    self.store._db.execute("UPDATE memory_versions SET body=NULL,index_state='pending' WHERE memory_ref=?", (row["memory_ref"],))
+                    self.store._db.execute("""UPDATE memory_versions SET body=NULL,index_state='pending',
+                        source_lineage=json_set(COALESCE(source_lineage,'{"keys":null}'),'$.blocked_at',
+                            COALESCE(json_extract(source_lineage,'$.blocked_at'),?)) WHERE memory_ref=?""",
+                        (row["expires_at"] if expired and allowed else datetime.now(UTC).isoformat(), row["memory_ref"]))
                     deleted += 1
             return {"deleted": deleted, "pending": 0}
