@@ -1,0 +1,14 @@
+[project]
+name = "daeri-resource-db-postgres"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["postgres-mcp==0.3.0"]
+
+[tool.uv]
+package = false
+# This package uses the SDK v1 FastMCP API.
+constraint-dependencies = ["mcp<2"]
+override-dependencies = ["pglast==7.20"]
+
+# Upstream pins unavailable pglast==7.2.0; the tested compatibility override is explicit.
+# This is the only override; do not relax it during installation.

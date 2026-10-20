@@ -1,0 +1,33 @@
+{
+  "name": "daeri",
+  "version": "0.1.0",
+  "description": "DAERI local operations agent with profile-scoped resources, conversation approval, reports and memory.",
+  "author": {
+    "name": "DAERI"
+  },
+  "repository": "https://github.com/VVoodyHong/DAERI",
+  "skills": "./skills/",
+  "mcpServers": {
+    "daeri": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--offline",
+        "--no-sync",
+        "--project",
+        "${PLUGIN_ROOT}",
+        "python",
+        "-m",
+        "daeri.server"
+      ],
+      "env": {
+        "UV_PROJECT_ENVIRONMENT": "${PLUGIN_ROOT}/.venv"
+      }
+    }
+  },
+  "interface": {
+    "displayName": "DAERI",
+    "shortDescription": "Local operations with approval and memory",
+    "category": "Productivity"
+  }
+}

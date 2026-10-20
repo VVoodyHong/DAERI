@@ -1,6 +1,6 @@
 # 호스트 플러그인과 로컬 실행
 
-상태: 두 호스트·플러그인·로컬 실행 구조 채택; 패키지·실행 검증 전
+상태: 두 호스트·플러그인·로컬 실행 구조 채택; 공통 오프라인 진입 구현, 실제 호스트 설치·대화 연동 미검증
 
 Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 흐름을 정의한다.
 환경 준비는 [설치·배포](../installation/environment.md), 사용자 확인은 [대화 승인](approval.md)이 정본이다.
@@ -35,7 +35,7 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 6. 연결과 접근 범위를 확인해 profile을 준비하고 자연어로 업무를 요청한다.
 
 `/setup {profile명}`은 공통 사용 흐름을 설명하는 논리적 이름이다.
-실제 호출 이름·마켓플레이스 구성·설치 경로는 호스트별 구현에서 확인한다.
+실제 호출 이름과 설치 방식은 아래 호스트별 구성을 따른다.
 저장소에 소스를 올리는 것만으로 마켓플레이스 등록·설치가 완료되지는 않는다.
 
 배포 저장소와 profile이 접근할 Source 리소스는 서로 다른 역할이다.
@@ -43,16 +43,80 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 
 ### 호스트별 구성
 
-| 항목 | 공통 기준 | 호스트별 확인 |
+| 항목 | Codex | Claude Code |
 |---|---|---|
-| 배포 | 저장소 기반 마켓플레이스 추가·플러그인 설치 | 카탈로그·패키지 형식과 저장소 접근 |
-| Skill | 업무와 setup의 책임 분리 | 발견·명시 호출·자연어 선택 방식 |
-| 실행 | 사용자 PC의 DAERI MCP 연결 | 실행 진입점·경로·종료 처리 |
-| 승인 | 계획을 제시한 대화에서 사용자 응답 확인 | 응답과 승인 요청을 연결하는 방식 |
+| 마켓플레이스 | `.agents/plugins/marketplace.json` | `.claude-plugin/marketplace.json` |
+| 플러그인 정의 | `.codex-plugin/plugin.json` 호환 형식 | `.claude-plugin/plugin.json` |
+| MCP 구성 | 플러그인 정의 안의 `mcpServers.daeri` | 루트 `.mcp.json`의 `mcpServers.daeri` |
+| 공유 Skill | `skills/setup/SKILL.md`, `skills/daeri/SKILL.md` | 같은 두 Skill |
+| setup 진입 | `$` 선택기 또는 `/skills`에서 DAERI의 setup 선택 | `/daeri:setup service-prod` |
+| 준비 동작 | 선택한 Skill이 설치된 플러그인 루트에서 OS별 준비 실행 | 같은 방식 |
+
+두 카탈로그의 이름은 `daeri-marketplace`, 플러그인 이름은 `daeri`다.
+각 카탈로그는 저장소 루트의 플러그인을 가리키며 호스트는 설치한 사본에서 Skill과 프로그램을 읽는다.
+마켓플레이스를 추가할 때는 두 호스트의 카탈로그를 포함한 저장소 전체를 제공한다.
+
+아래 URL은 사내 저장소를 가정한 예시다.
+실제 clone URL로 바꾸고 지정한 브랜치를 먼저 원격에 배포해야 한다.
+Codex에서는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 터미널에서 추가·설치한다.
+
+```shell
+codex plugin marketplace add https://gitlab.example.com/team/DAERI.git --ref release/v0.1.0
+codex plugin add daeri@daeri-marketplace
+```
+
+설치한 플러그인을 사용할 새 대화를 연다.
+Codex CLI·IDE는 `/skills` 또는 `$` 선택기에서 DAERI의 setup을 고른 뒤 `service-prod profile을 준비해줘`처럼 profile 이름을 전달한다.
+앱에서는 해당 앱의 Skill 선택 화면에서 같은 setup을 선택한다.
+선택 방식은 [공식 Skill 호출 안내](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)를 따르며 이름이 같은 다른 setup을 선택하지 않는다.
+
+Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/docs/en/discover-plugins#add-a-marketplace)에 따라 대화에서 아래를 순서대로 입력한다.
+브랜치 지정은 URL의 `#ref`이며 Codex의 `--ref`와 구분한다.
+
+```text
+/plugin marketplace add https://gitlab.example.com/team/DAERI.git#release/v0.1.0
+/plugin install daeri@daeri-marketplace
+```
+
+설치가 현재 세션에 반영되지 않으면 새 세션을 연다.
+그다음 `/daeri:setup service-prod`로 준비하고 `/daeri:daeri` 또는 자연어로 업무를 요청한다.
+플러그인 Skill은 [공식 이름 규칙](https://code.claude.com/docs/en/skills#choose-where-skills-load)에 따라 `/플러그인명:Skill명`으로 노출된다.
+
+이미 pull한 로컬 사본을 쓰려면 두 호스트 모두 마켓플레이스 추가의 URL 대신 해당 저장소 루트 경로를 받는다.
+공백이 있는 경로는 터미널에서 한 인자로 인용하며 Claude의 대화 명령으로 처리하기 어려운 경로는 공식 `claude plugin marketplace add` 터미널 명령을 사용한다.
+로컬 경로 추가에는 Git 브랜치 선택 인자를 붙이지 않고 준비한 checkout을 사용한다.
+비공개 저장소는 사용자의 Git 인증·회사 접근 정책이 먼저 충족되어야 하며 DAERI profile 인증으로 대신하지 않는다.
 
 공식 [Codex 플러그인 안내](https://developers.openai.com/plugins/build/plugins)와 [Claude Code 플러그인 안내](https://code.claude.com/docs/en/plugins)를 기준으로 실제 패키징을 확인한다.
-정확한 설정 필드·파일 배치·명령은 구현 시 정하고 공통 업무 명세에 복제하지 않는다.
-macOS를 우선 검증하고 Windows에서도 같은 사용자 흐름을 제공하도록 설계한다.
+준비 프로그램과 실행기의 책임·연결은 [개발 안내](../../development/dependencies.md#실행-진입점과-모듈)를 따른다.
+macOS와 Windows는 같은 uv stdio 진입 구성을 사용한다.
+사용자 OS별 shell은 명시적인 setup에서만 선택하며 일반 업무의 MCP 구성은 OS별 shell 설치를 요구하지 않는다.
+실행기는 설치한 플러그인 루트의 전용 환경으로 고정하고 사용자 작업 디렉토리나 외부 가상환경을 사용하지 않는다.
+설치가 setup 실행·프로그램 다운로드·업무 승인까지 자동 허용하지 않으며 호스트의 명령 실행 권한도 별도로 적용한다.
+위 설치 문법과 파일 구성은 공식 문서·로컬 명령 도움말·정의 검토로 확인했고 실제 마켓플레이스 추가·설치·Skill 호출은 검증하지 않았다.
+
+## 설치부터 업무 시작까지의 실제 경계
+
+플러그인 설치는 Skill과 로컬 MCP 시작 구성을 전달한다.
+아직 런타임이 없는 PC에서는 MCP 시작이 실패할 수 있지만 setup Skill은 설치된 Markdown 지침으로 진입한다.
+설치 실패를 리소스 접근 실패나 업무 실패로 해석하지 않는다.
+
+| 사용자 입력·상황 | 호스트·DAERI의 처리 | 사용자에게 보이는 결과 |
+|---|---|---|
+| 최초 setup 요청 | 검사 후 누락 프로그램·설치 위치·네트워크·사용자 PATH 변경 범위 설명 | 명시적 준비 실행 또는 남은 조치 |
+| 프로그램 준비 완료 | 실행기 검사 결과와 현재 호스트 연결을 구분해 확인 | 필요한 경우 호스트 재시작·MCP 재연결 안내 |
+| profile 준비 요청 | 대상 서비스의 리소스·연결·인증 참조 구성 | 등록 정보와 리소스별 진단 결과 |
+| 자연어 업무 요청 | 현재 제공 도구와 profile의 저장 정보를 읽고 접수 | 업무 식별자·필요한 추가 입력 |
+| 승인 답변 | 현재 업무·저장된 계획·대기 승인 요청과 실제 사용자 답변 연결 | 승인·수정 요청·거절·미결 상태 |
+| 재개 요청 | 최근 업무나 지정 업무의 저장 상태·계획·남은 작업 확인 | 필요한 새 승인과 이어갈 범위 |
+
+공통 MCP 시작은 준비된 패키지를 `offline`·`no-sync` 조건으로 실행한다.
+모델·패키지가 없거나 버전 환경이 맞지 않아도 일반 업무 시작에서 다운로드·설정을 수행하지 않는다.
+실행기의 표준 출력은 MCP 전달에만 사용하며 시작 실패는 진단 출력으로 구분한다.
+
+호스트는 실제로 열거된 도구와 입력 스키마를 기준으로 행동한다.
+누락 도구·미지원 기능·검색 실패를 다른 명령으로 우회하거나 완료한 것처럼 보고하지 않는다.
+setup과 업무 Skill은 개발용 AGENTS·CLAUDE 전체를 자동 로딩한다고 가정하지 않으며 필요한 제품 정본을 직접 읽는다.
 
 ## Skill 지침
 
@@ -127,4 +191,5 @@ PC·호스트 종료 뒤의 상시 실행은 초기 범위에서 보장하지 �
 두 호스트 각각에서 마켓플레이스 추가·플러그인 설치·setup·자연어 요청·계획 승인·실행·결과 보고를 확인한다.
 이어 문맥 복구·호스트 전환·일시중지·재연결·동시 실행과 준비되지 않은 환경의 안내를 검증한다.
 계획 전 기억 조회·기억 없는 첫 업무·검색 실패 안내·업무 후 갱신·갱신 재시도도 확인한다.
-실제 패키징·설치·로컬 실행·대화 승인은 아직 검증하지 않았다.
+진입 파일·로컬 실행기의 구현·검증 범위는 [최초 구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
+실제 마켓플레이스 등록·설치·Skill 진입과 호스트 대화 승인은 아직 검증하지 않았다.

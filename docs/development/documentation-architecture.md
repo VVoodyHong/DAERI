@@ -10,6 +10,8 @@
 [제품 명세](../spec/product.md) → [구조 설명](../architecture/overview.md) → [업무 흐름](../spec/tasks/workflow.md) 순서로 읽는다.
 개발 에이전트는 [AGENTS.md](../../AGENTS.md)의 재개·작업 규칙도 적용한다.
 구현 범위·개발 순서는 [최초 구현 계획](../plans/initial-implementation.md)에서 확인한다.
+의존성 정본·관리 입력·실행 경계·구현 모듈은 [개발 의존성과 실행](dependencies.md)을 따른다.
+명령을 보지 않아도 동작을 이해하려면 구조 설명 뒤에 변경 대상의 업무·설정·리소스 사양을 읽는다.
 
 ## 정본 지도
 
@@ -26,10 +28,11 @@
 | `docs/spec/installation/` | [환경·의존성·전달·업데이트](../spec/installation/environment.md) |
 | `docs/spec/hosts/` | [플러그인·Skill·로컬 실행](../spec/hosts/plugins.md), [사용자 대화 승인·응답 확인](../spec/hosts/approval.md) |
 | `docs/plans/` | [최초 구현 범위·순서·완료 기준](../plans/initial-implementation.md) |
-| `docs/development/` | 이 문서 |
+| `docs/development/` | 문서 구조와 읽기 경로, [개발 의존성·실행·모듈 안내](dependencies.md) |
 
 업무·구조 명세는 사람이 이해할 동작·책임을, MCP는 필드·타입·enum을 소유한다.
 공개 DTO와 내부 저장 스키마는 구분한다.
+상세 사양은 사용자 입력·처리 조건·상태 변화·출력·실패·지원 한계를 설명하고 코드·명령 목록만으로 대신하지 않는다.
 읽은 계약을 바꾸면 해당 정본과 영향받는 참조를 함께 갱신한다.
 
 ## 작업별 읽기
@@ -42,6 +45,7 @@
 | 로컬 저장·삭제·복구 | profile의 저장 구조 → 업무·기억 보존 → MCP 조회·멱등 규격 → 환경 이관·구현 계획 |
 | 리소스·MCP | 리소스 계약·범주별 연결 → 공통 MCP·해당 도구 |
 | profile·준비·배포 | 사용자 구성 → 환경 준비 → 호스트 실행 |
+| 개발 환경·로컬 실행 | 개발 의존성과 실행 → 최초 구현 계획 → 관련 명세·코드 |
 | 문서 변경·검토 | 문서·검토 규칙 → 변경 대상·영향받는 정본 |
 
 ## 호스트 로딩과 문맥 복구

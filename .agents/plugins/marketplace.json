@@ -1,0 +1,20 @@
+{
+  "name": "daeri-marketplace",
+  "interface": {
+    "displayName": "DAERI"
+  },
+  "plugins": [
+    {
+      "name": "daeri",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

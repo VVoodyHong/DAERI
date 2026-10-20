@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "daeri": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--offline",
+        "--no-sync",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "python",
+        "-m",
+        "daeri.server"
+      ],
+      "env": {
+        "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_ROOT}/.venv"
+      }
+    }
+  }
+}
