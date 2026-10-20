@@ -7,6 +7,7 @@
 
 ## 처음 읽기
 
+설치·첫 사용은 [사용자 안내](../../README.md)에서 시작한다.
 [제품 명세](../spec/product.md) → [구조 설명](../architecture/overview.md) → [업무 흐름](../spec/tasks/workflow.md) 순서로 읽는다.
 개발 에이전트는 [AGENTS.md](../../AGENTS.md)의 재개·작업 규칙도 적용한다.
 구현 범위·개발 순서는 [최초 구현 계획](../plans/initial-implementation.md)에서 확인한다.
@@ -17,7 +18,8 @@
 
 | 위치 | 소유하는 내용 |
 |---|---|
-| 루트 | [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
+| 루트 | [README](../../README.md): 사용자 설치·온보딩. [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
+| `docs/assets/` | 사용자 안내와 상세 문서에서 사용하는 이미지 |
 | `docs/rules/` | [문서 작성·변경·Git](../rules/documentation.md), [기획](../rules/planning.md), [개발](../rules/development.md), [검토](../rules/review.md) |
 | `docs/architecture/` | [구조·책임·권한 경계](../architecture/overview.md) |
 | `docs/spec/` | [제품 요구사항](../spec/product.md) |
@@ -62,7 +64,8 @@ Codex는 [AGENTS 지침 체인](https://learn.chatgpt.com/docs/agent-configurati
 
 다른 독자·독립적인 질문·변경 책임이 생길 때만 분리한다.
 같이 읽고 수정하는 짧은 내용은 절로 합치고 상세 계약을 복제하지 않는다.
-빈 분류·README·`decisions`·ADR·`current-state`·별도 작업 현황 문서는 현재 만들지 않는다.
+README는 사용자 소개·설치·첫 사용을 안내하고 상세 계약은 담당 정본으로 연결한다.
+빈 분류·`decisions`·ADR·`current-state`·별도 작업 현황 문서는 현재 만들지 않는다.
 선택 근거·미결·검증 범위는 정본에, 변경 이력은 Git에 둔다.
 
 [Diátaxis](https://diataxis.fr/how-to-use-diataxis/)와 [Google 문서 구성](https://developers.google.com/tech-writing/one/documents)의 설명·참조 구분을 적용했다.

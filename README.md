@@ -1,0 +1,109 @@
+# DAERI
+
+서버 운영 업무를 대리 수행하는 AI 에이전트입니다.
+Claude Code 또는 Codex에서 자연어로 요청하면 연결된 리소스를 조회·분석하고 결과를 보고합니다.
+
+서비스별 **profile**에 연결 정보·권한·업무 이력·재사용할 기억을 관리합니다.
+실행기는 사용자 PC에서 동작하며 별도 중앙 서버 운영은 필요하지 않습니다.
+업무 판단과 답변은 선택한 호스트의 모델이 담당합니다.
+
+현재는 **조회·분석을 위한 초기 버전**이며 운영 리소스 변경·배포는 지원하지 않습니다.
+
+## 동작 방식
+
+![요청부터 계획 승인, 조회·분석, 결과 보고와 기억 갱신까지의 DAERI 동작 흐름](docs/assets/daeri-flow.svg)
+
+사용자는 호스트 대화에서 계획을 확인하고 “승인할게”처럼 답합니다.
+승인 범위 안에서는 자율적으로 진행하며 범위 확대가 필요하면 수정 계획을 다시 승인받습니다.
+기억에는 허용된 지식만 남기며 업무 후 모든 원문을 자동으로 저장하지 않습니다.
+
+## 설치
+
+플러그인 기능을 지원하는 **Codex CLI 또는 Claude Code가 설치·로그인된 환경**에서 시작합니다.
+저장소 접근과 최초 패키지·모델 다운로드를 위한 네트워크가 필요합니다.
+
+| 사용자 환경 | 설치 명령을 실행할 곳 | setup의 환경 준비 |
+|---|---|---|
+| macOS | 터미널 | macOS 준비 도구 사용 |
+| Windows | PowerShell | Windows 준비 도구 사용 |
+
+### Codex
+
+터미널 또는 PowerShell에서 실행합니다.
+
+```shell
+codex plugin marketplace add https://github.com/VVoodyHong/DAERI.git --ref main
+codex plugin add daeri@daeri-marketplace
+```
+
+Codex를 다시 시작하고 `/skills` 또는 `$` 선택기에서 **DAERI의 setup**을 선택합니다.
+다른 플러그인의 동명 Skill과 구분해 다음과 같이 요청합니다.
+
+```text
+service-prod profile을 설정해줘.
+```
+
+질문 도구를 사용하려면 Plan 모드가 필요한 경우 `/plan`으로 입력을 정리합니다.
+설치·설정 저장·로그인은 실행 가능한 모드로 돌아온 뒤 진행합니다.
+명령 규격은 [OpenAI 공식 안내](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace)를 참고하세요.
+
+### Claude Code
+
+터미널 또는 PowerShell에서 실행합니다.
+
+```shell
+claude plugin marketplace add 'https://github.com/VVoodyHong/DAERI.git#main'
+claude plugin install daeri@daeri-marketplace
+```
+
+Claude Code를 다시 시작하고 대화에서 실행합니다.
+
+```text
+/daeri:setup service-prod
+```
+
+명령 규격은 [Claude Code 공식 안내](https://code.claude.com/docs/en/discover-plugins#add-a-marketplace)를 참고하세요.
+사내 저장소로 배포했다면 위 명령의 URL을 해당 Git 저장소 주소로 바꿉니다.
+비공개 저장소의 Git 인증은 먼저 준비해야 합니다.
+
+## 최초 설정과 첫 업무
+
+`service-prod`는 예시 이름이며 서비스·환경별로 여러 profile을 만들 수 있습니다.
+
+1. setup의 질문에 따라 DB·Cache·Infra·Source·Document 등 필요한 범주와 지원 어댑터를 선택합니다.
+2. 실제 접속 대상·인증 방식·조회 및 자료 제공 범위를 설정합니다.
+3. 안내한 설치 범위를 확인하고 전용 실행 환경·선택한 연결 도구·기억 검색 모델을 준비합니다.
+4. 필요한 인증을 마치고 리소스 진단·기억 준비·호스트 MCP 연결 상태를 확인합니다.
+5. 준비한 profile에서 work를 선택하거나 자연어로 업무를 요청하고 계획을 승인합니다.
+
+Python·uv를 미리 수동 설치할 필요는 없습니다.
+setup은 전용 환경을 준비하며 기존 Python·가상환경·사용자 PATH를 변경하지 않습니다.
+비밀번호·토큰은 채팅이나 질문창에 붙여 넣지 않고 안내된 터미널 숨김 입력 또는 제공자 로그인으로 등록합니다.
+
+최초에는 실행 환경이 없어 MCP 연결 실패가 표시될 수 있습니다.
+setup으로 준비한 뒤 MCP를 다시 연결하며 필요한 경우 호스트를 재시작합니다.
+
+| 할 일 | Claude Code | Codex의 DAERI Skill |
+|---|---|---|
+| 환경·profile 설정 | `/daeri:setup service-prod` | setup |
+| 이 대화의 profile 전환 | `/daeri:profile service-prod` | profile |
+| 업무 지시 | `/daeri:work 요청 내용` | work |
+| profile 목록 | `/daeri:list-profiles` | list-profiles |
+
+가상 업무 요청 예시입니다.
+실제로 등록된 기능과 권한 안에서 계획을 세웁니다.
+
+```text
+현재 profile의 소스와 운영 문서를 비교해서 설정 차이를 정리해줘.
+어떤 리소스를 읽고 어떤 결과를 만들지 먼저 계획을 보여줘.
+```
+
+## 지원 범위와 추가 안내
+
+macOS의 로컬 실행·자동 준비·모의 리소스 통합을 검증했습니다.
+실제 호스트 설치·회사 리소스 연결과 Windows 실행은 해당 환경에서 추가 검증이 필요합니다.
+
+- [지원 어댑터와 조회 제한](docs/spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)
+- [플러그인 업데이트](docs/spec/hosts/plugins.md#설치한-플러그인-업데이트)
+- [환경 준비와 문제 해결](docs/spec/installation/environment.md)
+- [상세 문서 지도](docs/development/documentation-architecture.md)

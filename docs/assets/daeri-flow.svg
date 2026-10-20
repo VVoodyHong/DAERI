@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="760" viewBox="0 0 480 760" role="img" aria-labelledby="title description">
+  <title id="title">DAERI 업무 흐름</title>
+  <desc id="description">사용자가 요청하면 호스트가 등록 기능과 기억을 확인하고 계획을 제시한다. 사용자 승인 후 로컬 DAERI가 범위를 검사하며 조회·분석하고 결과를 보고한다. 필요한 지식만 기억에 갱신하며 범위를 확대하려면 수정 계획을 다시 승인받는다.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 Z" fill="#52637a"/>
+    </marker>
+  </defs>
+  <rect width="480" height="760" rx="20" fill="#f5f7fb"/>
+  <g fill="none" stroke="#52637a" stroke-width="2" marker-end="url(#arrow)">
+    <path d="M230 112 V148"/>
+    <path d="M230 232 V268"/>
+    <path d="M230 352 V388"/>
+    <path d="M230 472 V508"/>
+    <path d="M230 592 V628"/>
+    <path d="M410 550 H448 V310 H414" stroke-dasharray="5 5"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif" text-anchor="middle">
+    <g fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5">
+      <rect x="50" y="28" width="360" height="84" rx="14"/>
+      <rect x="50" y="148" width="360" height="84" rx="14"/>
+      <rect x="50" y="268" width="360" height="84" rx="14"/>
+      <rect x="50" y="388" width="360" height="84" rx="14" fill="#e8f2ff" stroke="#759fe0"/>
+      <rect x="50" y="508" width="360" height="84" rx="14"/>
+      <rect x="50" y="628" width="360" height="84" rx="14" fill="#e8f6f0" stroke="#79ad99"/>
+    </g>
+    <g fill="#16253b" font-size="21" font-weight="700">
+      <text x="230" y="62">1. 업무 요청</text>
+      <text x="230" y="182">2. 등록 기능·기억 확인</text>
+      <text x="230" y="302">3. 수행 계획 제시</text>
+      <text x="230" y="422">4. 사용자 승인</text>
+      <text x="230" y="542">5. 조회·분석 실행</text>
+      <text x="230" y="662">6. 결과 보고·기억 갱신</text>
+    </g>
+    <g fill="#40536c" font-size="17">
+      <text x="230" y="90">사용자 → Claude Code / Codex</text>
+      <text x="230" y="210">선택한 profile의 허용된 맥락</text>
+      <text x="230" y="330">방법 · 리소스 · 허용 범위 · 결과</text>
+      <text x="230" y="450">호스트 대화에서 승인·수정</text>
+      <text x="230" y="570">로컬 DAERI가 호출마다 범위 검사</text>
+      <text x="230" y="690">보고·파일 제공, 허용된 지식만 저장</text>
+    </g>
+    <text x="240" y="742" fill="#52637a" font-size="16">점선: 범위 확대 전 수정 계획·재승인</text>
+  </g>
+</svg>
