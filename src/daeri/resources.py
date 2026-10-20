@@ -106,6 +106,8 @@ def _guards(value, *, scope=False):
     for name in ("tables", "columns"):
         if name in value and (not isinstance(value[name], list) or any(not isinstance(item, str) or not item for item in value[name])):
             _fail()
+        if name in value and "*" in value[name] and value[name] != ["*"]:
+            _fail("Whole DB access must use a standalone wildcard instead of a mixed list.")
     if "max_rows" in value and (type(value["max_rows"]) is not int or value["max_rows"] <= 0):
         _fail()
     _json(value)

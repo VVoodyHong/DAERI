@@ -185,6 +185,10 @@ def test_adapter_object_field_cannot_bypass_its_nested_required_values(tmp_path,
                      'username': 'reader', 'tables': ['public.health'], 'columns': [], 'max_rows': 25},
      {'host': 'db.example.invalid', 'port': 5544, 'database': 'service', 'username': 'reader'},
      {}, {'sql_field': 'sql', 'tables': ['public.health'], 'columns': [], 'max_rows': 25}),
+    ('db-postgres', {'host': 'db.example.invalid', 'port': 5432, 'database': 'service',
+                     'username': 'reader', 'tables': ['*'], 'columns': ['*'], 'max_rows': 25},
+     {'host': 'db.example.invalid', 'port': 5432, 'database': 'service', 'username': 'reader'},
+     {}, {'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 25}),
     ('cache-redis', {'host': 'cache.example.invalid', 'port': 6380, 'db': 1, 'tls': False,
                      'username': 'reader', 'keys': ['service:status']},
      {'host': 'cache.example.invalid', 'port': 6380, 'db': 1},
@@ -232,3 +236,26 @@ def test_configure_cli_requires_the_inspected_revision_and_saves_only_valid_answ
     stale = cli(tmp_path, *args, '--expected-revision', '1')
     assert stale.returncode == 1
     assert json.loads(stale.stdout)['error']['code'] == 'REVISION_CONFLICT'
+
+
+def test_db_setup_preserves_restrictions_until_whole_access_is_explicit_and_portable(tmp_path):
+    store = Store(tmp_path / 'private')
+    try:
+        store.put_profile('service')
+        answers = {'host': 'db.example.invalid', 'port': 5432, 'database': 'service',
+                   'username': 'reader', 'tables': ['public.health'], 'columns': ['id'], 'max_rows': 25}
+        setup.configure_resource(store, 'db-postgres', 'service', 'db-one',
+                                 values_file(tmp_path, answers), expected_revision=1)
+        unchanged = setup.configure_resource(store, 'db-postgres', 'service', 'db-one',
+                                            values_file(tmp_path, {'max_rows': 30}), expected_revision=2)
+        assert unchanged['resources'][0]['capabilities'][0]['constraints'] == {
+            'sql_field': 'sql', 'tables': ['public.health'], 'columns': ['id'], 'max_rows': 30}
+        whole = setup.configure_resource(store, 'db-postgres', 'service', 'db-one',
+                                        values_file(tmp_path, {'tables': ['*'], 'columns': ['*']}), expected_revision=3)
+        exported = setup.export_profile(store, 'service')
+        assert exported['resources'][0]['capabilities'][0]['constraints'] == {
+            'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 30}
+        restored = setup.import_profile(store, values_file(tmp_path, exported))
+        assert restored['resources'] == whole['resources']
+    finally:
+        store.close()

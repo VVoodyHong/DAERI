@@ -22,41 +22,48 @@ Claude Code 또는 Codex에서 자연어로 요청하면 연결된 리소스를 
 플러그인 기능을 지원하는 **Codex CLI 또는 Claude Code가 설치·로그인된 환경**에서 시작합니다.
 저장소 접근과 최초 패키지·모델 다운로드를 위한 네트워크가 필요합니다.
 
-| 사용자 환경 | 설치 명령을 실행할 곳 | setup의 환경 준비 |
+| 사용자 환경 | 호스트를 실행할 곳 | setup의 환경 준비 |
 |---|---|---|
 | macOS | 터미널 | macOS 준비 도구 사용 |
 | Windows | PowerShell | Windows 준비 도구 사용 |
 
 ### Codex
 
-터미널 또는 PowerShell에서 실행합니다.
-
-```shell
-codex plugin marketplace add https://github.com/VVoodyHong/DAERI.git --ref main
-codex plugin add daeri@daeri-marketplace
-```
-
-Codex를 다시 시작하고 `/skills` 또는 `$` 선택기에서 **DAERI의 setup**을 선택합니다.
-다른 플러그인의 동명 Skill과 구분해 다음과 같이 요청합니다.
+Codex 대화창에서 플러그인 관리 화면을 엽니다.
 
 ```text
-service-prod profile을 설정해줘.
+/plugins
 ```
 
+**Add marketplace**를 선택하고 다음 저장소 주소를 입력합니다.
+
+```text
+https://github.com/VVoodyHong/DAERI.git
+```
+
+추가된 **daeri-marketplace**에서 **daeri**를 선택해 설치합니다.
+설치 후 새 대화를 열고 실행합니다.
+
+```text
+$daeri:setup service-prod
+```
+
+Skill이 보이지 않으면 `/skills` 또는 `$` 선택기에서 **DAERI의 setup**을 확인합니다.
 질문 도구를 사용하려면 Plan 모드가 필요한 경우 `/plan`으로 입력을 정리합니다.
 설치·설정 저장·로그인은 실행 가능한 모드로 돌아온 뒤 진행합니다.
-명령 규격은 [OpenAI 공식 안내](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace)를 참고하세요.
+플러그인 관리 화면은 [OpenAI 공식 안내](https://learn.chatgpt.com/docs/plugins#plugin-browser-in-codex-cli)를 참고하세요.
 
 ### Claude Code
 
-터미널 또는 PowerShell에서 실행합니다.
+Claude Code 대화창에서 순서대로 입력합니다.
 
-```shell
-claude plugin marketplace add 'https://github.com/VVoodyHong/DAERI.git#main'
-claude plugin install daeri@daeri-marketplace
+```text
+/plugin marketplace add https://github.com/VVoodyHong/DAERI.git#main
+/plugin install daeri@daeri-marketplace
 ```
 
-Claude Code를 다시 시작하고 대화에서 실행합니다.
+설치 범위를 선택해 설치를 마칩니다.
+현재 세션에 반영되지 않으면 `/reload-plugins`를 실행하거나 새 대화를 열고 시작합니다.
 
 ```text
 /daeri:setup service-prod
@@ -83,13 +90,13 @@ setup은 전용 환경을 준비하며 기존 Python·가상환경·사용자 PA
 최초에는 실행 환경이 없어 MCP 연결 실패가 표시될 수 있습니다.
 setup으로 준비한 뒤 MCP를 다시 연결하며 필요한 경우 호스트를 재시작합니다.
 
-| 할 일 | Claude Code | Codex의 DAERI Skill |
+| 할 일 | Claude Code | Codex |
 |---|---|---|
-| 환경·profile 설정 | `/daeri:setup service-prod` | setup |
-| 이 대화의 profile 전환 | `/daeri:profile service-prod` | profile |
-| profile과 관련 로컬 자료 삭제 | `/daeri:profile delete service-prod` | profile에서 삭제 요청 |
-| 업무 지시 | `/daeri:work 요청 내용` | work |
-| profile 목록 | `/daeri:list-profiles` | list-profiles |
+| 환경·profile 설정 | `/daeri:setup service-prod` | `$daeri:setup service-prod` |
+| 이 대화의 profile 전환 | `/daeri:profile service-prod` | `$daeri:profile service-prod` |
+| profile과 관련 로컬 자료 삭제 | `/daeri:profile delete service-prod` | `$daeri:profile delete service-prod` |
+| 업무 지시 | `/daeri:work 요청 내용` | `$daeri:work 요청 내용` |
+| profile 목록 | `/daeri:list-profiles` | `$daeri:list-profiles` |
 
 삭제는 대상·범위를 확인한 뒤 진행합니다.
 해당 profile의 업무·기억·관리 파일·설정을 정리하며 공유 설치 자산·공유 인증·원격 리소스는 유지합니다.

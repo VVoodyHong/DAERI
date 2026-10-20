@@ -22,6 +22,9 @@ Claude Code는 `AskUserQuestion`, Codex는 현재 제공되는 `request_user_inp
 실제 질문 항목은 아래 설정 절차에서 조회하는 카탈로그와 설정 입력 스키마로 구성한다.
 질문 호출은 현재 호스트 도구의 실제 입력 스키마를 따르고 직접 입력에 선택지가 필요하면 [정형 질문 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문)에 따라 실제 후보값이나 의미 있는 행동을 제공한다.
 실제 선택값과 직접 입력을 구분하고 이미 확인한 값을 재사용하며 한 번에 한 미확정 필드를 질문한다.
+스키마가 전체 범위의 `const` 선택을 제공하면 목록 입력에 앞서 전체 조회·일부 지정 중에서 고르게 한다.
+사용자가 이미 전체 범위를 요청했으면 해당 필드들의 전체 선택값을 재사용하고 개별 항목을 다시 나열하게 하지 않는다.
+전체 선택은 연결 계정의 실제 권한 안에서만 적용하며 업무별 계획 승인이나 자료 제공·보관 정책을 대신하지 않는다.
 행동 응답이나 호스트의 입력 방법을 설정값으로 해석하지 않는다.
 필수 입력의 응답과 검증을 기다리고 누락·취소·시간 경과를 값의 확정이나 동의로 처리하지 않으며 기존 설정을 보존한다.
 
@@ -35,9 +38,14 @@ Plan에서는 질문·읽기와 상태를 바꾸지 않는 설정 스키마 조�
 ## 준비와 설정
 
 1. 사용자 OS와 현재 플러그인 루트를 확인한다.
-   macOS는 `sh scripts/setup.sh --check`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Check`로 검사한다.
+   먼저 `.venv`·`.venv.previous`·`.daeri-setup.lock`의 존재와 심볼릭 링크 여부를 OS 기본 조건문으로 확인한다.
+   존재 확인은 `if` 안에서 수행하고 경로가 없다는 이유로 명령 전체를 실패시키지 않는다.
+   세 경로와 링크가 모두 없으면 정상적인 실행 환경 미준비로 안내하고 `--check`·관리 CLI를 실행하지 않은 채 2단계의 준비 범위 확인으로 이동한다.
+   `.runtime`만 있어도 실행 환경 준비가 필요한 상태이며 없는 디렉터리를 `ls`하거나 동일한 검사를 반복하지 않는다.
+   설치 흔적이 있으면 macOS는 `sh scripts/setup.sh --check`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Check`로 검사한다.
+   이때 끊어진 링크·잠금·이전 환경과 검사 실패를 최초 미준비로 숨기지 않고 [준비 실패 처리](../../docs/spec/installation/environment.md#공통-실행-파일과-환경-격리)에 따라 중단·복구 범위를 안내한다.
    이 검사와 일반 MCP 시작은 설치·다운로드·로그인·원격 자료 조회를 수행하지 않는다.
-   업데이트 뒤에는 전용 `.venv/bin/python.exe`를 `-I`로 실행해 확인한 `importlib.metadata.version('daeri-agent')`와 `pyproject.toml`의 프로젝트 버전을 대조한다.
+   기존 실행 환경의 기본 검사가 성공하면 전용 `.venv/bin/python.exe`를 `-I`로 실행해 확인한 `importlib.metadata.version('daeri-agent')`와 `pyproject.toml`의 프로젝트 버전을 대조한다.
    기본 검사의 성공만으로 설치한 실행기가 새 버전이라고 판단하지 않는다.
 2. 누락·비호환 항목이나 업데이트할 실행기가 있으면 전용 uv·관리 Python·잠긴 패키지의 설치 위치와 다운로드 범위를 설명한다.
    uv는 플러그인 루트의 `.runtime/uv.exe`, Python·준비 캐시는 사용자 데이터 경로의 `runtime/python`·`runtime/cache`를 사용한다.

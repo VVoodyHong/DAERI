@@ -54,7 +54,7 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 | 플러그인 정의 | `.codex-plugin/plugin.json` 호환 형식 | `.claude-plugin/plugin.json` |
 | MCP 구성 | 플러그인 정의 안의 `mcpServers.daeri` | 루트 `.mcp.json`의 `mcpServers.daeri` |
 | 공유 Skill | `skills/<Skill명>/SKILL.md`의 setup·profile·work·list-profiles | 같은 네 Skill |
-| 사용자 진입 | `$` 선택기·`/skills`·앱의 Skill 선택 화면에서 DAERI의 네 Skill 선택 | `/daeri:setup`, `/daeri:profile`, `/daeri:work`, `/daeri:list-profiles` |
+| 사용자 진입 | `$daeri:setup`, `$daeri:profile`, `$daeri:work`, `$daeri:list-profiles` 또는 Skill 선택 화면 | `/daeri:setup`, `/daeri:profile`, `/daeri:work`, `/daeri:list-profiles` |
 | 준비 동작 | 선택한 Skill이 설치된 플러그인 루트에서 OS별 준비 실행 | 같은 방식 |
 
 두 카탈로그의 이름은 `daeri-marketplace`, 플러그인 이름은 `daeri`다.
@@ -63,28 +63,31 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 
 아래 URL은 사내 저장소를 가정한 예시다.
 실제 clone URL로 바꾸고 지정한 브랜치를 먼저 원격에 배포해야 한다.
-Codex에서는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 터미널에서 추가·설치한다.
+Codex CLI 대화창에서는 [플러그인 관리 화면](https://learn.chatgpt.com/docs/plugins#plugin-browser-in-codex-cli)을 연다.
 
-```shell
-codex plugin marketplace add https://gitlab.example.com/team/DAERI.git --ref main
-codex plugin add daeri@daeri-marketplace
+```text
+/plugins
 ```
 
-설치한 플러그인을 사용할 새 대화를 연다.
-Codex CLI·IDE는 `/skills` 또는 `$` 선택기에서 DAERI의 setup을 고른 뒤 `service-prod profile을 준비해줘`처럼 profile 이름을 전달한다.
-앱에서는 해당 앱의 Skill 선택 화면에서 같은 setup을 선택한다.
-준비 후에는 같은 방식으로 profile·work·list-profiles를 선택한다.
-선택 방식은 [공식 Skill 호출 안내](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)를 따르며 다른 플러그인의 같은 이름 Skill과 구분한다.
+`Add marketplace`를 선택하고 실제 clone URL을 입력한 뒤 `daeri-marketplace`의 `daeri`를 설치한다.
+URL만 입력하면 저장소의 기본 브랜치를 사용하므로 배포자가 의도한 기본 브랜치인지 확인한다.
+터미널에서 브랜치를 지정해 등록해야 할 때는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 `codex plugin marketplace add <URL> --ref main`을 사용한다.
+
+설치 후 새 대화에서 `$daeri:setup service-prod`로 준비한다.
+준비 후에는 `$daeri:profile service-prod`, `$daeri:work 요청 내용`, `$daeri:list-profiles`로 호출한다.
+삭제는 `$daeri:profile delete service-prod`로 요청한다.
+Codex 플러그인의 Skill 이름은 [공식 구현](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/core-skills/src/loader/namespace.rs#L175-L180)의 `플러그인명:Skill명`이며 `$`는 호스트의 Skill 호출 표시다.
+`/skills`·`$` 선택기 또는 앱의 Skill 선택 화면에서도 DAERI의 같은 Skill을 선택할 수 있다.
 
 Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/docs/en/discover-plugins#add-a-marketplace)에 따라 대화에서 아래를 순서대로 입력한다.
-브랜치 지정은 URL의 `#ref`이며 Codex의 `--ref`와 구분한다.
+브랜치 지정은 URL의 `#ref`이며 Codex 터미널 명령의 `--ref`와 구분한다.
 
 ```text
 /plugin marketplace add https://gitlab.example.com/team/DAERI.git#main
 /plugin install daeri@daeri-marketplace
 ```
 
-설치가 현재 세션에 반영되지 않으면 새 세션을 연다.
+설치 범위를 선택해 설치를 마치고 현재 세션에 반영되지 않으면 `/reload-plugins`를 실행하거나 새 세션을 연다.
 그다음 `/daeri:setup service-prod`로 준비하고 `/daeri:work` 또는 자연어로 업무를 요청한다.
 대화의 기본 대상을 고를 때는 `/daeri:profile`, 저장한 목록만 볼 때는 `/daeri:list-profiles`를 사용한다.
 삭제는 `/daeri:profile delete service-prod`로 요청하며 같은 profile Skill에서 대상·범위를 확인한다.
@@ -104,7 +107,7 @@ Codex의 command는 `${PLUGIN_ROOT}/.venv/bin/python.exe`, Claude Code는 `${CLA
 사용자 OS별 shell은 명시적인 setup에서만 선택하며 일반 MCP 시작에는 uv·PATH 검색·shell을 사용하지 않는다.
 실행기는 설치한 플러그인 루트의 전용 환경으로 고정하고 사용자 작업 디렉토리나 외부 가상환경을 사용하지 않는다.
 설치가 setup 실행·프로그램 다운로드·업무 승인까지 자동 허용하지 않으며 호스트의 명령 실행 권한도 별도로 적용한다.
-위 설치 문법과 파일 구성은 공식 문서·로컬 명령 도움말·정의 검토로 확인했고 실제 마켓플레이스 추가·설치·Skill 호출은 검증하지 않았다.
+위 설치 문법과 파일 구성은 공식 문서·호스트 소스·로컬 CLI 정의 검토로 확인했고 실제 마켓플레이스 추가·설치·Skill 호출은 검증하지 않았다.
 
 ### 설치한 플러그인 업데이트
 
@@ -144,7 +147,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 
 | 사용자 입력·상황 | 호스트·DAERI의 처리 | 사용자에게 보이는 결과 |
 |---|---|---|
-| 최초 setup 요청 | 검사 후 누락 프로그램·전용 설치 위치·네트워크 범위 설명 | 명시적 준비 실행 또는 남은 조치 |
+| 최초 setup 요청 | 설치 흔적 확인·필요한 검사 후 누락 프로그램·전용 설치 위치·네트워크 범위 설명 | 정상 미준비 안내와 명시적 준비 실행 또는 남은 조치 |
 | 프로그램 준비 완료 | 실행기 검사 결과와 현재 호스트 연결을 구분해 확인 | 필요한 경우 호스트 재시작·MCP 재연결 안내 |
 | profile 준비 요청 | 대상 서비스의 리소스·연결·인증 참조 구성 | 등록 정보와 리소스별 진단 결과 |
 | profile 선택 요청 | 저장 목록·지정 profile을 확인하고 대화의 기본 대상 선택 | 이후 새 업무에 사용할 이름·식별자 |
@@ -186,6 +189,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 
 설정값을 고르는 질문의 항목은 실제 카탈로그 항목이나 스키마의 허용 값이다.
 선택 항목의 표시명과 저장 값을 대응시킨다.
+전체 범위를 지원하는 필드의 선택·이미 전달한 전체 요청의 재사용은 [설정 입력 계약](../configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
 허용 값을 열거할 수 없는 필드는 질문 도구의 직접 입력란으로 받는다.
 도구가 선택과 직접 입력을 함께 제공하면 실제 선택값과 직접 입력한 값을 구분해 해석한다.
 직접 입력 질문에도 도구 스키마가 선택지를 요구하면 실제 후보값이나 설정 진행에 의미 있는 행동을 제공한다.

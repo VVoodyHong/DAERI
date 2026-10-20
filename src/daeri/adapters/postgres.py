@@ -34,14 +34,18 @@ def _sql(parameters, constraints, scope):
         raise StoreError("UNSUPPORTED_CONSTRAINT", "Use one explicitly schema-qualified base table.")
     table = tables[0]
     target = f"{table.db}.{table.name}"
-    if target not in constraints.get("tables", []) or target not in scope.get("tables", []):
+    if any(allowed != ["*"] and target not in allowed
+           for allowed in (constraints.get("tables", []), scope.get("tables", []))):
         denied()
     columns = sorted({column.name for column in tree.find_all(exp.Column) if column.name != "*"})
-    if not set(columns) <= set(constraints.get("columns", [])) or not set(columns) <= set(scope.get("columns", [])):
+    if any(allowed != ["*"] and not set(columns) <= set(allowed)
+           for allowed in (constraints.get("columns", []), scope.get("columns", []))):
         denied()
     for star in tree.find_all(exp.Star):
         if not isinstance(star.parent, exp.Count):
-            denied("Wildcard field reads are unsupported.")
+            if constraints.get("columns") != ["*"] or scope.get("columns") != ["*"]:
+                denied("Wildcard field reads require whole-column access in both connection and approved scope.")
+            columns = ["*"]
     permitted_functions = (exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max)
     if any(not isinstance(function, permitted_functions) for function in tree.find_all(exp.Func)):
         denied("SQL functions outside the verified aggregate set are unsupported.")
@@ -125,16 +129,21 @@ class PostgresReadAdapter(ReadAdapter):
                                 "type": "string", "minLength": 1, "maxLength": 128,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["readonly_user"]},
                      "required": True, "paths": [["target", "username"]]},
-        "tables": {"schema": {"title": "조회할 테이블", "description": "리소스에서 허용할 테이블을 스키마.테이블 형식으로 지정합니다.",
+        "tables": {"schema": {"title": "조회할 테이블", "description": "전체 조회는 연결 계정이 읽을 수 있는 모든 스키마와 테이블을 허용합니다. 일부만 허용할 때 스키마.테이블 목록을 지정합니다.",
                               "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True,
-                              "items": {"type": "string", "minLength": 3, "maxLength": 256,
-                                        "pattern": r"^[^\x00-\x1f\x7f]+\.[^\x00-\x1f\x7f]+$"},
-                              "examples": [["public.orders"]]},
+                              "oneOf": [{"title": "전체 조회", "const": ["*"]},
+                                        {"title": "일부 테이블 지정", "items": {
+                                            "type": "string", "minLength": 3, "maxLength": 256,
+                                            "pattern": r"^[^\x00-\x1f\x7f]+\.[^\x00-\x1f\x7f]+$"}}],
+                              "examples": [["*"], ["public.orders"]]},
                    "required": True, "paths": [["capabilities", 0, "constraints", "tables"]]},
-        "columns": {"schema": {"title": "조회할 컬럼", "description": "허용할 컬럼 이름을 지정하며 빈 목록은 COUNT(*) 등 컬럼을 읽지 않는 집계만 허용합니다.",
+        "columns": {"schema": {"title": "조회할 컬럼", "description": "전체 조회는 허용한 테이블의 모든 컬럼을 포함합니다. 일부만 허용할 때 컬럼 목록을 지정하며 빈 목록은 COUNT(*) 등 컬럼을 읽지 않는 집계만 허용합니다.",
                                "type": "array", "minItems": 0, "maxItems": 1024, "uniqueItems": True,
-                               "items": {"type": "string", "minLength": 1, "maxLength": 128,
-                                         "pattern": r"^[^\x00-\x1f\x7f]+$"}, "examples": [["id", "status"]]},
+                               "oneOf": [{"title": "전체 조회", "const": ["*"]},
+                                         {"title": "일부 컬럼 지정", "items": {
+                                             "type": "string", "minLength": 1, "maxLength": 128,
+                                             "pattern": r"^[^\x00-\x1f\x7f]+$", "not": {"const": "*"}}}],
+                               "examples": [["*"], ["id", "status"]]},
                     "required": True, "paths": [["capabilities", 0, "constraints", "columns"]]},
         "max_rows": {"schema": {"title": "최대 조회 행 수", "description": "한 번의 DB 조회에서 허용할 최대 행 수입니다.",
                                 "type": "integer", "minimum": 1, "maximum": 1000000,

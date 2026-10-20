@@ -149,6 +149,66 @@ def test_select_enforces_actual_table_columns_and_row_limit():
     assert arguments["sql"].endswith("LIMIT 20")
 
 
+@pytest.mark.parametrize('sql,columns', [
+    ('SELECT id FROM other_schema.new_table', ['id']),
+    ('SELECT * FROM other_schema.new_table', ['*']),
+    ('SELECT t.* FROM other_schema.new_table AS t', ['*']),
+    ('SELECT COUNT(*) FROM information_schema.tables', []),
+])
+def test_db_whole_access_reads_any_table_and_records_actual_columns(sql, columns):
+    arguments = {'sql': sql}
+    constraints = {'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
+    access = interpret('postgres_read', arguments, constraints,
+                       {'tables': ['*'], 'columns': ['*'], 'max_rows': 20})
+    assert access == {'tables': ['information_schema.tables' if 'information_schema' in sql else 'other_schema.new_table'],
+                      'columns': columns, 'max_rows': 20}
+    assert arguments['sql'].endswith('LIMIT 20')
+
+
+@pytest.mark.parametrize('whole_at', ['connection', 'plan'])
+@pytest.mark.parametrize('sql', [
+    'SELECT amount FROM public.orders', 'SELECT order_id FROM private.orders',
+    'SELECT * FROM public.orders',
+])
+def test_db_whole_access_does_not_override_the_other_scope(whole_at, sql):
+    whole = {'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
+    narrow = {'tables': ['public.orders'], 'columns': ['order_id'], 'max_rows': 10}
+    constraints, scope = (whole, narrow) if whole_at == 'connection' else (narrow, whole)
+    allowed = {'sql': 'SELECT order_id FROM public.orders'}
+    assert interpret('postgres_read', allowed, constraints, scope)['max_rows'] == 10
+    with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
+        interpret('postgres_read', {'sql': sql}, constraints, scope)
+
+
+@pytest.mark.parametrize('sql', [
+    'DELETE FROM public.orders', 'SELECT * FROM public.orders FOR UPDATE',
+    'SELECT pg_sleep(1) FROM public.orders', 'SELECT * FROM public.orders; SELECT * FROM public.users',
+])
+def test_db_whole_access_keeps_read_only_sql_boundaries(sql):
+    whole = {'tables': ['*'], 'columns': ['*'], 'max_rows': 10}
+    with pytest.raises(StoreError):
+        interpret('postgres_read', {'sql': sql}, whole, whole)
+
+
+def test_db_whole_table_scope_does_not_grant_columns_to_aggregate_only_access():
+    aggregate = {'tables': ['*'], 'columns': [], 'max_rows': 10}
+    assert interpret('postgres_read', {'sql': 'SELECT COUNT(*) FROM public.orders'}, aggregate, aggregate) == {
+        'tables': ['public.orders'], 'columns': [], 'max_rows': 10}
+    with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
+        interpret('postgres_read', {'sql': 'SELECT id FROM public.orders'}, aggregate, aggregate)
+
+
+@pytest.mark.parametrize('field,values', [('tables', ['*', 'public.orders']), ('columns', ['*', 'id'])])
+def test_db_whole_access_cannot_be_mixed_with_an_explicit_list(field, values):
+    resource = config()
+    resource.update(type='DB', adapter='postgres_read', target={'database': 'service'})
+    resource['connection']['env'] = {}
+    resource['capabilities'] = [{'capability_id': 'query', 'tool_name': 'execute_sql',
+                                 'constraints': {'tables': ['*'], 'columns': ['*'], 'max_rows': 10, field: values}}]
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        validate_resource(resource)
+
+
 def test_sql_exact_query_scope_preserves_approved_filter():
     allowed = "SELECT order_id FROM public.orders WHERE order_id = 1"
     constraints = {"tables": ["public.orders"], "columns": ["order_id"], "max_rows": 10}

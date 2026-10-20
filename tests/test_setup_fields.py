@@ -43,6 +43,7 @@ def test_setup_describes_every_target_field_without_collecting_secrets(adapter):
     ('redis_read', 'db', -1), ('redis_read', 'tls', 'true'),
     ('postgres_read', 'tables', []), ('postgres_read', 'tables', ['users']),
     ('postgres_read', 'columns', ['']), ('postgres_read', 'max_rows', 0),
+    ('postgres_read', 'tables', ['*', 'public.orders']), ('postgres_read', 'columns', ['*', 'id']),
     ('redis_read', 'keys', ['user:*']), ('redis_read', 'keys', ['key', 'key']),
     ('aws_read', 'account', '123'), ('aws_read', 'account', 123456789012),
     ('gitlab_read', 'server', 'http://git.example.test'),
@@ -71,6 +72,11 @@ def test_setup_requires_an_explicit_nonempty_scope(adapter, name):
 def test_setup_accepts_an_explicit_aggregate_only_column_scope():
     assert field('postgres_read', 'columns')['required'] is True
     assert accepts('postgres_read', 'columns', [])
+
+
+@pytest.mark.parametrize('name', ['tables', 'columns'])
+def test_db_setup_accepts_an_explicit_whole_scope(name):
+    assert accepts('postgres_read', name, ['*'])
 
 
 def test_setup_does_not_limit_provider_profile_names_to_an_identifier_alphabet():
