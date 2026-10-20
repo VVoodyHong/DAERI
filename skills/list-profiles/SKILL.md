@@ -10,8 +10,8 @@ description: 저장된 DAERI profile 목록이나 등록된 리소스 범주를 
 저장 정보의 의미는 [profile 명세](../../docs/spec/configuration/profiles.md)를 따른다.
 이 Skill에서 `../../`는 설치된 플러그인 루트다.
 
-1. 플러그인 루트의 준비된 Python으로 `-m daeri.cli profile list`를 실행한다.
-   macOS는 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`를 사용한다.
+1. 플러그인 루트의 준비된 Python으로 `-I -m daeri.cli profile list`를 실행한다.
+   두 OS 모두 `.venv/bin/python.exe`를 절대 경로로 지정하고 [profile의 관리 실행 기준](../profile/SKILL.md)을 따른다.
    명령은 플러그인 루트에서 실행하고 필요한 입력은 별도 인자로 전달한다.
    사용자 입력을 명령 문자열에 보간하지 않는다.
    실행 환경이 없으면 [setup](../setup/SKILL.md)을 안내하고 필요한 준비를 자동 실행하지 않는다.

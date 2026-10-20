@@ -1,6 +1,6 @@
 {
   "name": "daeri",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DAERI local operations agent with profile-scoped resources, conversation approval, reports and memory.",
   "author": {
     "name": "DAERI"

@@ -1,6 +1,7 @@
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,16 @@ def store(tmp_path):
     value = Store(tmp_path / 'private')
     yield value
     value.close()
+
+
+@pytest.fixture
+def private_uv(tmp_path, monkeypatch):
+    plugin = tmp_path / 'installed-plugin'
+    executable = plugin / '.runtime' / 'uv.exe'
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setattr(sys, 'prefix', str(plugin / '.venv'))
+    return executable
 
 
 def resource():
@@ -168,7 +179,7 @@ def prepared_resource(store):
     return value
 
 
-def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, monkeypatch):
+def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, private_uv, monkeypatch):
     prepared_resource(store)
     calls = []
     def run(args, **kwargs):
@@ -180,11 +191,10 @@ def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, 
             (candidate / 'bin').mkdir()
             (candidate / 'bin/python').touch()
             (candidate / 'bin/mcp-gitlab').touch()
-        elif args[1] == '-c':
+        elif args[1:3] == ['-I', '-c']:
             return subprocess.CompletedProcess(args, 0, stdout='0.21.0\n', stderr='')
         return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
     monkeypatch.setattr('daeri.setup.subprocess.run', run)
-    monkeypatch.setattr('daeri.setup.shutil.which', lambda _: '/verified/uv')
     result = prepare_resource(store, 'service', 'source-one', 'source-gitlab')
     assert result['ready'] is True
     assert Path(result['command']).is_file()
@@ -194,13 +204,12 @@ def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, 
     assert len(calls) == count + 1
 
 
-def test_failed_prepare_never_changes_profile_or_publishes_program(store, monkeypatch):
+def test_failed_prepare_never_changes_profile_or_publishes_program(store, private_uv, monkeypatch):
     configured = prepared_resource(store)
     revision = store.get_profile('service')['revision']
     def failed(*args, **kwargs):
         raise subprocess.TimeoutExpired('uv', 300)
     monkeypatch.setattr('daeri.setup.subprocess.run', failed)
-    monkeypatch.setattr('daeri.setup.shutil.which', lambda _: '/verified/uv')
     with pytest.raises(StoreError):
         prepare_resource(store, 'service', 'source-one', 'source-gitlab')
     assert store.get_profile('service')['revision'] == revision
@@ -215,15 +224,87 @@ def test_login_forwards_only_public_device_authorization_and_keeps_profile_revis
     value['capabilities'][0]['constraints']['region'] = 'ap-northeast-2'
     store.put_profile('service', resources=[value])
     real_popen = subprocess.Popen
-    child = """import json,sys
+    child = """import json,os,sys
+assert sys.flags.isolated
+assert 'PYTHONHOME' not in os.environ and 'UV_PROJECT_ENVIRONMENT' not in os.environ
 request=json.load(sys.stdin)
 print(json.dumps({'status':'pending','data':{'provider':'infra_sso','verification_uri':'https://device.sso.ap-northeast-2.amazonaws.com/','user_code':'ABCD-EFGH','provider_profile':request['profile']},'error':None}),flush=True)
 print(json.dumps({'status':'ok','data':{'authenticated':True,'provider_profile':request['profile'],'account':request['account'],'role':'Reader','expires_at':'2099-01-01T00:00:00Z'},'error':None}),flush=True)
 """
-    monkeypatch.setattr('daeri.setup.subprocess.Popen', lambda args, **kwargs: real_popen([sys.executable, '-c', child], **kwargs))
+    monkeypatch.setenv('PYTHONHOME', '/unrelated-python')
+    monkeypatch.setenv('UV_PROJECT_ENVIRONMENT', '/unrelated-environment')
+    monkeypatch.setattr('daeri.setup.subprocess.Popen', lambda args, **kwargs:
+                        real_popen([sys.executable, *args[1:-1], '-c', child], **kwargs))
     monkeypatch.setattr('daeri.setup._verify', lambda environment, item: None)
     events = []
     result = login_resource(store, 'service', 'infra-one', role='Reader', emit=events.append)
     assert result['authenticated'] is True
     assert events[0]['user_code'] == 'ABCD-EFGH'
     assert store.get_profile('service')['revision'] == 1
+
+
+def test_preparation_child_drops_program_overrides_but_keeps_explicit_user_context(tmp_path, monkeypatch):
+    from daeri.setup import _run
+    overrides = {
+        'PYTHONPATH': str(tmp_path / 'foreign-packages'),
+        'PYTHONHOME': str(tmp_path / 'foreign-python'),
+        'UV_PROJECT_ENVIRONMENT': str(tmp_path / 'foreign-environment'),
+        'UV_CONFIG_FILE': str(tmp_path / 'foreign-uv.toml'),
+        'VIRTUAL_ENV': str(tmp_path / 'foreign-venv'),
+        'CONDA_PREFIX': str(tmp_path / 'foreign-conda'),
+        '__PYVENV_LAUNCHER__': str(tmp_path / 'foreign-launcher'),
+    }
+    for key, value in overrides.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv('DAERI_DATA_DIR', str(tmp_path / 'private-data'))
+    monkeypatch.setenv('SSL_CERT_FILE', str(tmp_path / 'company-ca.pem'))
+    result = _run([sys.executable, '-I', '-c',
+                   'import json,os,sys; print(json.dumps({key: os.environ[key] '
+                   'for key in sys.argv[1:] if key in os.environ}))',
+                   *overrides, 'DAERI_DATA_DIR', 'SSL_CERT_FILE'])
+    received = json.loads(result.stdout)
+    assert not set(overrides) & received.keys()
+    assert received['DAERI_DATA_DIR'] == str(tmp_path / 'private-data')
+    assert received['SSL_CERT_FILE'] == str(tmp_path / 'company-ca.pem')
+    assert all(os.environ[key] == value for key, value in overrides.items())
+
+
+def test_resource_verification_ignores_current_directory_imports(tmp_path, monkeypatch):
+    from daeri.setup import _verify
+    import venv
+    environment = tmp_path / 'tool'
+    venv.EnvBuilder(with_pip=False).create(environment)
+    python = environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+    library = subprocess.run([str(python), '-I', '-c',
+                              'import sysconfig; print(sysconfig.get_path("purelib"))'],
+                             text=True, capture_output=True, check=True).stdout.strip()
+    metadata = Path(library) / 'daeri_test_probe-1.0.dist-info'
+    metadata.mkdir(parents=True)
+    (metadata / 'METADATA').write_text('Name: daeri-test-probe\nVersion: 1.0\n')
+    executable = environment / ('Scripts/probe.exe' if os.name == 'nt' else 'bin/probe')
+    executable.touch()
+    poison = tmp_path / 'unrelated-project'
+    poison.mkdir()
+    (poison / 'pathlib.py').write_text('raise RuntimeError("Foreign project import")\n')
+    monkeypatch.chdir(poison)
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    assert _verify(environment, {'executable': 'probe', 'package': 'daeri-test-probe',
+                                 'version': '1.0'}) == executable
+
+
+def test_resource_prepare_requires_private_uv_even_when_global_uv_exists(store, tmp_path, monkeypatch):
+    prepared_resource(store)
+    commands = tmp_path / 'global-tools'
+    commands.mkdir()
+    marker = commands / 'global-uv-used'
+    executable = commands / ('uv.exe' if os.name == 'nt' else 'uv')
+    if os.name == 'nt':
+        pytest.skip('Native Windows executable fixture requires Windows bootstrap validation')
+    executable.write_text(f'#!{sys.executable}\nfrom pathlib import Path\nPath({str(marker)!r}).touch()\n')
+    executable.chmod(0o755)
+    monkeypatch.setenv('PATH', str(commands))
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'unprepared-plugin' / '.venv'))
+    with pytest.raises(StoreError) as caught:
+        prepare_resource(store, 'service', 'source-one', 'source-gitlab')
+    assert not marker.exists()
+    assert caught.value.code == 'CONNECTION_NOT_READY'

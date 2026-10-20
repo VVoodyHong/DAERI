@@ -24,6 +24,7 @@ def installation(tmp_path):
     home.mkdir()
     commands = tmp_path / "bin"
     commands.mkdir()
+    executable(commands / 'curl', "raise SystemExit('Unexpected download in this test')\n")
     env = dict(os.environ, HOME=str(home), PATH=f"{commands}:/usr/bin:/bin")
     env.pop("UV_PROJECT_ENVIRONMENT", None)
     return root, home, commands, env
@@ -35,33 +36,56 @@ def executable(path, content):
 
 
 def fake_uv(path, *, fail=0):
+    path.parent.mkdir(parents=True, exist_ok=True)
     executable(path,
         "import json, os, pathlib, sys\n"
         "if sys.argv[1:] == ['--version']:\n print('uv 0.11.28');sys.exit(0)\n"
         f"if {fail}: sys.exit({fail})\n"
-        "if sys.argv[1] == 'venv':\n assert sys.argv[2:-1] == ['--relocatable', '--project', os.getcwd()]\n pathlib.Path(sys.argv[-1]).mkdir(exist_ok=True)\n (pathlib.Path(sys.argv[-1]) / 'relocatable-test-marker').touch()\n sys.exit(0)\n"
+        "private = pathlib.Path(os.environ.get('DAERI_DATA_DIR', str(pathlib.Path(os.environ['HOME']) / 'Library/Application Support/DAERI'))).expanduser() / 'runtime'\n"
+        "assert os.environ['UV_PYTHON_INSTALL_DIR'] == str(private / 'python')\n"
+        "assert os.environ['UV_CACHE_DIR'] == str(private / 'cache')\n"
+        "assert os.environ['UV_PYTHON_INSTALL_BIN'] == '0'\n"
+        "assert os.environ['UV_PYTHON_INSTALL_REGISTRY'] == '0'\n"
+        "assert 'UV_PYTHON_PREFERENCE' not in os.environ  # conflicts with --managed-python\n"
+        "assert not any(key.startswith(('PYTHON', '_PYTHON', 'CONDA_')) or key in ['VIRTUAL_ENV', 'VIRTUAL_ENV_PROMPT', '__PYVENV_LAUNCHER__', '_OLD_VIRTUAL_PATH', '_OLD_VIRTUAL_PYTHONHOME', 'PYLAUNCHER_DEBUG', 'UV_NO_PROJECT', 'UV_SYSTEM_PYTHON', 'UV_ISOLATED'] for key in os.environ)\n"
+        "if sys.argv[1] == 'venv':\n assert sys.argv[2:-1] == ['--managed-python', '--no-config', '--relocatable', '--project', os.getcwd()]\n pathlib.Path(sys.argv[-1]).mkdir(exist_ok=True)\n (pathlib.Path(sys.argv[-1]) / 'relocatable-test-marker').touch()\n sys.exit(0)\n"
         "assert (pathlib.Path(os.environ['UV_PROJECT_ENVIRONMENT']) / 'relocatable-test-marker').exists()\n"
-        "assert sys.argv[1:] == ['sync', '--frozen', '--no-dev', '--no-editable', '--project', os.getcwd()]\n"
+        "assert sys.argv[1:] == ['sync', '--managed-python', '--no-config', '--frozen', '--no-dev', '--no-editable', '--project', os.getcwd()]\n"
         "target = pathlib.Path(os.environ['UV_PROJECT_ENVIRONMENT']) / 'bin/python'\n"
         "target.parent.mkdir(parents=True, exist_ok=True)\n"
-        f"target.write_text('#!{sys.executable}\\nimport json, sys\\nassert sys.argv[1:]==[\"-m\",\"daeri.cli\",\"check\"]\\nprint(json.dumps(dict(ready=True)))\\n')\n"
+        f"target.write_text('#!{sys.executable}\\nimport json, sys\\nif sys.argv[1:3]==[\"-I\",\"-c\"]: sys.exit(0)\\nassert sys.argv[1:]==[\"-I\",\"-m\",\"daeri.cli\",\"check\"]\\nprint(json.dumps(dict(ready=True)))\\n')\n"
         "target.chmod(0o755)\n")
 
 
 def prepare(installation, *args):
     root, _, _, env = installation
     return subprocess.run(["/bin/sh", str(root / "scripts/setup.sh"), *args],
-                          env=env, capture_output=True, text=True, timeout=20)
+                          cwd=root.parent, env=env, capture_output=True, text=True, timeout=20)
 
 
-def test_prepare_with_existing_uv_publishes_only_checked_environment(installation):
+@pytest.mark.parametrize('custom_data', [False, True])
+def test_prepare_uses_private_uv_and_does_not_touch_user_shell_or_global_uv(installation, custom_data):
     root, home, commands, env = installation
-    fake_uv(commands / "uv")
+    fake_uv(root / '.runtime/uv.exe')
+    fake_uv(commands / "uv", fail=41)
+    profiles = [home / name for name in ['.profile', '.zprofile', '.bash_profile']]
+    for profile in profiles:
+        profile.write_text('keep existing shell configuration\n')
     env['UV_PROJECT_ENVIRONMENT'] = str(home / 'unrelated environment')
+    env.update(UV_NO_PROJECT='true', UV_SYSTEM_PYTHON='true', UV_ISOLATED='true',
+               PYTHONPATH=str(home / 'unrelated packages'), PYTHONHOME=str(home / 'unrelated Python'),
+               VIRTUAL_ENV=str(home / 'unrelated venv'), CONDA_PREFIX=str(home / 'unrelated conda'),
+               __PYVENV_LAUNCHER__=str(home / 'unrelated launcher'), CONDA_DEFAULT_ENV='foreign',
+               VIRTUAL_ENV_PROMPT='foreign', _PYTHON_SYSCONFIGDATA_PATH='foreign',
+               _OLD_VIRTUAL_PATH='foreign', _OLD_VIRTUAL_PYTHONHOME='foreign', PYLAUNCHER_DEBUG='1')
+    if custom_data:
+        env['DAERI_DATA_DIR'] = str(home / 'custom DAERI data')
     result = prepare(installation, '--prepare')
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['ready'] is True
-    assert (root / '.venv/bin/python').exists()
+    assert (root / '.venv/bin/python.exe').is_file()
+    assert (root / '.venv/bin/python.exe').is_symlink()
+    assert all(profile.read_text() == 'keep existing shell configuration\n' for profile in profiles)
     assert not (home / 'unrelated environment').exists()
     assert not list(root.glob('.venv.prepare.*'))
     assert not (root / '.daeri-setup.lock').exists()
@@ -69,7 +93,7 @@ def test_prepare_with_existing_uv_publishes_only_checked_environment(installatio
 
 def test_failed_prepare_preserves_old_environment_and_profile_data(installation):
     root, home, commands, _ = installation
-    fake_uv(commands / 'uv', fail=29)
+    fake_uv(root / '.runtime/uv.exe', fail=29)
     (root / '.venv').mkdir()
     (root / '.venv/previous-good').write_text('keep')
     (home / 'profile.json').write_text('keep profile')
@@ -79,6 +103,37 @@ def test_failed_prepare_preserves_old_environment_and_profile_data(installation)
     assert (home / 'profile.json').read_text() == 'keep profile'
     assert not list(root.glob('.venv.prepare.*'))
     assert not (root / '.daeri-setup.lock').exists()
+
+
+@pytest.mark.parametrize('configured', ['relative data', './data', '../data', '~other-user/data'])
+def test_prepare_rejects_relative_data_environment_before_changing_state(installation, configured):
+    root, home, _, env = installation
+    previous = root / '.venv.previous'
+    previous.mkdir()
+    (previous / 'keep').write_text('keep')
+    env['DAERI_DATA_DIR'] = configured
+    result = prepare(installation, '--prepare')
+    assert result.returncode != 0
+    assert 'DAERI_DATA_DIR' in result.stderr and 'absolute' in result.stderr
+    assert (previous / 'keep').read_text() == 'keep'
+    assert not (root / '.venv').exists()
+    assert not (root / '.runtime').exists()
+    assert not (root / '.daeri-setup.lock').exists()
+    assert not (root.parent / configured / 'runtime').exists()
+    assert list(home.iterdir()) == []
+
+
+@pytest.mark.parametrize('configured', ['~', '~/custom DAERI data'])
+def test_prepare_expands_current_user_home_in_data_environment(installation, configured):
+    root, home, _, env = installation
+    fake_uv(root / '.runtime/uv.exe')
+    env['DAERI_DATA_DIR'] = configured
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 0, result.stderr
+    expected = home if configured == '~' else home / 'custom DAERI data'
+    assert (expected / 'runtime/python').is_dir()
+    assert (expected / 'runtime/cache').is_dir()
+    assert not (root.parent / '~').exists()
 
 
 def install_archive(installation, *, valid_hash=True):
@@ -105,18 +160,17 @@ def install_archive(installation, *, valid_hash=True):
         f"shutil.copyfile({str(archive)!r}, sys.argv[sys.argv.index('--output') + 1])\n")
 
 
-def test_missing_uv_is_downloaded_verified_and_added_to_user_shell_path(installation):
+def test_missing_private_uv_is_downloaded_without_changing_user_shell_path(installation):
     root, home, _, _ = installation
     install_archive(installation)
     result = prepare(installation, '--prepare')
     assert result.returncode == 0, result.stderr
-    assert (home / '.local/share/daeri/tools/uv/0.11.28/uv').is_file()
-    assert 'DAERI' in (home / '.zprofile').read_text()
-    assert 'Restart' in result.stderr
-    assert (root / '.venv/bin/python').is_file()
+    assert (root / '.runtime/uv.exe').is_file()
+    assert not any((home / name).exists() for name in ['.profile', '.zprofile', '.bash_profile', '.local'])
+    assert (root / '.venv/bin/python.exe').is_file()
     repeated = prepare(installation, '--prepare')
     assert repeated.returncode == 0, repeated.stderr
-    assert (home / '.zprofile').read_text().count('# DAERI') == 1
+    assert not any((home / name).exists() for name in ['.profile', '.zprofile', '.bash_profile', '.local'])
 
 
 def test_checksum_mismatch_never_executes_download(installation):
@@ -125,7 +179,7 @@ def test_checksum_mismatch_never_executes_download(installation):
     result = prepare(installation, '--prepare')
     assert result.returncode != 0
     assert 'checksum' in result.stderr.lower()
-    assert not (home / '.local/share/daeri/tools/uv/0.11.28/uv').exists()
+    assert not (root / '.runtime/uv.exe').exists()
     assert not (root / '.venv').exists()
 
 
@@ -142,28 +196,32 @@ def test_plugin_configs_use_the_same_offline_os_independent_entrypoint():
     claude = json.loads((ROOT / '.mcp.json').read_text())['mcpServers']['daeri']
     codex = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']['daeri']
     for server, variable in [(claude, '${CLAUDE_PLUGIN_ROOT}'), (codex, '${PLUGIN_ROOT}')]:
-        assert server['command'] == 'uv'
-        assert server['env']['UV_PROJECT_ENVIRONMENT'] == variable + '/.venv'
-        assert server['args'] == ['run', '--offline', '--no-sync', '--project', variable,
-                                  'python', '-m', 'daeri.server']
+        assert server['command'] == variable + '/.venv/bin/python.exe'
+        assert server['args'] == ['-I', '-m', 'daeri.server']
+        assert server['env'] == {'__PYVENV_LAUNCHER__': ''}
 
 
-def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_directory(tmp_path):
+def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_directory(tmp_path, plugin_environment):
     import asyncio
     from datetime import timedelta
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
-    uv = shutil.which('uv')
-    if uv is None:
-        pytest.skip('uv is required for the packaged launcher integration')
+    plugin = plugin_environment
+    environment = plugin / '.venv'
+    portable = environment / 'bin/python.exe'
+    subprocess.run([str(portable), '-I', '-c', 'import pathlib,sys; assert pathlib.Path(sys.prefix) == pathlib.Path(sys.argv[1])', str(environment)], check=True)
     config = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']['daeri']
-    args = [arg.replace('${PLUGIN_ROOT}', str(ROOT)) for arg in config['args']]
-    env = {key: value.replace('${PLUGIN_ROOT}', str(ROOT)) for key, value in config['env'].items()}
-    env['DAERI_DATA_DIR'] = str(tmp_path / 'data')
+    args = [arg.replace('${PLUGIN_ROOT}', str(plugin)) for arg in config['args']]
+    command = config['command'].replace('${PLUGIN_ROOT}', str(plugin))
+    env = {'DAERI_DATA_DIR': str(tmp_path / 'data'), 'PYTHONHOME': str(tmp_path / 'foreign-python'),
+           'PYTHONPATH': str(tmp_path / 'foreign-packages'), 'UV_NO_PROJECT': 'true',
+           'UV_ISOLATED': 'true', 'UV_PROJECT_ENVIRONMENT': str(tmp_path / 'foreign-venv'),
+           '__PYVENV_LAUNCHER__': str(tmp_path / 'foreign-launcher')}
+    env.update(config['env'])
 
     async def scenario():
-        parameters = StdioServerParameters(command=uv, args=args, env=env, cwd=tmp_path)
+        parameters = StdioServerParameters(command=command, args=args, env=env, cwd=tmp_path)
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=15)) as session:
                 hello = await session.initialize()
@@ -175,34 +233,71 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap behavior')
-def test_windows_failed_prepare_keeps_previous_environment(tmp_path):
+@pytest.mark.parametrize('configured', ['absolute', '~/custom DAERI data', '~\\custom DAERI data'])
+def test_windows_failed_prepare_keeps_previous_environment(tmp_path, configured):
     root = tmp_path / 'plugin with spaces'
     shutil.copytree(ROOT / 'scripts', root / 'scripts')
     (root / '.venv').mkdir()
     (root / '.venv/previous-good').write_text('keep')
-    commands = tmp_path / 'commands'
-    commands.mkdir()
-    fake = commands / 'fake_uv.py'
-    fake.write_text("import sys\nif sys.argv[1:]==['--version']: print('uv 0.11.28');sys.exit(0)\nsys.exit(29)\n")
-    (commands / 'uv.cmd').write_text(f'@"{sys.executable}" "{fake}" %*\n')
+    private = root / '.runtime/uv.exe'
+    private.parent.mkdir()
+    source = 'public class FakeUv { public static int Main(string[] args) { if (args.Length == 1 && args[0] == "--version") { System.Console.WriteLine("uv 0.11.28"); return 0; } return 29; } }'
+    compiler = 'Add-Type -TypeDefinition ' + "'" + source + "'" + ' -OutputType ConsoleApplication -OutputAssembly ' + "'" + str(private).replace("'", "''") + "'"
+    subprocess.run(['powershell', '-NoProfile', '-Command', compiler], check=True, capture_output=True, text=True, timeout=30)
+    setup_path = "'" + str(root / 'scripts/setup.ps1').replace("'", "''") + "'"
+    wrapper = (
+        "$Before = (Get-ChildItem Env: | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Value }) -join \"`n\"; "
+        "$UserBefore = [Environment]::GetEnvironmentVariable('Path', 'User'); "
+        f"& {setup_path} -Prepare; $Code = $LASTEXITCODE; "
+        "$After = (Get-ChildItem Env: | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Value }) -join \"`n\"; "
+        "@{code=$Code; environment_unchanged=($Before -ceq $After); user_path_unchanged=($UserBefore -ceq [Environment]::GetEnvironmentVariable('Path', 'User'))} | ConvertTo-Json -Compress"
+    )
+    home = tmp_path / 'home'
+    home.mkdir()
+    data = str(tmp_path / 'data') if configured == 'absolute' else configured
     result = subprocess.run(
-        ['powershell', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File',
-         str(root / 'scripts/setup.ps1'), '-Prepare'],
-        env=dict(os.environ, PATH=str(commands) + os.pathsep + os.environ['PATH']),
+        ['powershell', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-Command', wrapper],
+        env=dict(os.environ, DAERI_DATA_DIR=data, USERPROFILE=str(home), UV_NO_PROJECT='true',
+                 PYTHONHOME='foreign', CONDA_PREFIX='foreign', VIRTUAL_ENV_PROMPT='foreign'),
         text=True, capture_output=True, timeout=30,
     )
-    assert result.returncode == 29, result.stderr
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {'code': 29, 'environment_unchanged': True, 'user_path_unchanged': True}
     assert (root / '.venv/previous-good').read_text() == 'keep'
     assert not list(root.glob('.venv.prepare.*'))
     assert not (root / '.daeri-setup.lock').exists()
+    expected = tmp_path / 'data' if configured == 'absolute' else home / 'custom DAERI data'
+    assert (expected / 'runtime/python').is_dir()
+    assert (expected / 'runtime/cache').is_dir()
 
 
-def test_runtime_check_does_not_claim_portable_launch_ready_without_uv(installation):
+@pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap behavior')
+@pytest.mark.parametrize('configured', ['relative-data', 'C:relative-data', '\\rooted-data', '~other-user/data'])
+def test_windows_rejects_relative_data_environment_before_changing_state(tmp_path, configured):
+    root = tmp_path / 'plugin with spaces'
+    shutil.copytree(ROOT / 'scripts', root / 'scripts')
+    previous = root / '.venv.previous'
+    previous.mkdir()
+    (previous / 'keep').write_text('keep')
+    setup_path = "'" + str(root / 'scripts/setup.ps1').replace("'", "''") + "'"
+    result = subprocess.run(
+        ['powershell', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-Command',
+         'function Invoke-WebRequest { throw "Unexpected download" }; & ' + setup_path + ' -Prepare; exit $LASTEXITCODE'],
+        env=dict(os.environ, DAERI_DATA_DIR=configured), text=True, capture_output=True, timeout=30,
+    )
+    assert result.returncode != 0
+    assert 'DAERI_DATA_DIR' in result.stderr and 'absolute' in result.stderr
+    assert (previous / 'keep').read_text() == 'keep'
+    assert not (root / '.venv').exists()
+    assert not (root / '.runtime').exists()
+    assert not (root / '.daeri-setup.lock').exists()
+
+
+def test_runtime_check_does_not_require_global_uv(installation):
     root, _, _, _ = installation
-    python = root / '.venv/bin/python'
+    python = root / '.venv/bin/python.exe'
     python.parent.mkdir(parents=True)
     executable(python, "print('{\"ready\":true}')\n")
     result = prepare(installation, '--check')
-    assert result.returncode != 0
-    assert 'uv' in result.stderr
-    assert result.stdout == ''
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['ready'] is True

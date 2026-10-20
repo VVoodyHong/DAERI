@@ -11,8 +11,17 @@ import sys
 
 
 def data_directory(value=None):
-    if value or os.environ.get("DAERI_DATA_DIR"):
-        return Path(value or os.environ["DAERI_DATA_DIR"]).expanduser().resolve()
+    if value:
+        return Path(value).expanduser().resolve()
+    if os.environ.get("DAERI_DATA_DIR"):
+        configured = os.environ["DAERI_DATA_DIR"]
+        directory = Path(configured)
+        if configured == '~' or configured.startswith('~/') or (os.name == 'nt' and configured.startswith('~\\')):
+            directory = directory.expanduser()
+        if not directory.is_absolute():
+            from .storage import StoreError
+            raise StoreError('INVALID_INPUT', 'DAERI_DATA_DIR must be an absolute path or a current-user home path.')
+        return directory.resolve()
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "DAERI"
     if sys.platform == "win32":

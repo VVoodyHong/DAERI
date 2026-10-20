@@ -97,8 +97,10 @@ Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/
 
 공식 [Codex 플러그인 안내](https://developers.openai.com/plugins/build/plugins)와 [Claude Code 플러그인 안내](https://code.claude.com/docs/en/plugins)를 기준으로 실제 패키징을 확인한다.
 준비 프로그램과 실행기의 책임·연결은 [개발 안내](../../development/dependencies.md#실행-진입점과-모듈)를 따른다.
-macOS와 Windows는 같은 uv stdio 진입 구성을 사용한다.
-사용자 OS별 shell은 명시적인 setup에서만 선택하며 일반 업무의 MCP 구성은 OS별 shell 설치를 요구하지 않는다.
+macOS와 Windows는 같은 전용 Python stdio 진입 구성을 사용한다.
+Codex의 command는 `${PLUGIN_ROOT}/.venv/bin/python.exe`, Claude Code는 `${CLAUDE_PLUGIN_ROOT}/.venv/bin/python.exe`이며 args는 `-I`, `-m`, `daeri.server`다.
+공통 실행 파일의 OS별 준비는 [환경 격리](../installation/environment.md#공통-실행-파일과-환경-격리)를 따른다.
+사용자 OS별 shell은 명시적인 setup에서만 선택하며 일반 MCP 시작에는 uv·PATH 검색·shell을 사용하지 않는다.
 실행기는 설치한 플러그인 루트의 전용 환경으로 고정하고 사용자 작업 디렉토리나 외부 가상환경을 사용하지 않는다.
 설치가 setup 실행·프로그램 다운로드·업무 승인까지 자동 허용하지 않으며 호스트의 명령 실행 권한도 별도로 적용한다.
 위 설치 문법과 파일 구성은 공식 문서·로컬 명령 도움말·정의 검토로 확인했고 실제 마켓플레이스 추가·설치·Skill 호출은 검증하지 않았다.
@@ -122,7 +124,7 @@ codex plugin add daeri@daeri-marketplace
 명령은 [Claude Code 업데이트](https://code.claude.com/docs/en/discover-plugins#update-plugins-now)와 [Codex 플러그인 관리](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace)를 따른다.
 업데이트 뒤 호스트를 다시 시작하고 setup으로 플러그인 프로젝트 버전과 설치한 실행기 패키지 버전을 대조한다.
 버전이 다르거나 환경이 없으면 명시적 준비로 실행 환경을 교체하고 새 프로세스로 MCP를 다시 연결한다.
-일반 시작의 `--no-sync`는 기존 환경을 갱신하지 않으므로 기본 검사 성공만으로 새 코드 반영을 확정하지 않는다.
+일반 시작은 환경을 갱신하지 않으므로 기본 검사 성공만으로 새 코드 반영을 확정하지 않는다.
 프로그램 환경은 버전별 설치 사본에 두고 profile·업무·기억은 별도 사용자 저장소를 사용한다.
 기존 profile의 보존 설정을 바꾸려면 기존 연결·정책을 유지하면서 해당 설정만 명시적으로 변경한다.
 새 기본값이나 업데이트만으로 기존 자료의 기한을 연장하지 않는다.
@@ -140,7 +142,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 
 | 사용자 입력·상황 | 호스트·DAERI의 처리 | 사용자에게 보이는 결과 |
 |---|---|---|
-| 최초 setup 요청 | 검사 후 누락 프로그램·설치 위치·네트워크·사용자 PATH 변경 범위 설명 | 명시적 준비 실행 또는 남은 조치 |
+| 최초 setup 요청 | 검사 후 누락 프로그램·전용 설치 위치·네트워크 범위 설명 | 명시적 준비 실행 또는 남은 조치 |
 | 프로그램 준비 완료 | 실행기 검사 결과와 현재 호스트 연결을 구분해 확인 | 필요한 경우 호스트 재시작·MCP 재연결 안내 |
 | profile 준비 요청 | 대상 서비스의 리소스·연결·인증 참조 구성 | 등록 정보와 리소스별 진단 결과 |
 | profile 선택 요청 | 저장 목록·지정 profile을 확인하고 대화의 기본 대상 선택 | 이후 새 업무에 사용할 이름·식별자 |
@@ -149,7 +151,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 | 승인 답변 | 현재 업무·저장된 계획·대기 승인 요청과 실제 사용자 답변 연결 | 승인·수정 요청·거절·미결 상태 |
 | 재개 요청 | 최근 업무나 지정 업무의 저장 상태·계획·남은 작업 확인 | 필요한 새 승인과 이어갈 범위 |
 
-공통 MCP 시작은 준비된 패키지를 `offline`·`no-sync` 조건으로 실행한다.
+공통 MCP 시작은 준비된 전용 Python으로 설치된 패키지만 실행한다.
 모델·패키지가 없거나 버전 환경이 맞지 않아도 일반 업무 시작에서 다운로드·설정을 수행하지 않는다.
 실행기의 표준 출력은 MCP 전달에만 사용하며 시작 실패는 진단 출력으로 구분한다.
 

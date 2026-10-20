@@ -10,7 +10,7 @@
 | 정본 | 관리하는 내용 |
 |---|---|
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
-| [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 지원 하한·설치 버전·공식 출처·SHA256 |
+| [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 로컬 모델 선정·임베딩·검색·모델 호환과 보존 기준 |
@@ -48,9 +48,10 @@ uv run --no-sync pytest
 macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Prepare`를 사용한다.
 기본 동작인 `--check`·`-Check`는 설치·다운로드·로그인을 하지 않는다.
 
-준비는 지원 uv가 없으면 사용자 영역에 설치하고 필요한 사용자 PATH를 준비한다.
+준비는 고정한 공식 uv를 플러그인 루트의 `.runtime/uv.exe`에 두고 절대 경로로 실행한다.
+사용자·시스템 PATH와 shell 시작 파일·기존 uv·Python·가상환경은 변경하지 않는다.
 별도 후보 환경에 잠긴 패키지를 설치하고 실제 실행 검사를 통과한 환경만 `.venv`로 전환한다.
-설치 출처·해시·실패·중복 준비·전환 복구·호스트 재시작 조건은 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
+설치 출처·해시·관리 Python·환경 정리·실패·중복 준비·전환 복구는 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
 
 `check`는 실행기의 Python 지원 범위·MCP·SQLite와 실제 FTS5 검색을 확인한다.
 이 결과의 `ready`는 기본 실행 환경이며 리소스 인증·진단과 기억 모델 준비를 대신하지 않는다.
@@ -58,8 +59,8 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 
 ## 관리 입력과 결과
 
-준비된 Python의 `-m daeri.cli`로 관리 작업을 수행한다.
-macOS는 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`이며 관리 인수에 비밀값을 넣지 않는다.
+플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정해 `-I -m daeri.cli`로 관리 작업을 수행한다.
+두 OS의 공통 진입 파일과 자식 환경 정리는 [환경 격리](../spec/installation/environment.md#공통-실행-파일과-환경-격리)를 따르며 관리 인수에 비밀값을 넣지 않는다.
 아래 표의 대문자는 사용자가 선택할 값이며 실제 명령 이름·필수 인수는 `--help`로 확인할 수 있다.
 
 | 입력 | 처리와 반환 |
@@ -91,8 +92,8 @@ profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 ## 실행 진입점과 모듈
 
 `daeri`는 관리 CLI, `daeri-mcp`는 호스트가 연결할 MCP 서버다.
-두 호스트의 플러그인 구성은 같은 uv 오프라인 진입으로 플러그인 루트의 전용 환경을 실행한다.
-현재 작업 디렉토리나 외부 `UV_PROJECT_ENVIRONMENT`로 실행 환경을 바꾸지 않는다.
+두 호스트의 플러그인 구성은 전용 `.venv/bin/python.exe`를 절대 경로로 실행하고 `-I -m daeri.server`를 전달한다.
+일반 MCP 시작에 uv·PATH 검색·shell을 사용하지 않으며 현재 작업 디렉토리나 외부 환경으로 실행기를 바꾸지 않는다.
 일반 MCP 시작에서 다운로드·설치·로그인을 하지 않으며 표준 출력은 MCP 전달에만 사용한다.
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 실행기가 저장 상태·정책과 대조한다.
@@ -116,11 +117,14 @@ profile·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 
 CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 `DAERI_DATA_DIR`로 위치를 지정할 수 있고 CLI의 `--data-dir PATH`는 이 값보다 우선한다.
+환경 변수는 절대 경로나 현재 사용자 홈을 뜻하는 `~/` 경로만 받으며 상대 경로는 거부한다.
+명시적인 CLI `--data-dir` 인자는 현재 작업 디렉터리 기준의 상대 경로도 받는다.
 기본 위치는 macOS `~/Library/Application Support/DAERI`, Windows `%LOCALAPPDATA%/DAERI`다.
 
 | 구분 | 위치·책임 |
 |---|---|
-| 프로그램 | 플러그인 `.venv`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
+| 프로그램 | 플러그인 `.runtime/uv.exe`·`.venv`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
+| 관리 런타임 | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
 | 설정·제어 | `profiles/` 개정별 JSON; SQLite의 활성 설정·업무·승인·호출·참조 |
 | 기억·검색 | SQLite의 선별 지식 정본·FTS5·벡터 색인 |
 | 본문·산출물 | `records/`·`artifacts/`의 허용 파일; SQLite에서 기한·무결성과 참조 관리 |

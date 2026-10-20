@@ -20,7 +20,7 @@ DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업�
 
 새 업무는 요청에 등록 이름·식별자로 명확히 지정한 profile을 우선한다.
 지정이 없으면 현재 대화에서 setup 또는 profile로 마지막으로 확인한 선택을 사용한다.
-접수 전에 준비된 Python의 `-m daeri.cli profile show PROFILE`로 이름·`profile_id`와 현재 등록을 확인한다.
+접수 전에 플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정해 `-I -m daeri.cli profile show PROFILE`로 이름·`profile_id`와 현재 등록을 확인한다.
 관리 조회의 실행 경로와 안전한 인자 전달은 profile Skill의 지침을 따른다.
 성공한 조회의 `profile_id`를 `daeri_task_create`의 `context.profile_id`에 전달하고 이번 업무의 대상을 알린다.
 명확히 지정한 대상이 대화의 기본 선택과 다르다는 이유만으로 재확인을 요구하지 않는다.

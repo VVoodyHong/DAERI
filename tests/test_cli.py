@@ -175,3 +175,27 @@ def test_profile_json_is_readable_through_a_non_unicode_host_pipe(tmp_path, monk
     assert result.returncode == 0, result.stderr
     assert result.stdout.isascii()
     assert json.loads(result.stdout)['core_context'] == ['한국어 운영 맥락']
+
+
+@pytest.mark.parametrize('directory', ['relative-data', '../relative-data'])
+def test_environment_data_directory_rejects_ambiguous_relative_paths(tmp_path, monkeypatch, directory):
+    working = tmp_path / 'working'
+    working.mkdir()
+    monkeypatch.chdir(working)
+    monkeypatch.setenv('DAERI_DATA_DIR', directory)
+    result = run_cli('profile', 'list')
+    assert result.returncode != 0
+    assert json.loads(result.stdout)['error']['code'] == 'INVALID_INPUT'
+    assert not (working / directory).exists()
+    explicit = run_cli('--data-dir', str(tmp_path / 'explicit'), 'profile', 'list')
+    assert explicit.returncode == 0
+    assert json.loads(explicit.stdout) == []
+
+
+def test_environment_data_directory_expands_current_user_home(tmp_path, monkeypatch):
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
+    monkeypatch.setenv('DAERI_DATA_DIR', '~/private-data')
+    result = run_cli('profile', 'list')
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'private-data/daeri.sqlite3').is_file()

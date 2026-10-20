@@ -1,19 +1,14 @@
 {
   "mcpServers": {
     "daeri": {
-      "command": "uv",
+      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python.exe",
       "args": [
-        "run",
-        "--offline",
-        "--no-sync",
-        "--project",
-        "${CLAUDE_PLUGIN_ROOT}",
-        "python",
+        "-I",
         "-m",
         "daeri.server"
       ],
       "env": {
-        "UV_PROJECT_ENVIRONMENT": "${CLAUDE_PLUGIN_ROOT}/.venv"
+        "__PYVENV_LAUNCHER__": ""
       }
     }
   }

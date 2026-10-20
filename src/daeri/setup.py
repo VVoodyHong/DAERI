@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 from uuid import uuid4
 
@@ -143,7 +144,23 @@ def profile_template(store, recipe_id, profile_name, instance_id):
             'retention_days': None, 'long_term_memory_days': None, 'memory_policy': {}}
 
 
+def _process_environment():
+    excluded = {'VIRTUAL_ENV', 'VIRTUAL_ENV_PROMPT', '__PYVENV_LAUNCHER__',
+                '_OLD_VIRTUAL_PATH', '_OLD_VIRTUAL_PYTHONHOME', 'PYLAUNCHER_DEBUG'}
+    return {key: value for key, value in os.environ.items()
+            if key.upper() not in excluded
+            and not key.upper().startswith(('PYTHON', '_PYTHON', 'UV_', 'CONDA_'))}
+
+
+def _private_uv():
+    executable = Path(sys.prefix).parent / '.runtime' / 'uv.exe'
+    if not executable.is_file() or executable.is_symlink() or executable.parent.is_symlink():
+        raise StoreError('CONNECTION_NOT_READY', 'Run DAERI setup to prepare its private installation tool.')
+    return str(executable)
+
+
 def _run(arguments, **kwargs):
+    kwargs.setdefault('env', _process_environment())
     try:
         return subprocess.run(arguments, check=True, text=True, capture_output=True, timeout=300, **kwargs)
     except (OSError, subprocess.SubprocessError):
@@ -154,7 +171,7 @@ def _verify(environment, item):
     python = _program(environment, 'python')
     executable = _program(environment, item['executable'])
     _require(python.is_file() and executable.is_file(), 'The prepared resource executable is missing.')
-    result = _run([str(python), '-c', 'import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))', item['package']])
+    result = _run([str(python), '-I', '-c', 'import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))', item['package']])
     _require(result.stdout.strip() == item['version'], 'The resource package version differs from its pinned recipe.')
     return executable
 
@@ -181,9 +198,7 @@ def prepare_resource(store, profile_name, instance_id, recipe_id):
         executable = _verify(destination / '.venv', item)
         return {'recipe': recipe_id, 'instance_id': instance_id, 'ready': True, 'reused': True,
                 'version': item['version'], 'command': str(executable)}
-    uv = shutil.which('uv')
-    if not uv:
-        raise StoreError('CONNECTION_NOT_READY', 'Run DAERI environment preparation so uv is available in the host PATH.')
+    uv = _private_uv()
     parent = destination.parent
     parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     _require(not parent.is_symlink() and not destination.is_symlink(), 'The managed tools location is invalid.')
@@ -195,9 +210,17 @@ def prepare_resource(store, profile_name, instance_id, recipe_id):
     try:
         candidate.mkdir(mode=0o700)
         environment = candidate / '.venv'
-        _run([uv, 'venv', '--relocatable', '--project', str(project), str(environment)])
-        env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(environment))
-        _run([uv, 'sync', '--frozen', '--no-dev', '--no-editable', '--project', str(project)], env=env)
+        runtime = store.data_dir / 'runtime'
+        env = _process_environment() | {
+            'UV_PROJECT_ENVIRONMENT': str(environment),
+            'UV_PYTHON_INSTALL_DIR': str(runtime / 'python'),
+            'UV_PYTHON_INSTALL_BIN': '0', 'UV_PYTHON_INSTALL_REGISTRY': '0',
+            'UV_CACHE_DIR': str(runtime / 'cache'),
+        }
+        _run([uv, 'venv', '--relocatable', '--managed-python', '--no-config',
+              '--project', str(project), str(environment)], env=env)
+        _run([uv, 'sync', '--frozen', '--no-dev', '--no-editable', '--managed-python',
+              '--no-config', '--project', str(project)], env=env)
         _verify(environment, item)
         (candidate / 'prepared.json').write_text(json.dumps({'recipe': recipe_id, 'lock_sha256': lock_hash, 'version': item['version']}), encoding='utf-8')
         if destination.exists():
@@ -235,8 +258,9 @@ def login_resource(store, profile_name, instance_id, *, start_url=None, sso_regi
     _no_secrets(request)
     if emit is None:
         emit = lambda value: print(json.dumps({'status': 'pending', 'data': value, 'error': None}), flush=True)
-    process = subprocess.Popen([str(_program(environment, 'python')), str(Path(__file__).with_name('provider_login.py'))],
-                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    process = subprocess.Popen([str(_program(environment, 'python')), '-I', str(Path(__file__).with_name('provider_login.py'))],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               text=True, env=_process_environment())
     events = queue.Queue()
     def read():
         try:

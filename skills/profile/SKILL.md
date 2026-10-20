@@ -10,8 +10,10 @@ description: 현재 대화에서 이후 새 DAERI 업무에 사용할 profile을
 선택의 범위는 [호스트 명세](../../docs/spec/hosts/plugins.md), 구성과 식별자는 [profile 명세](../../docs/spec/configuration/profiles.md)를 읽는다.
 이 Skill에서 `../../`는 설치된 플러그인 루트다.
 
-1. 준비된 실행 환경의 Python으로 `-m daeri.cli profile list`를 실행해 실제 등록 목록을 확인한다.
-   macOS는 플러그인 루트의 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`를 사용한다.
+1. 준비된 실행 환경의 Python으로 `-I -m daeri.cli profile list`를 실행해 실제 등록 목록을 확인한다.
+   두 OS 모두 플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정한다.
+   [환경 격리 기준](../../docs/spec/installation/environment.md#공통-실행-파일과-환경-격리)을 적용하고 PATH의 Python·uv나 외부 가상환경으로 대체하지 않는다.
+   관리 명령의 자식 환경에 `__PYVENV_LAUNCHER__`를 빈값으로 전달하고 사용자의 원래 환경 변수는 수정하지 않는다.
    명령은 플러그인 루트에서 실행하고 profile 입력은 별도 인자로 전달한다.
    사용자 입력을 명령 문자열에 보간하지 않는다.
    실행 환경이 없으면 [setup](../setup/SKILL.md)을 안내하고 설치·로그인·연결 진단으로 자동 전환하지 않는다.
@@ -20,7 +22,7 @@ description: 현재 대화에서 이후 새 DAERI 업무에 사용할 profile을
 2. 인자로 받은 이름 또는 식별자를 확인한다.
    생략·미등록·모호한 대상은 실제 목록을 바탕으로 호스트의 정형 질문 도구에서 선택하게 한다.
    질문 도구가 없으면 [정형 질문 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문)에 따라 모드를 안내하며 선택을 추정하지 않는다.
-3. `-m daeri.cli profile show PROFILE`이 성공한 경우만 반환한 `name`과 `profile_id`를 이 대화의 선택으로 확인한다.
+3. 같은 전용 Python의 `-I -m daeri.cli profile show PROFILE`이 성공한 경우만 반환한 `name`과 `profile_id`를 이 대화의 선택으로 확인한다.
    오류·취소·미응답이면 기존 선택을 바꾸지 않는다.
 4. 선택한 이름·식별자와 이후 새 업무에 적용된다는 사실을 짧게 알린다.
    전체 설정·인증 참조를 사용자에게 그대로 출력하거나 등록만으로 실제 연결 성공을 주장하지 않는다.

@@ -35,17 +35,21 @@ Plan에서는 파일로 확인할 수 있는 입력을 먼저 수집하고 상�
 1. 사용자 OS와 현재 플러그인 루트를 확인한다.
    macOS는 `sh scripts/setup.sh --check`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Check`로 검사한다.
    이 검사와 일반 MCP 시작은 설치·다운로드·로그인·원격 자료 조회를 수행하지 않는다.
-   업데이트 뒤에는 `pyproject.toml`의 프로젝트 버전과 준비된 Python의 `importlib.metadata.version('daeri-agent')`도 대조한다.
+   업데이트 뒤에는 전용 `.venv/bin/python.exe`를 `-I`로 실행해 확인한 `importlib.metadata.version('daeri-agent')`와 `pyproject.toml`의 프로젝트 버전을 대조한다.
    기본 검사의 성공만으로 설치한 실행기가 새 버전이라고 판단하지 않는다.
-2. 누락·비호환 항목이나 업데이트할 실행기가 있으면 사용자 전용 uv·Python·잠긴 패키지와 설치 위치·다운로드·사용자 PATH 변경 범위를 설명한다.
+2. 누락·비호환 항목이나 업데이트할 실행기가 있으면 전용 uv·관리 Python·잠긴 패키지의 설치 위치와 다운로드 범위를 설명한다.
+   uv는 플러그인 루트의 `.runtime/uv.exe`, Python·준비 캐시는 사용자 데이터 경로의 `runtime/python`·`runtime/cache`를 사용한다.
+   기존 uv·Python·가상환경·설치 패키지, 사용자·시스템 PATH와 shell 시작 파일을 변경하지 않는다.
    사용자가 요청하거나 확인한 준비 범위에서 macOS는 `sh scripts/setup.sh --prepare`, Windows는 같은 PowerShell 진입에 `-Prepare`를 지정한다.
    명시적 준비만 프로그램을 설치하며 실패를 다른 출처·임의 최신 버전·관리자 권한으로 우회하지 않는다.
-3. 새 uv 설치 뒤에는 호스트 재시작과 MCP 재연결 필요 여부를 안내한다.
-   실행 환경을 교체한 경우에도 새 프로세스로 MCP를 다시 연결하고 실제 제공 도구를 확인한다.
-   현재 호스트의 PATH와 실제 MCP 도구 연결을 다시 확인한다.
+   PATH의 다른 uv를 대신 사용하지 않고 환경 정리는 [공통 실행·격리 기준](../../docs/spec/installation/environment.md#공통-실행-파일과-환경-격리)에 맡긴다.
+3. 실행 환경을 준비하거나 교체했으면 새 프로세스로 MCP를 다시 연결하고 실제 제공 도구를 확인한다.
+   일반 MCP는 플러그인 루트의 `.venv/bin/python.exe`로 `-I -m daeri.server`를 실행하며 uv·PATH 검색·shell·설치·다운로드를 사용하지 않는다.
    프로그램 준비 성공을 현재 대화의 MCP 연결 성공이나 profile 연결 성공으로 대신하지 않는다.
-4. 준비된 Python의 `-m daeri.cli --help`와 해당 하위 명령 도움말에서 현재 관리 기능을 확인한다.
-   macOS는 `.venv/bin/python`, Windows는 `.venv/Scripts/python.exe`를 사용하고 모든 명령은 확인한 플러그인 루트에서 실행한다.
+   이전 버전의 PATH 항목이 남아 있으면 과거 항목임을 알리고 수동 정리를 안내하며 자동 삭제·shell 파일 재작성을 하지 않는다.
+4. 두 OS 모두 플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정해 `-I -m daeri.cli --help`와 하위 명령 도움말에서 현재 관리 기능을 확인한다.
+   모든 관리 명령은 같은 전용 Python과 `-I`를 사용하고 확인한 플러그인 루트에서 실행한다.
+   자식 환경의 `__PYVENV_LAUNCHER__`는 빈값으로 전달하고 사용자의 원래 환경 변수는 수정하지 않는다.
    `/setup {profile명}`의 이름은 해당 profile 생성·선택에 사용한다.
    `profile list/show`로 같은 이름의 기존 profile을 먼저 확인하고 있으면 이어서 설정한다.
    기존 profile을 `profile create`나 빈 template으로 덮어쓰지 않는다.
