@@ -24,6 +24,7 @@
 |---|---|
 | Python·공식 MCP SDK | 사용자 PC의 CLI·MCP 서버와 하위 MCP 클라이언트 실행 |
 | Pydantic·JSON Schema 검사 | 공개 DTO와 등록 기능의 타입·필드·계약 확인 |
+| [PyYAML](https://pyyaml.org/wiki/PyYAMLDocumentation) | 안전 로더 기반 YAML 생성·읽기; 중복 키·태그·별칭 등은 별도 검증으로 거부 |
 | SQL 구문 분석기 | DB 읽기 입력의 실제 대상·구문·제약 검사 |
 | SQLite·FTS5·벡터 확장 | 업무·기억 정본과 로컬 키워드·벡터 검색 |
 | 선택 임베딩 어댑터 | 준비한 로컬 모델 또는 허용된 회사 API로 지식·질의를 벡터화; 키워드 전용도 선택 가능 |
@@ -68,6 +69,11 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 
 | 입력 | 처리와 반환 |
 |---|---|
+| `setup catalog` | 리소스 범주와 해당 범주의 지원 제품·표시 설명 반환 |
+| `setup draft PROFILE --resource INSTANCE=RECIPE` | 선택한 연결의 YAML 초안과 기준 상태 생성; 옵션 반복으로 복수 인스턴스 지정 |
+| `setup draft PROFILE --embedding PROVIDER` | 선택한 임베딩 방식의 입력만 초안에 포함; 생략하면 기존 선택 보존 |
+| `setup validate PROFILE` | 파일 전체 검증과 변경 요약·확인값 반환 |
+| `setup apply PROFILE --confirm TOKEN` | 검증한 파일·기준 상태 대조 후 하나의 profile 개정으로 일괄 저장 |
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
 | `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
 | `profile export NAME` | 내부 상태·인증 비밀을 제외한 이동 가능한 설정 반환 |
@@ -91,7 +97,10 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
 `VALUES_JSON`은 UTF-8 JSON 파일 경로이며 값 객체의 원문을 명령 인자로 받지 않는다.
 스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
-Plan에서는 이미 있는 입력 파일만 검증하며 파일 작성 제한과 재입력은 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
+기본 setup은 [YAML 초안·검증·일괄 적용](../spec/configuration/profiles.md#사용자용-setup-yaml)을 사용한다.
+초안·확인값·기준 상태의 연결과 충돌 뒤 명시적 `--refresh`도 이 계약을 따른다.
+Plan에서는 파일 읽기·카탈로그·스키마 조회와 저장소를 열지 않는 개별 JSON 입력 검증만 수행한다.
+YAML의 전체 검증·초안 생성·적용은 profile 저장소를 사용하므로 실행 가능한 모드에서 수행한다.
 `resource configure`는 실행 모드에서 적용 요약을 확인할 때 사용한 profile 개정을 명시해 수행하며 새 profile은 먼저 `profile create`로 만든다.
 입력 스키마·기존값 재사용·검증 결과·동시 변경 거부·보존 경계는 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
 새 profile의 `--retention-days`와 `--long-term-memory-days`는 각각 생략하거나 `unlimited`로 지정하면 무기한이며 양의 정수로 유한 기간을 선택한다.
@@ -131,7 +140,8 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `embedding.py` | 임베딩 제공자 설정·회사 API 요청·인증 주입·벡터 응답 검사 |
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
 | `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
-| `cli.py`·`setup.py` | 명시적인 사용자 구성·환경·recipe 준비·진단 진입 |
+| `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
+| `onboarding.py`·`setup_yaml.py` | 선택 초안 생성·제한된 YAML 검사·기준 상태 및 확인값 대조·일괄 적용 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
 | `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 setup·profile·work·list-profiles 지침 전달 |
 
@@ -151,6 +161,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 | 프로그램 | 플러그인 `.runtime/uv.exe`·`.venv`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
 | 관리 런타임 | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
 | 설정·제어 | `profiles/` 개정별 JSON; SQLite의 활성 설정·업무·승인·호출·참조 |
+| 편집 초안 | `setup/<profile>/setup.yaml`과 관리 정보; 확인한 일괄 적용의 입력 |
 | 기억·검색 | SQLite의 선별 지식 정본·FTS5·벡터 색인 |
 | 본문·산출물 | `records/`·`artifacts/`의 허용 파일; SQLite에서 기한·무결성과 참조 관리 |
 | 모델·준비 | `models/`의 로컬 모델; `staging/`의 미공개 파일 |

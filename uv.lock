@@ -293,7 +293,7 @@ wheels = [
 
 [[package]]
 name = "daeri-agent"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -301,6 +301,7 @@ dependencies = [
     { name = "keyring" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "sqlglot" },
     { name = "sqlite-vec" },
 ]
@@ -323,6 +324,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25.6,<26" },
     { name = "mcp", specifier = ">=1.30,<2" },
     { name = "pydantic", specifier = ">=2.11,<3" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "sqlglot", specifier = ">=27,<31" },
     { name = "sqlite-vec", specifier = ">=0.1.9,<0.2" },
 ]

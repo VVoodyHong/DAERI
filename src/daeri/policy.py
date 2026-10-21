@@ -129,7 +129,8 @@ def validate_resource_policy(policy):
     masks = policy.get("masking", [])
     require(isinstance(masks, list))
     for index, rule in enumerate(masks):
-        require(isinstance(rule, dict) and set(rule) == {"field", "action"} and rule["action"] in {"omit", "redact"})
+        require(isinstance(rule, dict) and set(rule) == {"field", "action"}
+                and isinstance(rule["action"], str) and rule["action"] in {"omit", "redact"})
         validate_selectors([rule["field"]])
         require(not any(selector_covers(other["field"], rule["field"]) or selector_covers(rule["field"], other["field"])
                         for other in masks[:index]), "Masking selectors overlap.")
@@ -139,10 +140,14 @@ def validate_resource_policy(policy):
     if memory:
         require(set(memory) == {"categories", "source_fields", "context_sources", "retention", "allow_model_recall"})
         categories = memory["categories"]
-        require(isinstance(categories, list) and len(categories) == len(set(categories)) and
+        require(isinstance(categories, list) and all(isinstance(item, str) for item in categories)
+                and len(categories) == len(set(categories)) and
                 set(categories) <= {"service_rule", "resource_structure", "procedure", "lesson"})
-        require(isinstance(memory["context_sources"], list) and set(memory["context_sources"]) <= {"request", "clarification"})
-        require(memory["retention"] in {"none", "source_bound", "long_term"} and type(memory["allow_model_recall"]) is bool)
+        require(isinstance(memory["context_sources"], list)
+                and all(isinstance(item, str) for item in memory["context_sources"])
+                and set(memory["context_sources"]) <= {"request", "clarification"})
+        require(isinstance(memory["retention"], str) and memory["retention"] in {"none", "source_bound", "long_term"}
+                and type(memory["allow_model_recall"]) is bool)
         validate_selectors(memory["source_fields"])
         if memory["retention"] == "none":
             require(not (categories or memory["source_fields"] or memory["context_sources"] or memory["allow_model_recall"]))

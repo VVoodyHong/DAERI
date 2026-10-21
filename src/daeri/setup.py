@@ -248,40 +248,51 @@ def _current_setup_values(resource, contract):
     return values
 
 
+def build_setup_resource(store, recipe_id, profile_name, instance_id, values, existing=None):
+    """Build a complete recipe resource without mutating inputs or publishing settings."""
+    from .policy import pointer_set
+    contract = setup_schema(recipe_id)
+    _require(_validate_setup_values(contract, values)['valid'], 'Setup answers are invalid.')
+    template = profile_template(store, recipe_id, profile_name, instance_id)['resources'][0]
+    if existing is not None:
+        _require(existing['instance_id'] == instance_id
+                 and get_adapter(existing['adapter']).adapter_id == contract['adapter'],
+                 'An existing resource cannot be replaced with a different adapter or instance.')
+        _require(existing['connection']['transport'] == 'stdio'
+                 and existing['connection']['command'] == template['connection']['command']
+                 and existing['connection'].get('args', []) == template['connection']['args']
+                 and [(c['capability_id'], c['tool_name']) for c in existing['capabilities']]
+                 == [(c['capability_id'], c['tool_name']) for c in template['capabilities']],
+                 'Use configuration import for connections outside this preparation recipe.')
+    merged = _current_setup_values(existing, contract) if existing is not None else {}
+    merged.update(values)
+    _require(_validate_setup_values(contract, merged)['complete'], 'Required setup answers are missing or invalid.')
+    resource = copy.deepcopy(existing) if existing is not None else template
+    for name, value in values.items():
+        for destination in contract['configuration_paths'][name]:
+            bound = str(value).lower() if type(value) is bool else str(value)
+            pointer_set(resource, _setup_pointer(destination),
+                        bound if destination[:2] == ['connection', 'env'] else value)
+    return resource
+
+
 def configure_resource(store, recipe_id, profile_name, instance_id, path, *, expected_revision):
     """Apply explicit answers to one recipe resource in an unchanged profile revision."""
-    from .policy import pointer_set
     contract = setup_schema(recipe_id)
     supplied = read_config(path)
     _require(_validate_setup_values(contract, supplied)['valid'], 'Setup answers are invalid.')
     _require(type(expected_revision) is int, 'An inspected profile revision is required.')
-    template = profile_template(store, recipe_id, profile_name, instance_id)['resources'][0]
     with store.transaction():
         profile = store.get_profile(profile_name)
         if profile['revision'] != expected_revision:
             raise StoreError('REVISION_CONFLICT', 'Inspect the changed profile before applying setup answers.')
         resources = copy.deepcopy(profile['resources'])
         existing = next((resource for resource in resources if resource['instance_id'] == instance_id), None)
-        if existing is not None:
-            _require(get_adapter(existing['adapter']).adapter_id == contract['adapter'],
-                     'An existing resource cannot be replaced with a different adapter.')
-            _require(existing['connection']['transport'] == 'stdio'
-                     and existing['connection']['command'] == template['connection']['command']
-                     and existing['connection'].get('args', []) == template['connection']['args']
-                     and [(c['capability_id'], c['tool_name']) for c in existing['capabilities']]
-                     == [(c['capability_id'], c['tool_name']) for c in template['capabilities']],
-                     'Use configuration import for connections outside this preparation recipe.')
-        values = _current_setup_values(existing, contract) if existing is not None else {}
-        values.update(supplied)
-        _require(_validate_setup_values(contract, values)['complete'], 'Required setup answers are missing or invalid.')
-        resource = existing if existing is not None else template
-        for name, value in supplied.items():
-            for destination in contract['configuration_paths'][name]:
-                bound = str(value).lower() if type(value) is bool else str(value)
-                pointer_set(resource, _setup_pointer(destination),
-                            bound if destination[:2] == ['connection', 'env'] else value)
+        resource = build_setup_resource(store, recipe_id, profile_name, instance_id, supplied, existing)
         if existing is None:
             resources.append(resource)
+        else:
+            resources[resources.index(existing)] = resource
         if resources == profile['resources']:
             return profile
         config = {key: copy.deepcopy(profile[key]) for key in PROFILE_FIELDS}

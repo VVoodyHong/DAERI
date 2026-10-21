@@ -24,6 +24,44 @@ def test_check_reports_real_storage_features_without_creating_user_data(tmp_path
     assert not data_dir.exists()
 
 
+def test_setup_catalog_does_not_create_user_data(tmp_path):
+    data_dir = tmp_path / 'user-data'
+    result = run_cli('--data-dir', str(data_dir), 'setup', 'catalog')
+    assert result.returncode == 0, result.stdout
+    groups = json.loads(result.stdout)['groups']
+    assert len(groups) == 5 and groups[-1]['type'] == 'Document'
+    assert not data_dir.exists()
+
+
+def test_setup_yaml_draft_validate_and_apply_across_processes(tmp_path):
+    from pathlib import Path
+    from daeri.setup_yaml import read_yaml, write_yaml
+    prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
+    draft = run_cli(*prefix, 'draft', 'service', '--resource', 'primary=db-postgres', '--embedding', 'keyword_only')
+    assert draft.returncode == 0, draft.stdout
+    path = Path(json.loads(draft.stdout)['path'])
+    invalid = run_cli(*prefix, 'validate', 'service')
+    assert invalid.returncode == 1 and json.loads(invalid.stdout)['issues']
+    value = read_yaml(path)
+    value['resources']['primary']['inputs'].update(host='db.example.test', database='service',
+        username='reader', tables=['*'], columns=['*'])
+    path.write_text(write_yaml(value), encoding='utf-8')
+    validated = run_cli(*prefix, 'validate', 'service')
+    assert validated.returncode == 0, validated.stdout
+    token = json.loads(validated.stdout)['confirmation_token']
+    applied = run_cli(*prefix, 'apply', 'service', '--confirm', token)
+    assert applied.returncode == 0, applied.stdout
+    assert json.loads(applied.stdout)['revision'] == 1
+    assert json.loads(run_cli('--data-dir', str(tmp_path / 'private'), 'profile', 'show', 'service').stdout)['resources']
+
+
+def test_setup_duplicate_instance_arguments_are_rejected(tmp_path):
+    result = run_cli('--data-dir', str(tmp_path / 'private'), 'setup', 'draft', 'service',
+                     '--resource', 'primary=db-postgres', '--resource', 'primary=cache-redis')
+    assert result.returncode != 0
+    assert json.loads(result.stdout)['error']['code'] == 'INVALID_INPUT'
+
+
 def test_profile_round_trip_across_processes(tmp_path):
     data_dir = str(tmp_path / "user-data")
     created = run_cli("--data-dir", data_dir, "profile", "create", "service-prod", "--context", "UTC 기준 운영")

@@ -126,6 +126,59 @@ def test_repeated_setup_updates_only_supplied_fields_and_preserves_other_resourc
         store.close()
 
 
+def test_resource_builder_creates_complete_resource_without_publishing_a_profile(tmp_path):
+    store = Store(tmp_path / 'private')
+    try:
+        values = source_values()
+        supplied = copy.deepcopy(values)
+        resource = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values)
+        assert resource['target'] == {'server': 'https://git.example.invalid', 'project': 'team/service'}
+        assert resource['capabilities'][0]['constraints'] == {
+            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
+            'path_prefixes': {'file_path': ['src']}}
+        assert resource['policy'] == {}
+        assert values == supplied
+        resource['capabilities'][0]['constraints']['allowed_values']['ref'].append('release')
+        assert values == supplied
+        assert store.list_profiles() == []
+        assert not (store.data_dir / 'tools').exists()
+    finally:
+        store.close()
+
+
+def test_resource_builder_merges_partial_values_without_mutating_existing_resource(tmp_path):
+    store = Store(tmp_path / 'private')
+    try:
+        existing = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', source_values())
+        existing['policy'] = {'masking': []}
+        before = copy.deepcopy(existing)
+        values = {'refs': ['release']}
+        result = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values, existing)
+        assert result['target'] == before['target']
+        assert result['capabilities'][0]['constraints'] == {
+            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['release']},
+            'path_prefixes': {'file_path': ['src']}}
+        assert result['policy'] == {'masking': []}
+        result['policy']['masking'].append({'columns': ['email']})
+        result['capabilities'][0]['constraints']['allowed_values']['ref'].append('main')
+        assert existing == before
+        assert values == {'refs': ['release']}
+        assert store.list_profiles() == []
+    finally:
+        store.close()
+
+
+def test_resource_builder_rejects_missing_new_resource_values_before_any_publication(tmp_path):
+    store = Store(tmp_path / 'private')
+    try:
+        with pytest.raises(StoreError, match='INVALID_INPUT'):
+            setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one',
+                                       {'server': 'https://git.example.invalid'})
+        assert store.list_profiles() == []
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize('values,revision,code', [
     ({'server': 'https://git.example.invalid'}, 1, 'INVALID_INPUT'),
     ({'unexpected': 'value'}, 1, 'INVALID_INPUT'),

@@ -12,7 +12,7 @@ from .storage import StoreError, process_alive
 def resource_references(profile):
     from .adapters import get_adapter
     from .resources import _hash
-    references = set()
+    references = {('directory', 'setup/' + profile['name'])}
     embedding_ref = profile.get('embedding', {}).get('credential_ref', '')
     if embedding_ref.startswith('credential:'):
         references.add(('credential', embedding_ref))
@@ -125,7 +125,7 @@ def _check_busy(store, identity):
 
 
 def _managed_path(store, reference, directory=False):
-    pattern = (r'resources/processes/[0-9a-f]{64}' if directory else
+    pattern = (r'resources/processes/[0-9a-f]{64}|setup/[A-Za-z0-9][A-Za-z0-9_-]{0,63}' if directory else
                r'(?:profiles|records)/[0-9a-f]{32}\.json|artifacts/[0-9a-f]{32}\.[a-z0-9]{1,8}|resources/[0-9a-f]{64}\.json')
     if not isinstance(reference, str) or not re.fullmatch(pattern, reference):
         raise StoreError('STORE_UNAVAILABLE', 'The deletion manifest contains an unmanaged path.')

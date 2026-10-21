@@ -74,6 +74,17 @@ def _parser():
     parser.add_argument('--data-dir', type=Path)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('check', help='Check the installed runtime without connecting resources')
+    setup = commands.add_parser('setup', help='Generate, validate and apply a selected-resource YAML draft').add_subparsers(dest='setup_command', required=True)
+    setup.add_parser('catalog')
+    draft = setup.add_parser('draft')
+    draft.add_argument('profile')
+    draft.add_argument('--resource', action='append', default=[], metavar='INSTANCE=RECIPE')
+    draft.add_argument('--embedding', choices=('local', 'openai_compatible', 'keyword_only'))
+    draft.add_argument('--refresh', action='store_true')
+    setup.add_parser('validate').add_argument('profile')
+    apply = setup.add_parser('apply')
+    apply.add_argument('profile')
+    apply.add_argument('--confirm', required=True)
     profile = commands.add_parser('profile').add_subparsers(dest='profile_command', required=True)
     create = profile.add_parser('create')
     create.add_argument('name')
@@ -178,6 +189,20 @@ def _with_store(args):
     from .setup import export_profile, import_profile, login_resource, prepare_resource
     store = Store(data_directory(args.data_dir))
     try:
+        if args.command == 'setup':
+            from .onboarding import create_draft, validate_draft, apply_draft
+            if args.setup_command == 'draft':
+                from .storage import StoreError
+                selected = {}
+                for value in args.resource:
+                    if value.count('=') != 1 or value.split('=')[0] in selected:
+                        raise StoreError('INVALID_INPUT', 'Select unique resource names and registered products.')
+                    instance, recipe = value.split('=')
+                    selected[instance] = recipe
+                return create_draft(store, args.profile, selected, embedding=args.embedding, refresh=args.refresh)
+            if args.setup_command == 'validate':
+                return validate_draft(store, args.profile)
+            return apply_draft(store, args.profile, args.confirm)
         if args.command == 'profile':
             if args.profile_command == 'delete':
                 from .setup import delete_profile, preview_profile_deletion
@@ -240,6 +265,9 @@ def main():
         if args.command == 'check':
             result = check_environment()
             code = 0 if result['ready'] else 1
+        elif args.command == 'setup' and args.setup_command == 'catalog':
+            from .onboarding import selection_catalog
+            result, code = selection_catalog(), 0
         elif args.command == 'auth':
             result, code = _auth(args), 0
         elif args.command == 'resource' and args.resource_command in {'catalog', 'template', 'setup-schema', 'validate-setup'}:
@@ -254,6 +282,8 @@ def main():
             code = 0 if args.resource_command != 'validate-setup' or result['valid'] else 1
         else:
             result, code = _with_store(args), 0
+            if args.command == 'setup' and args.setup_command == 'validate' and not result['valid']:
+                code = 1
     except Exception as exc:
         result, code = _error(getattr(exc, 'code', 'STORE_UNAVAILABLE')), 1
     print(json.dumps(result, ensure_ascii=True, allow_nan=False))
