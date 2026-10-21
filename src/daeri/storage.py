@@ -14,6 +14,8 @@ from pathlib import Path
 from time import monotonic, sleep
 from uuid import uuid4
 
+_UNSET = object()
+
 
 class StoreError(Exception):
     def __init__(self, code: str, message: str):
@@ -285,7 +287,8 @@ class Store:
             raise StoreError(error_code, "The registered file is missing or has changed.") from None
 
     def put_profile(self, name, *, core_context=None, resources=None,
-                    retention_days=None, long_term_memory_days=None, memory_policy=None, create_only=False) -> dict:
+                    retention_days=None, long_term_memory_days=None, memory_policy=None,
+                    embedding=_UNSET, create_only=False) -> dict:
         core_context = [] if core_context is None else core_context
         resources = [] if resources is None else resources
         if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name)
@@ -314,12 +317,16 @@ class Store:
             if current and create_only:
                 raise StoreError("PROFILE_ALREADY_EXISTS", "The profile already exists; inspect it before updating its configuration.")
             if current:
-                self.get_profile(current["profile_id"])
+                previous = self.get_profile(current["profile_id"])
+            from .embedding import validate_embedding_config
+            selected_embedding = validate_embedding_config(
+                previous.get("embedding") if current and embedding is _UNSET
+                else None if embedding is _UNSET else embedding)
             profile = {"profile_id": current["profile_id"] if current else f"profile_{uuid4().hex}",
                        "name": name, "revision": current["revision"] + 1 if current else 1,
                        "core_context": core_context, "resources": resources,
                        "retention_days": retention_days, "long_term_memory_days": long_term_memory_days,
-                       "memory_policy": memory_policy}
+                       "memory_policy": memory_policy, "embedding": selected_embedding}
             path, size, digest = self._prepare("profiles", profile)
             self._db.execute("""INSERT INTO profiles VALUES (?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET
                 revision=excluded.revision, path=excluded.path, size=excluded.size, sha256=excluded.sha256""",
@@ -342,6 +349,7 @@ class Store:
             profile = self._read(row, "STORE_UNAVAILABLE")
             if any(profile.get(key) != row[key] for key in ("profile_id", "name", "revision")):
                 raise StoreError("STORE_UNAVAILABLE", "The active profile revision does not match.")
+            profile.setdefault("embedding", {"provider": "local"})
             return profile
 
     def list_profiles(self) -> list:

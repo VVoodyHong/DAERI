@@ -14,7 +14,7 @@
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
 | `adapters/`의 `setup_fields` | 어댑터별 비밀 없는 설정 입력 스키마·필수값·설정 목적지 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
-| [기억 명세](../spec/tasks/memory.md) | 로컬 모델 선정·임베딩·검색·모델 호환과 보존 기준 |
+| [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
 
 버전 값을 문서·호스트 설정·Skill에 복제하지 않는다.
 카탈로그의 패키지와 recipe의 직접 의존성이 다르면 준비를 거부한다.
@@ -26,7 +26,7 @@
 | Pydantic·JSON Schema 검사 | 공개 DTO와 등록 기능의 타입·필드·계약 확인 |
 | SQL 구문 분석기 | DB 읽기 입력의 실제 대상·구문·제약 검사 |
 | SQLite·FTS5·벡터 확장 | 업무·기억 정본과 로컬 키워드·벡터 검색 |
-| 로컬 임베딩·ONNX CPU 실행 | 외부 임베딩 서비스 없이 허용 지식·질의를 벡터화 |
+| 선택 임베딩 어댑터 | 준비한 로컬 모델 또는 허용된 회사 API로 지식·질의를 벡터화; 키워드 전용도 선택 가능 |
 | OS 인증 저장소 연결 | 모델·profile JSON 대신 사용자 비밀 참조 해소 |
 | uv·Hatchling·pytest | 잠긴 환경 준비·패키지 빌드·독립적인 동작 검증 |
 
@@ -36,11 +36,13 @@
 `uv sync`는 지원 Python과 잠긴 패키지를 다운로드할 수 있다.
 
 ```sh
-uv sync --frozen
+uv sync --frozen --extra local-embedding
 uv run --no-sync pytest
 ```
 
 일반 테스트는 사내 인증·운영 리소스·호스트 전역 설정 없이 로컬 계약을 확인한다.
+위 개발 명령은 로컬 추론 회귀를 위해 선택 의존성도 포함한다.
+API·키워드 전용 사용자 환경은 기본 설치로 동작하며 로컬 추론 패키지를 요구하지 않는다.
 준비한 실제 모델을 쓰는 검사는 `DAERI_TEST_MODEL_CACHE`가 지정된 경우만 수행한다.
 이 검사는 검색 중 DNS를 차단해 모델 로딩·임베딩·한국어 질의와 영어 지식의 검색이 로컬에서 이루어지는지 확인한다.
 테스트 통과를 실제 회사 연결이나 호스트 설치의 통과로 일반화하지 않는다.
@@ -79,7 +81,11 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | `resource login PROFILE INSTANCE` | 지원되는 제공자 로그인 시작·공개 확인 URL 표시·결과 반환 |
 | `resource diagnose PROFILE INSTANCE` | 인증·대상과 MCP 도구 목록을 확인해 기능 계약 등록 |
 | `auth set/status/delete REFERENCE` | 실제 터미널의 숨김 입력·지정 참조 상태·삭제만 처리 |
-| `memory prepare/status/reindex` | 명시적 모델 준비·준비 상태·현재 정본 기반 재색인 |
+| `memory configure PROFILE --config CONFIG_JSON --expected-revision N` | 임베딩 객체만 검증·개정 대조 후 선택 적용; 다른 profile 설정 보존 |
+| `memory status [--profile NAME]` | 네트워크·비밀 해소 없는 선택 제공자·로컬 준비 확인; 원격 호환은 미검증 |
+| `memory diagnose --profile NAME` | 로컬 모델 또는 허용된 회사 API를 고정 시험 문장으로 검사 |
+| `memory prepare [--profile NAME]` | 로컬 제공자만 명시적 모델 준비 |
+| `memory reindex [--profile NAME]` | 선택한 제공자로 현재 허용 정본 기반 재색인 |
 | `cleanup` | 만료된 업무 본문·기억·색인 정리 |
 
 일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
@@ -122,6 +128,7 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `policy.py`·`security.py` | 필드 제공·마스킹·출처 경로와 알려진 인증 문자열 보조 검사 |
 | `results.py` | 실제 근거·완료 조건·표 계산·허용 파일 생성·보고 검증 |
 | `memory.py`·`knowledge.py` | profile별 지식의 출처·정책·기한·개정·검색·갱신 검사 |
+| `embedding.py` | 임베딩 제공자 설정·회사 API 요청·인증 주입·벡터 응답 검사 |
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
 | `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
 | `cli.py`·`setup.py` | 명시적인 사용자 구성·환경·recipe 준비·진단 진입 |

@@ -60,6 +60,10 @@ def test_stdio_handshake_lists_the_implemented_tools_and_strict_schemas(tmp_path
             assert not validator.is_valid({"request_id": "schema-check", "request_text": "요청", "extra": True})
             assert not validator.is_valid({"request_text": "요청"})
             assert all(tool.description for tool in tools.values())
+            for name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update"}:
+                assert tools[name].annotations.openWorldHint is True
+            for name in {"daeri_memory_search", "daeri_memory_update"}:
+                assert "embedding API" in tools[name].description
             for name in {"daeri_task_update", "daeri_task_cancel", "daeri_task_resume", "daeri_plan_submit", "daeri_approval_request"}:
                 assert tools[name].annotations.readOnlyHint is False
                 assert tools[name].annotations.destructiveHint is not False

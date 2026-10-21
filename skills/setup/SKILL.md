@@ -47,9 +47,9 @@ Plan에서는 질문·읽기와 상태를 바꾸지 않는 설정 스키마 조�
    이 검사와 일반 MCP 시작은 설치·다운로드·로그인·원격 자료 조회를 수행하지 않는다.
    기존 실행 환경의 기본 검사가 성공하면 전용 `.venv/bin/python.exe`를 `-I`로 실행해 확인한 `importlib.metadata.version('daeri-agent')`와 `pyproject.toml`의 프로젝트 버전을 대조한다.
    기본 검사의 성공만으로 설치한 실행기가 새 버전이라고 판단하지 않는다.
-2. 누락·비호환 항목이나 업데이트할 실행기가 있으면 전용 uv·관리 Python·잠긴 패키지의 설치 위치와 다운로드 범위를 설명한다.
-   uv는 플러그인 루트의 `.runtime/uv.exe`, Python·준비 캐시는 사용자 데이터 경로의 `runtime/python`·`runtime/cache`를 사용한다.
-   기존 uv·Python·가상환경·설치 패키지, 사용자·시스템 PATH와 shell 시작 파일을 변경하지 않는다.
+2. 누락·비호환 항목이나 업데이트할 실행기가 있으면 실행 준비의 목적·다운로드 여부·기존 개발 환경 유지와 필요한 사용자 조치만 짧게 설명한다.
+   프로그램 버전·설치 경로·패키지 목록은 요청하거나 문제를 진단할 때 [환경 정본](../../docs/spec/installation/environment.md)에서 확인해 제공한다.
+   전용 uv·관리 Python·잠긴 패키지를 사용하고 기존 개발 환경·사용자 및 시스템 PATH·shell 시작 파일은 변경하지 않는다.
    사용자가 요청하거나 확인한 준비 범위에서 macOS는 `sh scripts/setup.sh --prepare`, Windows는 같은 PowerShell 진입에 `-Prepare`를 지정한다.
    명시적 준비만 프로그램을 설치하며 실패를 다른 출처·임의 최신 버전·관리자 권한으로 우회하지 않는다.
    PATH의 다른 uv를 대신 사용하지 않고 환경 정리는 [공통 실행·격리 기준](../../docs/spec/installation/environment.md#공통-실행-파일과-환경-격리)에 맡긴다.
@@ -104,9 +104,18 @@ Plan에서는 질문·읽기와 상태를 바꾸지 않는 설정 스키마 조�
    최초 연결에 필요한 `--start-url`·`--sso-region`·`--role`은 해당 제공자의 공개 설정이고 실제 대상과 일치해야 한다.
    표시된 제공자 확인 URL·사용자 코드로 인증하게 하며 이를 DAERI 업무 계획 승인으로 처리하지 않는다.
    인증 준비 뒤 `resource diagnose PROFILE INSTANCE`로 선택 기능의 메타데이터 연결을 확인한다.
-8. 기억 모델 준비와 로컬 추론·검색 준비 상태를 별도로 확인한다.
-   `memory status`·`memory prepare`·`memory reindex [--profile NAME]`로 준비·복구한다.
-   준비가 필요하면 명시적 관리 경로로 진행하며 외부 임베딩 서비스나 생성 LLM 설치로 대체하지 않는다.
+8. [임베딩 선택 계약](../../docs/spec/configuration/profiles.md#임베딩-제공자-선택)을 읽고 `memory status --profile NAME`으로 현재 선택·준비 상태를 확인한다.
+   기존 profile에서 사용자가 확인한 선택은 유지하고 새 profile이거나 변경을 요청했으면 로컬 모델·회사 API·키워드 전용 중에서 고르게 한다.
+   새 profile의 저장 기본값인 로컬을 사용자의 선택으로 해석하지 않는다.
+   회사 API에는 계약의 주소·모델 또는 배포 이름·인증 참조와 기억·검색 질의 전송 허용만 확인한다.
+   비밀값은 7단계의 보안 입력으로 등록하고 API 선택을 호스트 모델 제공 허용과 같은 뜻으로 취급하지 않는다.
+   변경은 실행 가능한 모드에서 임베딩 객체 파일을 만들고 요약에 사용한 개정으로 `memory configure NAME --config CONFIG_JSON --expected-revision N`을 호출한다.
+   충돌하면 변경 차이를 다시 확인하고 다른 연결·정책은 유지한다.
+   회사 API는 확인한 준비 범위에서 `memory diagnose --profile NAME`으로 고정 시험 문장만 전송하며 로컬 추론 패키지·모델을 준비하지 않는다.
+   키워드 전용은 임베딩 설치·다운로드·원격 진단 없이 진행한다.
+   로컬 선택의 준비가 필요할 때만 OS별 [선택 추론 패키지 준비](../../docs/spec/installation/environment.md#임베딩-선택과-준비) 뒤 `memory prepare --profile NAME`을 사용한다.
+   재색인이 필요하면 허용한 현재 정본만 `memory reindex --profile NAME`으로 처리하며 실패·미준비는 키워드 검색의 제한으로 보고한다.
+   다른 제공자나 생성 LLM 설치로 자동 대체하지 않는다.
 9. 준비한 프로그램·현재 MCP 연결·profile 저장·리소스별 연결과 권한·기억 준비·남은 사용자 조치를 구분해 보고한다.
    실제 진단하지 않은 항목을 성공으로 채우지 않는다.
    설정을 저장한 뒤 `profile show`가 성공한 이름·`profile_id`를 확인하고 [profile의 선택 범위](../profile/SKILL.md)에 따라 이 대화의 이후 새 업무 대상으로 안내한다.

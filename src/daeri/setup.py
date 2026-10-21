@@ -18,7 +18,7 @@ from .storage import StoreError
 
 
 PROFILE_FIELDS = {'name', 'core_context', 'resources', 'retention_days',
-                  'long_term_memory_days', 'memory_policy'}
+                  'long_term_memory_days', 'memory_policy', 'embedding'}
 REFERENCE = re.compile(r'(credential:[A-Za-z0-9._-]{1,128}|env:[A-Za-z_][A-Za-z0-9_]*)')
 SECRET_KEYS = {'password', 'passwd', 'token', 'api_key', 'secret', 'access_token',
                'refresh_token', 'private_key', 'client_secret', 'authorization'}
@@ -87,6 +87,25 @@ def export_profile(store, name):
     value['memory_policy'].pop('target_bindings', None)
     _no_secrets(value)
     return value
+
+
+def configure_embedding(store, profile_name, path, *, expected_revision):
+    """Update only embedding settings in an inspected profile revision."""
+    from .embedding import validate_embedding_config
+    supplied = read_config(path)
+    _require(isinstance(supplied, dict), 'An embedding configuration object is required.')
+    _no_secrets(supplied)
+    selected = validate_embedding_config(supplied)
+    _require(type(expected_revision) is int, 'An inspected profile revision is required.')
+    with store.transaction():
+        profile = store.get_profile(profile_name)
+        if profile['revision'] != expected_revision:
+            raise StoreError('REVISION_CONFLICT', 'Inspect the changed profile before changing embedding settings.')
+        if profile['embedding'] == selected:
+            return profile
+        config = {key: copy.deepcopy(profile[key]) for key in PROFILE_FIELDS}
+        config['embedding'] = selected
+        return store.put_profile(**config)
 
 
 def preview_profile_deletion(store, name_or_id):

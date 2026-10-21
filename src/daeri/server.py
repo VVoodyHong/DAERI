@@ -24,7 +24,7 @@ DESCRIPTIONS = {
     "daeri_task_get": "Read stored local task state or recent tasks for a profile. Does not refresh remote data.",
     "daeri_task_resume": "Check task ownership and prepare local resumption. A paused task requires fresh plan approval.",
     "daeri_task_cancel": "Cancel a local task and block further work. This does not undo prior effects.",
-    "daeri_memory_search": "Search permitted profile knowledge before planning using local keyword and prepared vector indexes. Reports keyword-only or incomplete retrieval explicitly.",
+    "daeri_memory_search": "Search permitted profile knowledge before planning. An explicitly selected company embedding API may receive the permitted query; storage and indexes remain local. Reports keyword-only or incomplete retrieval explicitly.",
     "daeri_resource_list": "Read locally registered resource and output-format summaries for the fixed profile. Never connects or discovers remote tools implicitly.",
     "daeri_plan_submit": "Validate and store an immutable plan against registered read capabilities, recorded memory lookup, field policies, dependencies and cumulative budget. Requires user approval before execution.",
     "daeri_plan_get": "Read a stored plan and its current approval state. Historical approval does not grant new authority.",
@@ -33,7 +33,7 @@ DESCRIPTIONS = {
     "daeri_capability_execute": "Execute a registered read capability within the current approved plan, field policy and remaining cumulative budget.",
     "daeri_result_submit": "Validate evidence, completion checks, derived tables and approved file formats before storing a report.",
     "daeri_result_get": "Read a registered record or managed artifact after current permission and expiry checks. Never fetches remote data.",
-    "daeri_memory_update": "Store or invalidate selected, evidenced profile knowledge within the approved memory policy. Never collects whole conversations.",
+    "daeri_memory_update": "Store or invalidate selected, evidenced profile knowledge within the approved memory policy. Indexing may send permitted knowledge to an explicitly selected company embedding API. Never collects whole conversations.",
 }
 
 OUTPUT_SCHEMA = {
@@ -77,7 +77,7 @@ def create_server(engine):
                 outputSchema=OUTPUT_SCHEMA,
                 annotations=types.ToolAnnotations(
                     readOnlyHint=name in {"daeri_task_get", "daeri_plan_get", "daeri_resource_list", "daeri_capability_get", "daeri_result_get"},
-                    openWorldHint=name == "daeri_capability_execute",
+                    openWorldHint=name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update"},
                 ),
             )
             for name, model in INPUT_MODELS.items()

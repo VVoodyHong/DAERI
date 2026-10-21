@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tomllib
 
 import pytest
 
@@ -35,7 +36,7 @@ def executable(path, content):
     path.chmod(0o755)
 
 
-def fake_uv(path, *, fail=0):
+def fake_uv(path, *, fail=0, local_embedding=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     executable(path,
         "import json, os, pathlib, sys\n"
@@ -50,7 +51,7 @@ def fake_uv(path, *, fail=0):
         "assert not any(key.startswith(('PYTHON', '_PYTHON', 'CONDA_')) or key in ['VIRTUAL_ENV', 'VIRTUAL_ENV_PROMPT', '__PYVENV_LAUNCHER__', '_OLD_VIRTUAL_PATH', '_OLD_VIRTUAL_PYTHONHOME', 'PYLAUNCHER_DEBUG', 'UV_NO_PROJECT', 'UV_SYSTEM_PYTHON', 'UV_ISOLATED'] for key in os.environ)\n"
         "if sys.argv[1] == 'venv':\n assert sys.argv[2:-1] == ['--managed-python', '--no-config', '--relocatable', '--project', os.getcwd()]\n pathlib.Path(sys.argv[-1]).mkdir(exist_ok=True)\n (pathlib.Path(sys.argv[-1]) / 'relocatable-test-marker').touch()\n sys.exit(0)\n"
         "assert (pathlib.Path(os.environ['UV_PROJECT_ENVIRONMENT']) / 'relocatable-test-marker').exists()\n"
-        "assert sys.argv[1:] == ['sync', '--managed-python', '--no-config', '--frozen', '--no-dev', '--no-editable', '--project', os.getcwd()]\n"
+        f"assert sys.argv[1:] == ['sync', '--managed-python', '--no-config', '--frozen', '--no-dev', '--no-editable', '--project', os.getcwd()] + {['--extra', 'local-embedding'] if local_embedding else []!r}\n"
         "target = pathlib.Path(os.environ['UV_PROJECT_ENVIRONMENT']) / 'bin/python'\n"
         "target.parent.mkdir(parents=True, exist_ok=True)\n"
         f"target.write_text('#!{sys.executable}\\nimport json, sys\\nif sys.argv[1:3]==[\"-I\",\"-c\"]: sys.exit(0)\\nassert sys.argv[1:]==[\"-I\",\"-m\",\"daeri.cli\",\"check\"]\\nprint(json.dumps(dict(ready=True)))\\n')\n"
@@ -61,6 +62,24 @@ def prepare(installation, *args):
     root, _, _, env = installation
     return subprocess.run(["/bin/sh", str(root / "scripts/setup.sh"), *args],
                           cwd=root.parent, env=env, capture_output=True, text=True, timeout=20)
+
+
+def test_base_dependencies_exclude_local_model_runtime():
+    project = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']
+    assert not any(item.startswith(('fastembed', 'onnxruntime')) for item in project['dependencies'])
+    assert 'fastembed>=0.9,<1' in project['optional-dependencies']['local-embedding']
+    assert 'httpx>=0.28,<1' in project['dependencies']
+
+
+def test_local_embedding_preparation_is_explicit_and_stays_in_private_environment(installation):
+    root, _, _, _ = installation
+    fake_uv(root / '.runtime/uv.exe', local_embedding=True)
+    result = prepare(installation, '--prepare-local-embedding')
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['ready'] is True
+    assert (root / '.venv/bin/python.exe').is_file()
+    assert not list(root.glob('.venv.prepare.*'))
+    assert not (root / '.daeri-setup.lock').exists()
 
 
 @pytest.mark.parametrize('custom_data', [False, True])
@@ -234,7 +253,8 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
 
 @pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap behavior')
 @pytest.mark.parametrize('configured', ['absolute', '~/custom DAERI data', '~\\custom DAERI data'])
-def test_windows_failed_prepare_keeps_previous_environment(tmp_path, configured):
+@pytest.mark.parametrize('mode', ['-Prepare', '-PrepareLocalEmbedding'])
+def test_windows_failed_prepare_keeps_previous_environment(tmp_path, configured, mode):
     root = tmp_path / 'plugin with spaces'
     shutil.copytree(ROOT / 'scripts', root / 'scripts')
     (root / '.venv').mkdir()
@@ -248,7 +268,7 @@ def test_windows_failed_prepare_keeps_previous_environment(tmp_path, configured)
     wrapper = (
         "$Before = (Get-ChildItem Env: | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Value }) -join \"`n\"; "
         "$UserBefore = [Environment]::GetEnvironmentVariable('Path', 'User'); "
-        f"& {setup_path} -Prepare; $Code = $LASTEXITCODE; "
+        f"& {setup_path} {mode}; $Code = $LASTEXITCODE; "
         "$After = (Get-ChildItem Env: | Sort-Object Name | ForEach-Object { $_.Name + '=' + $_.Value }) -join \"`n\"; "
         "@{code=$Code; environment_unchanged=($Before -ceq $After); user_path_unchanged=($UserBefore -ceq [Environment]::GetEnvironmentVariable('Path', 'User'))} | ConvertTo-Json -Compress"
     )
@@ -301,3 +321,23 @@ def test_runtime_check_does_not_require_global_uv(installation):
     result = prepare(installation, '--check')
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['ready'] is True
+
+
+def test_base_server_and_environment_check_do_not_load_local_embedding_runtime(tmp_path):
+    script = '''
+import importlib.abc
+import sys
+
+class NoLocalEmbeddingRuntime(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'fastembed', 'onnxruntime'}:
+            raise AssertionError('Base startup attempted to load a local embedding runtime')
+
+sys.meta_path.insert(0, NoLocalEmbeddingRuntime())
+import daeri.server
+from daeri.cli import check_environment
+assert check_environment()['ready'] is True
+'''
+    result = subprocess.run([sys.executable, '-I', '-c', script], cwd=tmp_path,
+                            text=True, capture_output=True, timeout=20)
+    assert result.returncode == 0, result.stderr

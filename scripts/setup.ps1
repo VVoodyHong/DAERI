@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Prepare,
+    [switch]$PrepareLocalEmbedding,
     [switch]$Check,
     [switch]$Help
 )
@@ -8,13 +9,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $DaeriRoot = Split-Path -Parent $PSScriptRoot
 $DaeriExitCode = 1
-if (($Prepare -and $Check) -or ($Help -and ($Prepare -or $Check))) {
-    [Console]::Error.WriteLine('Usage: setup.ps1 [-Check|-Prepare]')
+if ((@($Prepare, $PrepareLocalEmbedding, $Check, $Help) | Where-Object { $_ }).Count -gt 1) {
+    [Console]::Error.WriteLine('Usage: setup.ps1 [-Check|-Prepare|-PrepareLocalEmbedding]')
     exit 2
 }
 if ($Help) {
-    Write-Output 'Usage: setup.ps1 [-Check|-Prepare]'
-    Write-Output 'Default: local check only. -Prepare downloads private uv, managed Python, and locked dependencies without changing PATH or shell configuration.'
+    Write-Output 'Usage: setup.ps1 [-Check|-Prepare|-PrepareLocalEmbedding]'
+    Write-Output 'Default: local check only. -Prepare downloads private uv, managed Python, and locked base dependencies. -PrepareLocalEmbedding also includes the local embedding runtime. Neither changes PATH or shell configuration.'
     exit 0
 }
 
@@ -78,7 +79,7 @@ try {
     Get-ChildItem Env: | Where-Object { $_.Name -match $DaeriEnvironmentFilter } | ForEach-Object {
         Remove-Item -LiteralPath ('Env:' + $_.Name)
     }
-    if ($Prepare) {
+    if ($Prepare -or $PrepareLocalEmbedding) {
         if ($env:DAERI_DATA_DIR) {
             $DaeriData = $env:DAERI_DATA_DIR
             if ($env:USERPROFILE) { $DaeriHome = $env:USERPROFILE } else { $DaeriHome = $HOME }
@@ -108,7 +109,9 @@ try {
         & $DaeriUv venv --managed-python --no-config --relocatable --project $DaeriRoot $DaeriCandidate
         if ($LASTEXITCODE -ne 0) { $DaeriExitCode = $LASTEXITCODE; throw 'DAERI preparation is incomplete: candidate Python preparation failed.' }
         $env:UV_PROJECT_ENVIRONMENT = $DaeriCandidate
-        & $DaeriUv sync --managed-python --no-config --frozen --no-dev --no-editable --project $DaeriRoot
+        $DaeriSyncArguments = @('sync', '--managed-python', '--no-config', '--frozen', '--no-dev', '--no-editable', '--project', $DaeriRoot)
+        if ($PrepareLocalEmbedding) { $DaeriSyncArguments += @('--extra', 'local-embedding') }
+        & $DaeriUv @DaeriSyncArguments
         if ($LASTEXITCODE -ne 0) { $DaeriExitCode = $LASTEXITCODE; throw 'DAERI preparation is incomplete: locked environment synchronization failed.' }
         $PortableDirectory = Join-Path $DaeriCandidate 'bin'
         New-Item -ItemType Directory -Path $PortableDirectory -Force | Out-Null

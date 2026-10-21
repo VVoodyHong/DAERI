@@ -13,6 +13,9 @@ def resource_references(profile):
     from .adapters import get_adapter
     from .resources import _hash
     references = set()
+    embedding_ref = profile.get('embedding', {}).get('credential_ref', '')
+    if embedding_ref.startswith('credential:'):
+        references.add(('credential', embedding_ref))
     for resource in profile.get('resources', []):
         references.add(('file', 'resources/' + _hash([profile['profile_id'], resource['instance_id']]) + '.json'))
         connection = resource['connection']

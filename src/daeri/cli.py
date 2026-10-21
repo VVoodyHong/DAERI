@@ -120,7 +120,12 @@ def _parser():
     login.add_argument('--role')
     login.add_argument('--no-browser', action='store_true')
     memory = commands.add_parser('memory').add_subparsers(dest='memory_command', required=True)
-    memory.add_parser('prepare')
+    memory.add_parser('prepare').add_argument('--profile')
+    configure_memory = memory.add_parser('configure', help='Select embedding settings in an inspected profile')
+    configure_memory.add_argument('profile')
+    configure_memory.add_argument('--config', dest='config_file', type=Path, required=True)
+    configure_memory.add_argument('--expected-revision', type=int, required=True)
+    memory.add_parser('diagnose').add_argument('--profile', required=True)
     for action in ('status', 'reindex'):
         memory.add_parser(action).add_argument('--profile')
     auth = commands.add_parser('auth').add_subparsers(dest='auth_command', required=True)
@@ -202,20 +207,29 @@ def _with_store(args):
         from .memory import LocalEmbedder, MemoryService
         if args.command == 'cleanup':
             return {'records': store.cleanup(), 'memory': MemoryService(store, auto_load=False).cleanup()}
+        if args.memory_command == 'configure':
+            from .setup import configure_embedding
+            return configure_embedding(store, args.profile, args.config_file, expected_revision=args.expected_revision)
+        selected = store.get_profile(args.profile) if args.profile else None
         if args.memory_command == 'prepare':
+            from .storage import StoreError
+            if selected and selected['embedding']['provider'] != 'local':
+                raise StoreError('INVALID_INPUT', 'Only a local embedding profile can prepare a local model.')
             embedder = LocalEmbedder.prepare(store.data_dir / 'models')
             embedder.embed_query('DAERI local readiness')
             service = MemoryService(store, embedder=embedder)
+            profiles = [selected] if selected else [p for p in store.list_profiles() if p['embedding']['provider'] == 'local']
+            indexes = [service.reindex(p['profile_id']) for p in profiles]
             return {'model_prepared': True, 'model_id': embedder.model_id,
-                    'vector_ready': service.vector_ready, 'index': service.reindex()}
+                    'vector_ready': service.vector_ready,
+                    'index': {key: sum(item[key] for item in indexes) for key in ('ready', 'pending')}}
         service = MemoryService(store)
-        selected = store.get_profile(args.profile)['profile_id'] if args.profile else None
+        if args.memory_command == 'diagnose':
+            return service.diagnose(selected['profile_id'])
         if args.memory_command == 'reindex':
-            return {'model_prepared': service.embedder is not None,
-                    'vector_ready': service.vector_ready, 'index': service.reindex(selected)}
-        return {'model_prepared': service.embedder is not None, 'vector_ready': service.vector_ready,
-                'model_id': service.embedder.model_id if service.embedder else None,
-                'profile_id': selected}
+            index = service.reindex(selected['profile_id'] if selected else None)
+            return {**service.status(selected['profile_id'] if selected else None), 'index': index}
+        return service.status(selected['profile_id'] if selected else None)
     finally:
         store.close()
 

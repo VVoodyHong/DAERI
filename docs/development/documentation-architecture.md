@@ -26,7 +26,7 @@
 | `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md), [profile별 기억·검색·보존](../spec/tasks/memory.md) |
 | `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·기억·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
 | `docs/spec/resources/` | [MCP 재사용·탐색·등록·호출 계약](../spec/resources/contract.md), [리소스 범주와 연결 기준](../spec/resources/initial-adapters.md) |
-| `docs/spec/configuration/` | [profile·연결·인증·로컬 저장](../spec/configuration/profiles.md) |
+| `docs/spec/configuration/` | [profile·연결·인증·로컬 저장](../spec/configuration/profiles.md), 같은 정본의 [사용자용 setup YAML 설계](../spec/configuration/profiles.md#사용자용-setup-yaml) |
 | `docs/spec/installation/` | [환경·의존성·전달·업데이트](../spec/installation/environment.md) |
 | `docs/spec/hosts/` | [플러그인·Skill·로컬 실행](../spec/hosts/plugins.md), [사용자 대화 승인·응답 확인](../spec/hosts/approval.md) |
 | `docs/plans/` | [최초 구현 범위·순서·완료 기준](../plans/initial-implementation.md) |

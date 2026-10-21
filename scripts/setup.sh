@@ -11,15 +11,17 @@ DAERI_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 . "$DAERI_ROOT/scripts/dependencies.env"
 
 usage() {
-    printf 'Usage: setup.sh [--check|--prepare]\nDefault: local check only. --prepare downloads private uv, managed Python, and locked dependencies without changing PATH or shell configuration.\n'
+    printf 'Usage: setup.sh [--check|--prepare|--prepare-local-embedding]\nDefault: local check only. --prepare downloads private uv, managed Python, and locked base dependencies. --prepare-local-embedding also includes the local embedding runtime. Neither changes PATH or shell configuration.\n'
 }
 if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
 case "${1:---check}" in
     --check) ;;
     --prepare) ;;
+    --prepare-local-embedding) ;;
     --help|-h) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
 esac
+DAERI_MODE="${1:---check}"
 
 DAERI_CANDIDATE=
 DAERI_DOWNLOAD=
@@ -64,7 +66,7 @@ prepare_uv() {
     fi
 }
 
-if [ "${1:---check}" = --prepare ]; then
+if [ "$DAERI_MODE" = --prepare ] || [ "$DAERI_MODE" = --prepare-local-embedding ]; then
     DAERI_DATA="${DAERI_DATA_DIR:-$HOME/Library/Application Support/DAERI}"
     case "$DAERI_DATA" in
         '~') DAERI_DATA="$HOME" ;;
@@ -100,7 +102,9 @@ if [ "${1:---check}" = --prepare ]; then
     DAERI_CANDIDATE=$(mktemp -d "$DAERI_ROOT/.venv.prepare.XXXXXX")
     cd "$DAERI_ROOT"
     "$DAERI_UV" venv --managed-python --no-config --relocatable --project "$DAERI_ROOT" "$DAERI_CANDIDATE"
-    UV_PROJECT_ENVIRONMENT="$DAERI_CANDIDATE" "$DAERI_UV" sync --managed-python --no-config --frozen --no-dev --no-editable --project "$DAERI_ROOT"
+    set -- sync --managed-python --no-config --frozen --no-dev --no-editable --project "$DAERI_ROOT"
+    if [ "$DAERI_MODE" = --prepare-local-embedding ]; then set -- "$@" --extra local-embedding; fi
+    UV_PROJECT_ENVIRONMENT="$DAERI_CANDIDATE" "$DAERI_UV" "$@"
     ln -s python "$DAERI_CANDIDATE/bin/python.exe"
     "$DAERI_CANDIDATE/bin/python.exe" -I -c 'import pathlib,sys; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve()' "$DAERI_CANDIDATE"
     "$DAERI_CANDIDATE/bin/python.exe" -I -m daeri.cli check

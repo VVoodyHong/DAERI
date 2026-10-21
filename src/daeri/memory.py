@@ -13,11 +13,12 @@ from uuid import uuid4
 from .security import redact
 from .policy import selector_covers, within_selectors
 from .storage import StoreError
+from .embedding import OpenAICompatibleEmbedder, validate_embedding_config
 
 
 CATEGORIES = {"service_rule", "resource_structure", "procedure", "lesson"}
 MODEL_NAME = "intfloat/multilingual-e5-small"
-VECTOR_LIMITATION = "로컬 임베딩 모델 또는 벡터 색인을 사용할 수 없어 키워드 검색만 수행했습니다."
+VECTOR_LIMITATION = "선택한 임베딩 제공자 또는 벡터 색인을 사용할 수 없어 키워드 검색만 수행했습니다."
 
 
 def _require(condition, code, message):
@@ -80,7 +81,10 @@ class LocalEmbedder:
 
     @classmethod
     def _open(cls, cache_dir, *, download):
-        from fastembed import TextEmbedding
+        try:
+            from fastembed import TextEmbedding
+        except ImportError:
+            raise StoreError("MEMORY_SEARCH_INCOMPLETE", "로컬 임베딩용 선택 패키지를 명시적으로 준비한 뒤 다시 시도하세요.") from None
         from fastembed.common.model_description import ModelSource, PoolingType
 
         if not any(model["model"] == MODEL_NAME for model in TextEmbedding.list_supported_models()):
@@ -130,8 +134,9 @@ class LocalEmbedder:
 
 
 class MemoryService:
-    def __init__(self, store, embedder=None, *, auto_load=True):
+    def __init__(self, store, embedder=None, *, auto_load=True, credentials=None):
         self.store, self.embedder, self.vector_ready = store, embedder, False
+        self._auto_load, self._credentials, self._providers = auto_load, credentials, {}
         with self.store.transaction():
             statements = [
                 """CREATE TABLE IF NOT EXISTS memory_heads (
@@ -162,25 +167,88 @@ class MemoryService:
                            "blocked_at": None if sources else datetime.now(UTC).isoformat()}
                 self.store._db.execute("UPDATE memory_versions SET source_lineage=? WHERE memory_ref=?",
                                        (_json(lineage), row["memory_ref"]))
-        if self.embedder is None and auto_load and (store.data_dir / "models" / "prepared.json").is_file():
-            try:
-                self.embedder = LocalEmbedder.load(store.data_dir / "models")
-            except Exception:
-                self.embedder = None
         if self.embedder is not None:
-            try:
-                import sqlite_vec
-                with self.store.transaction():
-                    try:
-                        self.store._db.enable_load_extension(True)
-                        sqlite_vec.load(self.store._db)
-                        self.store._db.execute("SELECT vec_version()").fetchone()
-                        self.vector_ready = True
-                    finally:
-                        self.store._db.enable_load_extension(False)
-            except (ImportError, AttributeError, sqlite3.Error, StoreError):
-                self.vector_ready = False
+            self._enable_vectors()
         self.cleanup()
+
+    def _selected_embedder(self, profile):
+        config = validate_embedding_config(profile.get("embedding"))
+        if config["provider"] == "keyword_only":
+            return None
+        if config["provider"] == "openai_compatible":
+            if not config["allow_remote"]:
+                return None
+            key = _json(config)
+            if key not in self._providers:
+                self._providers[key] = OpenAICompatibleEmbedder(config, credentials=self._credentials)
+            embedder = self._providers[key]
+        else:
+            embedder = self.embedder
+            if embedder is None and self._auto_load and (self.store.data_dir / "models" / "prepared.json").is_file():
+                try:
+                    embedder = self.embedder = LocalEmbedder.load(self.store.data_dir / "models")
+                except (StoreError, ImportError, OSError, ValueError, RuntimeError):
+                    return None
+        if embedder is not None:
+            self._enable_vectors()
+        return embedder
+
+    def _enable_vectors(self):
+        if self.vector_ready:
+            return
+        try:
+            import sqlite_vec
+            with self.store.transaction():
+                try:
+                    self.store._db.enable_load_extension(True)
+                    sqlite_vec.load(self.store._db)
+                    self.store._db.execute("SELECT vec_version()").fetchone()
+                    self.vector_ready = True
+                finally:
+                    self.store._db.enable_load_extension(False)
+        except (ImportError, AttributeError, sqlite3.Error, StoreError):
+            self.vector_ready = False
+
+    def status(self, profile_id=None):
+        profile = self.store.get_profile(profile_id) if profile_id else None
+        config = validate_embedding_config(profile.get("embedding") if profile else None)
+        embedder = self._selected_embedder(profile or {"embedding": config})
+        return {"profile_id": profile["profile_id"] if profile else None,
+                "provider": config["provider"], "allow_remote": config.get("allow_remote", False),
+                "model_prepared": config["provider"] == "local" and embedder is not None,
+                "vector_ready": embedder is not None and self.vector_ready,
+                "model_id": embedder.model_id if embedder is not None else None,
+                "api_verified": False}
+
+    def diagnose(self, profile_id):
+        profile = self.store.get_profile(profile_id)
+        config = validate_embedding_config(profile.get("embedding"))
+        _require(config["provider"] != "keyword_only", "MEMORY_SEARCH_INCOMPLETE", "키워드 검색만 선택한 profile입니다.")
+        embedder = self._selected_embedder(profile)
+        _require(embedder is not None, "MEMORY_SEARCH_INCOMPLETE", "선택한 임베딩의 전송 허용과 준비 상태를 확인하세요.")
+        self._check_embedding_context(profile)
+        self._vector(embedder.embed_query("DAERI embedding readiness"), embedder)
+        _require(self.store.get_profile(profile_id)["embedding"] == profile["embedding"],
+                 "CONTEXT_CHANGED", "임베딩 진단 중 설정이 변경되었습니다.")
+        return {"provider": config["provider"], "profile_id": profile["profile_id"],
+                "api_verified": config["provider"] == "openai_compatible",
+                "model_id": embedder.model_id, "dimensions": embedder.dimensions,
+                "vector_ready": self.vector_ready}
+
+    def _check_embedding_context(self, profile, memory_refs=None, instance_ids=None):
+        """Recheck current permission immediately before an embedding operation."""
+        with self.store.transaction():
+            current, policy = self._policy(profile["profile_id"])
+            _require(current["embedding"] == profile["embedding"], "CONTEXT_CHANGED", "임베딩 요청 전에 설정이 변경되었습니다.")
+            if memory_refs is not None:
+                permitted = False
+                for reference in memory_refs:
+                    try:
+                        _, item = self._row(profile["profile_id"], reference)
+                    except StoreError:
+                        continue
+                    permitted |= self._allowed(item, policy, instance_ids, profile=current)
+                _require(permitted, "ACCESS_DENIED", "현재 허용된 기억에 대해서만 임베딩을 요청할 수 있습니다.")
 
     def _upgrade_expiry(self, schema):
         columns = self.store._db.execute("PRAGMA table_info(memory_versions)").fetchall()
@@ -441,26 +509,40 @@ class MemoryService:
         self.store._db.execute("DELETE FROM memory_fts WHERE memory_ref=?", (memory_ref,))
         self.store._db.execute("DELETE FROM memory_vectors WHERE memory_ref=?", (memory_ref,))
 
-    def _vector(self, values):
-        _require(len(values) == self.embedder.dimensions and all(
+    def _vector(self, values, embedder=None):
+        embedder = embedder or self.embedder
+        _require(embedder is not None and len(values) == embedder.dimensions and all(
             type(value) in (int, float) and math.isfinite(value) for value in values)
-            and any(value != 0 for value in values), "MEMORY_INDEX_INCOMPLETE", "유효한 로컬 임베딩 벡터가 필요합니다.")
-        return struct.pack(f"<{len(values)}f", *values)
+            and any(value != 0 for value in values), "MEMORY_INDEX_INCOMPLETE", "유효한 임베딩 벡터가 필요합니다.")
+        try:
+            packed = struct.pack(f"<{len(values)}f", *values)
+            _require(any(struct.unpack(f"<{len(values)}f", packed)), "MEMORY_INDEX_INCOMPLETE", "유효한 임베딩 벡터가 필요합니다.")
+            return packed
+        except (OverflowError, struct.error):
+            raise StoreError("MEMORY_INDEX_INCOMPLETE", "저장 가능한 임베딩 벡터가 필요합니다.") from None
 
     def _index(self, profile_id, memory_ref):
         try:
             with self.store.transaction():
                 _, item = self._row(profile_id, memory_ref)
+                profile, _ = self._policy(profile_id)
                 text = f"{item['category']}\n{item['statement']}\n{item['applicability']}"
                 self.store._db.execute("UPDATE memory_versions SET index_state='pending' WHERE memory_ref=?", (memory_ref,))
                 self.store._db.execute("DELETE FROM memory_fts WHERE memory_ref=?", (memory_ref,))
                 self.store._db.execute("INSERT INTO memory_fts VALUES(?,?)", (memory_ref, text))
-            if self.vector_ready:
-                vector = self._vector(self.embedder.embed_document(text))
+                if profile["embedding"]["provider"] == "keyword_only":
+                    self.store._db.execute("UPDATE memory_versions SET index_state='ready' WHERE memory_ref=?", (memory_ref,))
+                    return "ready"
+            embedder = self._selected_embedder(profile)
+            if embedder is not None and self.vector_ready:
+                self._check_embedding_context(profile, [memory_ref])
+                vector = self._vector(embedder.embed_document(text), embedder)
                 with self.store.transaction():
                     self._row(profile_id, memory_ref)
+                    current, _ = self._policy(profile_id)
+                    _require(current["embedding"] == profile["embedding"], "CONTEXT_CHANGED", "색인 중 임베딩 설정이 변경되었습니다.")
                     self.store._db.execute("INSERT OR REPLACE INTO memory_vectors VALUES(?,?,?,?)",
-                        (memory_ref, self.embedder.model_id, self.embedder.dimensions, vector))
+                        (memory_ref, embedder.model_id, embedder.dimensions, vector))
                     self.store._db.execute("UPDATE memory_versions SET index_state='ready' WHERE memory_ref=?", (memory_ref,))
                 return "ready"
         except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
@@ -471,12 +553,6 @@ class MemoryService:
         _require(isinstance(query, str) and query.strip() and len(query.encode()) <= 4096
                  and type(limit) is int and 0 < limit <= 50,
                  "INVALID_INPUT", "검색어와 1~50건의 반환 한도를 지정하세요.")
-        query_vector = None
-        if self.vector_ready:
-            try:
-                query_vector = self._vector(self.embedder.embed_query(redact(query)))
-            except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
-                pass
         with self.store.transaction():
             profile, policy = self._policy(profile_id)
             _require(instance_ids is None or (isinstance(instance_ids, list) and bool(instance_ids)
@@ -492,6 +568,25 @@ class MemoryService:
                 item["expires_at"] = row["expires_at"]
                 if self._allowed(item, policy, instance_ids, profile=profile):
                     eligible[row["memory_ref"]] = item
+        query_vector = None
+        embedder = self._selected_embedder(profile) if eligible or profile["embedding"]["provider"] == "local" else None
+        if embedder is not None and self.vector_ready:
+            try:
+                if getattr(embedder, "remote", False):
+                    self._check_embedding_context(profile, eligible, instance_ids)
+                query_vector = self._vector(embedder.embed_query(redact(query)), embedder)
+            except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
+                pass
+        with self.store.transaction():
+            current, _ = self._policy(profile_id)
+            if current["embedding"] != profile["embedding"]:
+                query_vector = None
+            # Embedding can wait on a remote service; recheck permissions before ranking.
+            for reference in list(eligible):
+                try:
+                    self._row(profile_id, reference)
+                except StoreError:
+                    eligible.pop(reference)
             limitations = ["기억 10,000건의 검색 상한에 도달해 일부 항목을 검색하지 못했습니다."] if len(rows) > 10000 else []
             ranked, keyword_ok, vector_ok = [], False, False
             allowed = list(eligible)
@@ -514,17 +609,17 @@ class MemoryService:
                     vectors = self.store._db.execute(f"""SELECT memory_ref FROM memory_vectors
                         WHERE model_id=? AND dimensions=? AND memory_ref IN ({placeholders})
                         ORDER BY vec_distance_cosine(embedding,?),memory_ref LIMIT ?""",
-                        [self.embedder.model_id, self.embedder.dimensions, *allowed, query_vector, limit * 4]).fetchall()
+                        [embedder.model_id, embedder.dimensions, *allowed, query_vector, limit * 4]).fetchall()
                     ranked.append([row[0] for row in vectors])
                     vector_ok = True
                     indexed = self.store._db.execute(f"""SELECT count(*) FROM memory_vectors
                         WHERE model_id=? AND dimensions=? AND memory_ref IN ({placeholders})""",
-                        [self.embedder.model_id, self.embedder.dimensions, *allowed]).fetchone()[0]
+                        [embedder.model_id, embedder.dimensions, *allowed]).fetchone()[0]
                     if indexed < len(allowed):
                         limitations.append("현재 모델의 벡터 색인 갱신이 대기 중인 기억이 있습니다.")
                 except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
                     limitations.append(VECTOR_LIMITATION)
-            else:
+            elif profile["embedding"]["provider"] != "keyword_only":
                 limitations.append(VECTOR_LIMITATION)
             scores = {}
             for ranking in ranked:
