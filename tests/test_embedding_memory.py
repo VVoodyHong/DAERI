@@ -71,6 +71,42 @@ def test_api_selection_indexes_and_searches_without_local_model(tmp_path, api, m
         assert not (tmp_path / "models").exists()
 
 
+@pytest.mark.parametrize('pending_index', [False, True])
+def test_engine_distinguishes_complete_keyword_search_from_pending_index(tmp_path, pending_index):
+    from daeri.engine import Engine
+    with closing(Engine(tmp_path)) as engine:
+        selected = profile(engine.store, embedding={'provider': 'keyword_only'})
+        item = save(engine.memory, selected)
+        if pending_index:
+            engine.store._db.execute('DELETE FROM memory_fts WHERE memory_ref=?', (item['memory_ref'],))
+        task = engine.call('daeri_task_create', {'request_id': 'keyword-task',
+            'request_text': 'E_CONN_001 처리 방법을 찾아줘', 'context': {'profile_id': selected['profile_id']}})
+        result = engine.call('daeri_memory_search', {'task_id': task['data']['task_id'], 'query': 'E_CONN_001'})
+        assert result['data']['retrieval_state'] == 'keyword_only'
+        if pending_index:
+            assert result['status'] == 'partial'
+            assert result['error']['code'] == 'MEMORY_SEARCH_INCOMPLETE'
+            assert result['data']['limitations']
+        else:
+            assert result['status'] == 'ok'
+            assert result['error'] is None
+            assert result['data']['limitations'] == []
+            assert result['data']['items']
+
+
+def test_engine_returns_complete_empty_keyword_search(tmp_path):
+    from daeri.engine import Engine
+    with closing(Engine(tmp_path)) as engine:
+        selected = profile(engine.store, embedding={'provider': 'keyword_only'})
+        task = engine.call('daeri_task_create', {'request_id': 'empty-keyword-task',
+            'request_text': '운영 경험을 찾아줘', 'context': {'profile_id': selected['profile_id']}})
+        result = engine.call('daeri_memory_search', {'task_id': task['data']['task_id'], 'query': '운영'})
+        assert result['status'] == 'ok'
+        assert result['error'] is None
+        assert result['data']['items'] == []
+        assert result['data']['limitations'] == []
+
+
 @pytest.mark.parametrize("embedding", [api_config(allow_remote=False), {"provider": "keyword_only"}])
 def test_disallowed_remote_or_keyword_only_never_calls_api(tmp_path, api, embedding):
     with closing(Store(tmp_path)) as store:

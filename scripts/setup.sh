@@ -11,7 +11,7 @@ DAERI_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 . "$DAERI_ROOT/scripts/dependencies.env"
 
 usage() {
-    printf 'Usage: setup.sh [--check|--prepare|--prepare-local-embedding]\nDefault: local check only. --prepare downloads private uv, managed Python, and locked base dependencies. --prepare-local-embedding also includes the local embedding runtime. Neither changes PATH or shell configuration.\n'
+    printf 'Usage: setup.sh [--check|--prepare|--prepare-local-embedding]\nDefault: local check only. --prepare downloads private uv, managed Python, and locked base dependencies. --prepare-local-embedding also includes the local embedding runtime. Preparation uses DAERI-private runtime and cache locations.\n'
 }
 if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi
 case "${1:---check}" in

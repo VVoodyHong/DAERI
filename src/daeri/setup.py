@@ -77,6 +77,8 @@ def _no_secrets(value, path=()):
 def import_profile(store, path):
     config = read_config(path)
     _require(isinstance(config, dict) and set(config) <= PROFILE_FIELDS and 'name' in config)
+    _require(all(config[key] is not None for key in ('core_context', 'resources', 'memory_policy', 'embedding')
+                 if key in config), 'Configuration lists and objects require their declared types.')
     _no_secrets(config)
     return store.put_profile(**config)
 
@@ -172,7 +174,7 @@ def profile_template(store, recipe_id, profile_name, instance_id):
 
 
 def setup_schema(recipe_id):
-    """Describe trusted non-secret inputs; defaults are hints, never answers."""
+    """Describe schema-owned inputs, defaults and authentication metadata."""
     from jsonschema import Draft202012Validator
     item, _, _ = _recipe(recipe_id)
     adapter = get_adapter(item['adapter'])
@@ -220,7 +222,7 @@ def _validate_setup_values(contract, values):
 
 
 def validate_setup(recipe_id, path):
-    """Validate even partial input without storage, credential access, or networking."""
+    """Validate a partial local input object against its adapter schema."""
     return _validate_setup_values(setup_schema(recipe_id), read_config(path))
 
 
@@ -249,7 +251,7 @@ def _current_setup_values(resource, contract):
 
 
 def build_setup_resource(store, recipe_id, profile_name, instance_id, values, existing=None):
-    """Build a complete recipe resource without mutating inputs or publishing settings."""
+    """Return a validated recipe resource copy with explicit input changes applied."""
     from .policy import pointer_set
     contract = setup_schema(recipe_id)
     _require(_validate_setup_values(contract, values)['valid'], 'Setup answers are invalid.')

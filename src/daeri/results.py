@@ -273,8 +273,8 @@ class ResultService:
         columns = {}
         for column in table["columns"]:
             object_fields(column, {"column_id", "label", "value_type"})
-            require(isinstance(column["column_id"], str) and column["column_id"] not in columns
-                    and isinstance(column["label"], str) and column["label"]
+            require(isinstance(column["column_id"], str) and column["column_id"].strip() and column["column_id"] not in columns
+                    and isinstance(column["label"], str) and column["label"].strip()
                     and column["value_type"] in {"text", "decimal", "boolean"}, "표 열은 고유 ID·이름·지원 타입이 필요합니다.")
             columns[column["column_id"]] = column
         require(bool(columns), "표의 열을 하나 이상 지정하세요.")
@@ -431,7 +431,8 @@ class ResultService:
             days = (task.get("profile_snapshot") or {}).get("retention_days")
             expiry = instant(task_expiry) if task_expiry is not None else (
                 datetime.now(UTC) + timedelta(days=days) if days is not None else None)
-            require(expiry is None or expiry > datetime.now(UTC), "보고의 보존기한이 끝났습니다.")
+            if expiry is not None and expiry <= datetime.now(UTC):
+                raise StoreError("RECORD_EXPIRED", "보고의 보존기한이 끝났습니다.")
             normalized = redact(copy.deepcopy(report))
             tables, table_validations, table_steps, evidence = {}, [], {}, {}
             draft = plan["draft"] if plan else {"steps": [], "completion_criteria": [], "memory_refs": [], "output": {"table_rules": [], "artifact_rules": []}}
@@ -468,6 +469,7 @@ class ResultService:
             checks = {}
             for check in normalized["checks"]:
                 object_fields(check, {"criterion_id", "status", "method", "evidence_refs"}, {"table_ids", "reason"})
+                require("reason" not in check or isinstance(check["reason"], str), "완료 검사 이유는 문자열이어야 합니다.")
                 cid = check["criterion_id"]
                 require(cid in criteria and cid not in checks and check["status"] in {"met", "unmet", "unknown", "not_applicable"}
                         and isinstance(check["method"], str) and check["method"].strip(), "승인한 완료 조건을 중복 없이 검사해야 합니다.")

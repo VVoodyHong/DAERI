@@ -478,7 +478,10 @@ class Engine:
                        "memory_refs": [item["memory_ref"] for item in found["items"]],
                        "limitations": found["limitations"], "retrieval_state": found["retrieval_state"]}
             ref = self.store.write_record(task["task_id"], "memory_search", payload)
-            status = "ok" if found["retrieval_state"] == "hybrid" and not found["limitations"] else "error" if found["retrieval_state"] == "unavailable" else "partial"
+            complete = not found["limitations"] and (
+                found["retrieval_state"] == "hybrid" or
+                (profile["embedding"]["provider"] == "keyword_only" and found["retrieval_state"] == "keyword_only"))
+            status = "ok" if complete else "error" if found["retrieval_state"] == "unavailable" else "partial"
             code = None if status == "ok" else "MEMORY_SEARCH_UNAVAILABLE" if status == "error" else "MEMORY_SEARCH_INCOMPLETE"
             return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
                              "memory_search_ref": ref, "core_context": redact(profile["core_context"]), **found},

@@ -1,4 +1,4 @@
-"""Resolve explicit references through native OS stores, never plaintext fallback."""
+"""Resolve explicit credential references through supported native OS stores."""
 
 import os
 import re

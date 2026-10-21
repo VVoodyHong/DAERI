@@ -1,4 +1,4 @@
-"""Selected-resource YAML drafts; validation and atomic configuration without I/O to services."""
+"""Selected-resource YAML drafts, local validation and atomic configuration."""
 
 import copy
 import hashlib
@@ -79,7 +79,7 @@ def _read_draft(store, name):
     _require(isinstance(meta, dict) and set(meta) == {'profile', 'base', 'schemas'}
              and meta['profile'] == name and isinstance(meta['schemas'], dict),
              '초안 관리 정보를 확인하세요.')
-    # Inspect raw text too: YAML comments are visible to the host and cannot hold secrets.
+    # Comments share the host-visible file, so validate their credential patterns too.
     try:
         with path.open('rb') as stream:
             content = stream.read(2 * 1024 * 1024 + 1)
@@ -88,7 +88,7 @@ def _read_draft(store, name):
     _require(len(content) <= 2 * 1024 * 1024, '설정 파일의 크기 제한을 초과했습니다.')
     try:
         _require(redact(content.decode('utf-8')) == content.decode('utf-8'),
-                 '설정 파일과 주석에 비밀값을 넣지 마세요.')
+                 '비밀값은 보안 입력 경로로 등록하고 YAML에는 접속값과 인증 참조를 사용하세요.')
     except UnicodeError:
         raise StoreError('INVALID_INPUT', 'UTF-8 YAML 파일을 사용하세요.') from None
     document = parse_yaml(content)
@@ -123,10 +123,11 @@ def _resource_block(store, name, instance, recipe, profile):
 
 
 def _render(document):
-    text = '# 접속 정보와 조회 범위를 입력하세요. 비밀번호와 토큰은 입력하지 마세요.\n'
+    text = '# 접속 정보와 조회 범위를 입력하세요.\n'
+    text += '# 비밀번호·토큰은 DAERI가 안내하는 터미널 숨김 입력 또는 제공자 로그인으로 등록합니다.\n'
     text += '# 빈 필수값을 채운 뒤 DAERI에 검증과 적용을 요청하세요.\n'
     text += write_yaml(document)
-    # Keep schema hints next to fields, without copying another product field list.
+    # Render each selected product's schema hints next to its fields.
     lines, inputs = [], None
     for line in text.splitlines():
         if line.startswith('    adapter: '):
@@ -233,7 +234,7 @@ def _configuration(store, name, document, profile, meta):
         if not partial['valid']:
             for issue in partial['issues']:
                 key = issue['field']
-                # Unknown user-controlled keys never enter an error response.
+                # Error paths use validated schema field names.
                 path = field + '.inputs' + ('.' + key if key in contract['input_schema']['properties'] else '')
                 issues.append(_issue(path, message='필수값·타입·조회 범위를 확인하세요.'))
             continue

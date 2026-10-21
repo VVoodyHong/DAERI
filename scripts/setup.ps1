@@ -15,7 +15,7 @@ if ((@($Prepare, $PrepareLocalEmbedding, $Check, $Help) | Where-Object { $_ }).C
 }
 if ($Help) {
     Write-Output 'Usage: setup.ps1 [-Check|-Prepare|-PrepareLocalEmbedding]'
-    Write-Output 'Default: local check only. -Prepare downloads private uv, managed Python, and locked base dependencies. -PrepareLocalEmbedding also includes the local embedding runtime. Neither changes PATH or shell configuration.'
+    Write-Output 'Default: local check only. -Prepare downloads private uv, managed Python, and locked base dependencies. -PrepareLocalEmbedding also includes the local embedding runtime. Preparation uses DAERI-private runtime and cache locations.'
     exit 0
 }
 

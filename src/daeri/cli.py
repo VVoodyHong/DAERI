@@ -73,7 +73,7 @@ def _parser():
     parser = SafeParser(prog='daeri')
     parser.add_argument('--data-dir', type=Path)
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('check', help='Check the installed runtime without connecting resources')
+    commands.add_parser('check', help='Check the installed runtime and local storage features')
     setup = commands.add_parser('setup', help='Generate, validate and apply a selected-resource YAML draft').add_subparsers(dest='setup_command', required=True)
     setup.add_parser('catalog')
     draft = setup.add_parser('draft')
@@ -105,7 +105,7 @@ def _parser():
     resource = commands.add_parser('resource').add_subparsers(dest='resource_command', required=True)
     resource.add_parser('catalog')
     resource.add_parser('setup-schema').add_argument('recipe')
-    validate = resource.add_parser('validate-setup', help='Validate partial non-secret answers without writing settings')
+    validate = resource.add_parser('validate-setup', help='Read-only validation of partial public setup values')
     validate.add_argument('recipe')
     validate.add_argument('values_file', type=Path)
     configure = resource.add_parser('configure', help='Merge validated answers into one resource of an inspected profile')
@@ -123,7 +123,7 @@ def _parser():
         operation.add_argument('profile')
         operation.add_argument('instance')
         if action == 'prepare': operation.add_argument('--recipe', required=True)
-    login = resource.add_parser('login', help='Explicit provider device authorization; does not approve resource work')
+    login = resource.add_parser('login', help='Explicit provider device authorization for a selected connection')
     login.add_argument('profile')
     login.add_argument('instance')
     login.add_argument('--start-url')
@@ -144,7 +144,7 @@ def _parser():
         operation = auth.add_parser(action)
         operation.add_argument('reference')
         if action == 'set': operation.add_argument('--stdin', action='store_true')
-    commands.add_parser('cleanup', help='Apply configured expiry without querying resources')
+    commands.add_parser('cleanup', help='Clean up expired local records and indexes')
     return parser
 
 

@@ -77,6 +77,17 @@ def test_all_retention_limits_can_be_unlimited_in_profile_import_export(store, t
     assert export_profile(store, 'service') == {**config, 'embedding': {'provider': 'local'}}
 
 
+@pytest.mark.parametrize('field', ['core_context', 'resources', 'memory_policy', 'embedding'])
+def test_profile_import_rejects_null_collections_without_replacing_settings(store, tmp_path, field):
+    original = store.put_profile('service', core_context=['UTC 운영'], resources=[resource()],
+                                 embedding={'provider': 'keyword_only'})
+    supplied = export_profile(store, 'service')
+    supplied[field] = None
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        import_profile(store, config_file(tmp_path, supplied))
+    assert store.get_profile('service') == original
+
+
 def test_memory_policy_import_derives_target_binding_and_export_omits_internal_hash(store, tmp_path):
     policy = {'categories': ['procedure', 'lesson'], 'instance_ids': ['source-one'],
               'model_allowed': True, 'retain_allowed': True,

@@ -19,21 +19,21 @@ from .engine import Engine
 
 
 DESCRIPTIONS = {
-    "daeri_task_create": "Store a local task request. A profile must be selected before planning; no resource is contacted.",
+    "daeri_task_create": "Store a local task request with the supplied profile context. Unresolved context enters awaiting_input before planning.",
     "daeri_task_update": "Clarify or pause a local task with its expected revision. Pausing invalidates existing approval.",
-    "daeri_task_get": "Read stored local task state or recent tasks for a profile. Does not refresh remote data.",
+    "daeri_task_get": "Read stored local task state or recent tasks for the selected profile.",
     "daeri_task_resume": "Check task ownership and prepare local resumption. A paused task requires fresh plan approval.",
-    "daeri_task_cancel": "Cancel a local task and block further work. This does not undo prior effects.",
+    "daeri_task_cancel": "Cancel a local task and block further dispatch while preserving recorded prior effects.",
     "daeri_memory_search": "Search permitted profile knowledge before planning. An explicitly selected company embedding API may receive the permitted query; storage and indexes remain local. Reports keyword-only or incomplete retrieval explicitly.",
-    "daeri_resource_list": "Read locally registered resource and output-format summaries for the fixed profile. Never connects or discovers remote tools implicitly.",
+    "daeri_resource_list": "Read locally registered resource and output-format summaries for the fixed profile, including current availability and contract references.",
     "daeri_plan_submit": "Validate and store an immutable plan against registered read capabilities, recorded memory lookup, field policies, dependencies and cumulative budget. Requires user approval before execution.",
-    "daeri_plan_get": "Read a stored plan and its current approval state. Historical approval does not grant new authority.",
-    "daeri_approval_request": "Request approval in the current host conversation or link the user's actual reply to that request. Never invent a user reply.",
-    "daeri_capability_get": "Read the registered local capability contract for a task's fixed profile. No remote discovery.",
+    "daeri_plan_get": "Read a stored plan and its current approval state under present access and retention conditions.",
+    "daeri_approval_request": "Request approval in the current host conversation, then link the user's actual reply and interpreted decision to the current immutable plan and pending request.",
+    "daeri_capability_get": "Read the registered local capability contract for a task's fixed profile, including supported purposes, schemas and constraints.",
     "daeri_capability_execute": "Execute a registered read capability within the current approved plan, field policy and remaining cumulative budget.",
     "daeri_result_submit": "Validate evidence, completion checks, derived tables and approved file formats before storing a report.",
-    "daeri_result_get": "Read a registered record or managed artifact after current permission and expiry checks. Never fetches remote data.",
-    "daeri_memory_update": "Store or invalidate selected, evidenced profile knowledge within the approved memory policy. Indexing may send permitted knowledge to an explicitly selected company embedding API. Never collects whole conversations.",
+    "daeri_result_get": "Read a locally registered record or managed artifact after current permission, masking, integrity and expiry checks.",
+    "daeri_memory_update": "Store or invalidate selected, evidenced profile knowledge within the approved memory policy and source-field provenance. Indexing may send permitted knowledge to an explicitly selected company embedding API.",
 }
 
 OUTPUT_SCHEMA = {
@@ -64,7 +64,7 @@ def tool_result(result):
 def create_server(engine):
     server = Server(
         "daeri", version=version("daeri-agent"),
-        instructions="Use the fixed DAERI profile. Search memory and inspect registered contracts before planning. Obtain the user's actual reply in the current conversation before resource execution. Remain within the approved method, scope and field policy. Startup never installs, downloads or logs in.",
+        instructions="Use the fixed DAERI profile. Search memory and inspect registered contracts before planning. Obtain the user's actual reply in the current conversation before resource execution. Choose calls and parameters within the approved method, scope, dependencies, field policy and cumulative budget. Environment preparation and authentication use the explicit setup management path.",
     )
 
     @server.list_tools()

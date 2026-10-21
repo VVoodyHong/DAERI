@@ -130,6 +130,31 @@ def test_completion_cannot_use_an_unrelated_step_or_hypothesis(results):
         service.submit(task, plan, report, load_evidence=load)
 
 
+@pytest.mark.parametrize("field,value", [("column_id", ""), ("column_id", "  "), ("label", "  ")])
+def test_blank_table_column_identity_or_label_cannot_publish_results(results, field, value):
+    service, task = results
+    plan, report, records, load = setup_plan(service, task, artifact=True)
+    report["tables"][0]["columns"][0][field] = value
+    if field == "column_id":
+        for row in report["tables"][0]["rows"]:
+            row["cells"][0]["column_id"] = value
+    before = service.store.list_records(task["task_id"])
+    with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
+        service.submit(task, plan, report, load_evidence=load)
+    assert service.store.list_records(task["task_id"]) == before
+
+
+@pytest.mark.parametrize("reason", [{"explanation": "complete"}, None, 1])
+def test_met_completion_check_reason_keeps_its_declared_string_type(results, reason):
+    service, task = results
+    plan, report, records, load = setup_plan(service, task, artifact=True)
+    report["checks"][0]["reason"] = reason
+    before = service.store.list_records(task["task_id"])
+    with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
+        service.submit(task, plan, report, load_evidence=load)
+    assert service.store.list_records(task["task_id"]) == before
+
+
 @pytest.mark.parametrize("operator,value", [("eq", "0"), ("in", ["0", "1"])])
 def test_required_branch_can_be_excluded_only_with_observed_false_condition(results, operator, value):
     service, task = results

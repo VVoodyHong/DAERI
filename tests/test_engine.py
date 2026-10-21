@@ -213,6 +213,45 @@ def test_expired_plan_body_and_approval_replay_are_blocked(runtime):
     assert engine.call("daeri_approval_request", args)["error"]["code"] == "RECORD_EXPIRED"
 
 
+@pytest.mark.parametrize("expired", [False, True])
+def test_planless_cancelled_report_obeys_task_retention(runtime, expired):
+    engine, _ = runtime
+    profile = engine.store.put_profile("cancelled-retention", retention_days=1)
+    task = create(engine, profile)
+    cancelled = engine.call("daeri_task_cancel", {
+        "request_id": "cancel-before-plan", "task_id": task["task_id"],
+        "expected_task_revision": task["task_revision"],
+    })
+    assert cancelled["status"] == "ok", cancelled
+    if expired:
+        engine.store.set_task_expiry(task["task_id"],
+            (datetime.now(UTC) - timedelta(seconds=1)).isoformat())
+    resumed = engine.call("daeri_task_resume", {
+        "request_id": "read-cancelled", "task_id": task["task_id"],
+        "expected_task_revision": cancelled["data"]["task_revision"],
+    })
+    assert resumed["status"] == "ok", resumed
+    before = engine.store.list_records(task["task_id"])
+    result = engine.call("daeri_result_submit", {
+        "request_id": "cancelled-report", "task_id": task["task_id"],
+        "expected_task_revision": resumed["data"]["task_revision"],
+        "plan_id": None, "plan_version": None,
+        "report": {"summary": "계획 작성 전 사용자 요청으로 취소했습니다.",
+            "proposed_task_state": "cancelled", "findings": [], "tables": [],
+            "checks": [], "limitations": [], "uncertain_effects": [],
+            "artifacts": [], "next_actions": []},
+    })
+    if expired:
+        assert result["status"] == "error", result
+        assert result["error"]["code"] == "RECORD_EXPIRED"
+        assert result["error"]["next_action"] == "stop"
+        assert engine.store.list_records(task["task_id"]) == before
+    else:
+        assert result["status"] == "ok", result
+        assert result["data"]["task_state"] == "cancelled"
+        assert result["data"]["validation"]["completion"] == "unknown"
+
+
 def test_credential_patterns_are_redacted_before_persistence(runtime):
     engine, profile = runtime
     task = create(engine, profile, text="접속 password=known-sensitive-value")

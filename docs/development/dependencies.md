@@ -16,9 +16,9 @@
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
 
-버전 값을 문서·호스트 설정·Skill에 복제하지 않는다.
+버전·출처·잠금 조합은 위 정본에서 관리하고 문서·호스트·Skill은 이를 참조한다.
 카탈로그의 패키지와 recipe의 직접 의존성이 다르면 준비를 거부한다.
-각 recipe는 DAERI 실행기와 격리하므로 하위 MCP의 SDK 주 버전이 달라도 앱의 의존성을 바꾸지 않는다.
+각 recipe의 격리 환경에서 해당 SDK 주 버전을 설치하고 앱은 자체 잠금 조합을 유지한다.
 
 | 구성 | 사용하는 이유 |
 |---|---|
@@ -43,28 +43,29 @@ uv run --no-sync pytest
 
 일반 테스트는 사내 인증·운영 리소스·호스트 전역 설정 없이 로컬 계약을 확인한다.
 위 개발 명령은 로컬 추론 회귀를 위해 선택 의존성도 포함한다.
-API·키워드 전용 사용자 환경은 기본 설치로 동작하며 로컬 추론 패키지를 요구하지 않는다.
+API·키워드 전용 사용자 환경은 공통 의존성의 기본 설치로 동작한다.
 준비한 실제 모델을 쓰는 검사는 `DAERI_TEST_MODEL_CACHE`가 지정된 경우만 수행한다.
 이 검사는 검색 중 DNS를 차단해 모델 로딩·임베딩·한국어 질의와 영어 지식의 검색이 로컬에서 이루어지는지 확인한다.
-테스트 통과를 실제 회사 연결이나 호스트 설치의 통과로 일반화하지 않는다.
+검증 결과는 실행한 대상·환경·방법의 범위로 보고한다.
 
 플러그인 사용자는 명시적인 setup으로 실행 환경을 준비한다.
 macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Prepare`를 사용한다.
-기본 동작인 `--check`·`-Check`는 설치·다운로드·로그인을 하지 않는다.
+기본 `--check`·`-Check`는 기존 실행 환경의 로컬 검사 결과를 반환한다.
 
 준비는 고정한 공식 uv를 플러그인 루트의 `.runtime/uv.exe`에 두고 절대 경로로 실행한다.
-사용자·시스템 PATH와 shell 시작 파일·기존 uv·Python·가상환경은 변경하지 않는다.
+준비의 변경 대상은 전용 도구·후보 환경·관리 캐시이며 기존 시스템·사용자 환경을 보존한다.
 별도 후보 환경에 잠긴 패키지를 설치하고 실제 실행 검사를 통과한 환경만 `.venv`로 전환한다.
 설치 출처·해시·관리 Python·환경 정리·실패·중복 준비·전환 복구는 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
 
 `check`는 실행기의 Python 지원 범위·MCP·SQLite와 실제 FTS5 검색을 확인한다.
-이 결과의 `ready`는 기본 실행 환경이며 리소스 인증·진단과 기억 모델 준비를 대신하지 않는다.
-사용자 저장소를 만들지 않고 확인할 수 있는 검사와 profile별 연결 상태를 구분한다.
+`ready`는 기본 실행 환경의 검사 결과다.
+리소스 인증·진단·기억 모델은 해당 관리 경로의 결과로 확인한다.
+저장소 개설 전의 실행기 검사와 저장된 profile의 연결 진단은 별도 결과로 제공한다.
 
 ## 관리 입력과 결과
 
 플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정해 `-I -m daeri.cli`로 관리 작업을 수행한다.
-두 OS의 공통 진입 파일과 자식 환경 정리는 [환경 격리](../spec/installation/environment.md#공통-실행-파일과-환경-격리)를 따르며 관리 인수에 비밀값을 넣지 않는다.
+공통 진입·자식 환경·공개 인수는 [환경 격리](../spec/installation/environment.md#공통-실행-파일과-환경-격리), 비밀 입력은 [인증 경로](../spec/configuration/profiles.md#인증-저장과-전달)를 따른다.
 아래 표의 대문자는 사용자가 선택할 값이며 실제 명령 이름·필수 인수는 `--help`로 확인할 수 있다.
 
 | 입력 | 처리와 반환 |
@@ -76,7 +77,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | `setup apply PROFILE --confirm TOKEN` | 검증한 파일·기준 상태 대조 후 하나의 profile 개정으로 일괄 저장 |
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
 | `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
-| `profile export NAME` | 내부 상태·인증 비밀을 제외한 이동 가능한 설정 반환 |
+| `profile export NAME` | 이동 가능한 공개 구성 필드 반환 |
 | `profile delete NAME` | 삭제할 대상·개정·관련 자료 수·확인값을 미리 반환 |
 | `profile delete NAME --confirm TOKEN` | 확인한 대상을 차단하고 귀속 자료를 정리한 뒤 profile을 마지막에 삭제 |
 | `resource catalog/template` | 지원 recipe와 사용자가 채울 대상·정책 설정안 반환 |
@@ -95,37 +96,38 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | `cleanup` | 만료된 업무 본문·기억·색인 정리 |
 
 일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
-`VALUES_JSON`은 UTF-8 JSON 파일 경로이며 값 객체의 원문을 명령 인자로 받지 않는다.
+`VALUES_JSON` 인자는 UTF-8 공개 값 객체를 담은 파일의 경로다.
 스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
 기본 setup은 [YAML 초안·검증·일괄 적용](../spec/configuration/profiles.md#사용자용-setup-yaml)을 사용한다.
 초안·확인값·기준 상태의 연결과 충돌 뒤 명시적 `--refresh`도 이 계약을 따른다.
-Plan에서는 파일 읽기·카탈로그·스키마 조회와 저장소를 열지 않는 개별 JSON 입력 검증만 수행한다.
+Plan의 지원 동작은 파일 읽기·카탈로그·스키마 조회와 배포 스키마·공개 값 파일의 개별 JSON 검증이다.
 YAML의 전체 검증·초안 생성·적용은 profile 저장소를 사용하므로 실행 가능한 모드에서 수행한다.
 `resource configure`는 실행 모드에서 적용 요약을 확인할 때 사용한 profile 개정을 명시해 수행하며 새 profile은 먼저 `profile create`로 만든다.
 입력 스키마·기존값 재사용·검증 결과·동시 변경 거부·보존 경계는 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
 새 profile의 `--retention-days`와 `--long-term-memory-days`는 각각 생략하거나 `unlimited`로 지정하면 무기한이며 양의 정수로 유한 기간을 선택한다.
 기존 profile의 기간 변경은 전체 export 설정에서 해당 `retention_days`·`long_term_memory_days`만 수정해 import하고 다른 설정을 유지한다.
-변경은 새 업무에 적용하며 기존 유한 기한의 자동 연장·만료 자료 복구를 허용하지 않는다.
+변경은 새 업무에 적용하며 기존 기한·만료 상태를 보존한다.
 저장 의미와 기한 승계는 [보존 설정](../spec/configuration/profiles.md#구현한-profile-입력과-공개-설정)을 따른다.
 제공자 로그인만 공개 확인 URL·사용자 코드를 `pending` JSON으로 먼저 전달하고 완료 또는 실패를 반환한다.
-모델 준비·로그인·연결 진단이 실제 운영 업무 조회를 포함하지 않으며 업무 계획 승인은 별도로 받는다.
+모델 준비·로그인·연결 진단의 결과를 확인한 뒤 실제 업무 조회는 해당 계획의 승인을 받아 수행한다.
 
 profile·정책·인증 입력의 필드·실패·지원 경계는 [사용자 구성](../spec/configuration/profiles.md), 기억 준비와 부분 검색은 [기억 사양](../spec/tasks/memory.md)을 따른다.
-미완성 template·기본 거부 정책·누락 인증을 준비 성공으로 채우지 않는다.
+입력 완성·자료 정책·인증 준비는 각 검증 결과와 미완료 사유로 안내한다.
 profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
-대화 안의 대상 선택과 목록 표시 범위는 [profile 선택 계약](../spec/configuration/profiles.md#선택과-기본값)을 따르며 별도 전역 선택 CLI를 추가하지 않는다.
+대상 선택의 저장 범위는 현재 대화이며 선택 우선순위·목록 표시는 [profile 선택 계약](../spec/configuration/profiles.md#선택과-기본값)을 따른다.
 삭제는 같은 profile Skill에서 사용자 확인 후 관리 CLI로 수행하며 귀속 범위·공유 자료 보존·실패 재시도는 [profile 삭제 계약](../spec/configuration/profiles.md#profile-삭제)을 따른다.
 
 ## 실행 진입점과 모듈
 
 `daeri`는 관리 CLI, `daeri-mcp`는 호스트가 연결할 MCP 서버다.
 두 호스트의 플러그인 구성은 전용 `.venv/bin/python.exe`를 절대 경로로 실행하고 `-I -m daeri.server`를 전달한다.
-일반 MCP 시작에 uv·PATH 검색·shell을 사용하지 않으며 현재 작업 디렉토리나 외부 환경으로 실행기를 바꾸지 않는다.
-일반 MCP 시작에서 다운로드·설치·로그인을 하지 않으며 표준 출력은 MCP 전달에만 사용한다.
+실행기 선택은 설치한 플러그인의 전용 Python 절대 경로로 고정한다.
+일반 MCP는 준비된 실행기를 시작하고 표준 출력은 MCP 전달에 사용한다.
+준비·로그인 요청은 관리 진입으로 연결한다.
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 실행기가 저장 상태·정책과 대조한다.
 실제 리소스 요청은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
-다음 모듈은 이 흐름의 책임을 나누며 서로 별도 서버로 배포하는 구성은 아니다.
+다음 모듈은 같은 로컬 배포 안에서 이 흐름의 책임을 나눈다.
 
 | 모듈·파일 | 책임과 자료 흐름 |
 |---|---|
@@ -167,13 +169,14 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 | 모델·준비 | `models/`의 로컬 모델; `staging/`의 미공개 파일 |
 | 비밀 | OS 인증 저장소·선택한 제공자 표준 캐시; DAERI에는 인증 참조만 저장 |
 
-업데이트·재설치가 사용자 자료를 초기화하지 않는다.
+업데이트·재설치 뒤에도 사용자 저장소의 설정·업무·기억·자료를 유지한다.
 만료·삭제·기억의 출처 승계·복원 조건과 현재 제공 범위 검사는 [로컬 저장 구조](../spec/configuration/profiles.md#로컬-저장-구조)가 정본이다.
-인증 문자열 제거는 알려진 패턴의 보조 검사이며 모든 비밀·개인정보 탐지를 보장하지 않는다.
+인증 문자열 제거는 알려진 패턴을 검사하는 보조 기능이며 자료 제공은 필드 허용·마스킹·현재 정책을 함께 검사한다.
+임의 비밀·개인정보의 탐지는 별도의 검증 대상이다.
 
 ## 검증의 해석
 
 로컬 자동 테스트는 허용·거부·부분 결과·충돌·복구와 실제 stdio 전달을 확인한다.
 하위 프로그램의 잠긴 설치·import·도구 메타데이터 확인과 모의 리소스의 전체 실행은 서로 다른 검증이다.
 실제 호스트 설치·대화 의미 해석·회사 리소스·제공자 로그인·Windows 실행은 별도의 근거가 필요하다.
-현재 확보한 검증과 남은 범위는 [최초 구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)에 모으고 테스트 개수·버전을 여러 문서에 복제하지 않는다.
+현재 검증·남은 범위·실행 결과는 [최초 구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)에서 관리한다.
