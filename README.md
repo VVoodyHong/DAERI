@@ -21,28 +21,25 @@ Claude Code 또는 Codex에서 자연어로 요청하면 연결된 리소스를 
 
 플러그인 기능을 지원하는 **Codex CLI 또는 Claude Code가 설치·로그인된 환경**에서 시작합니다.
 저장소 접근과 최초 패키지·모델 다운로드를 위한 네트워크가 필요합니다.
+실행 중인 호스트는 종료하고 아래 명령을 터미널 또는 PowerShell에서 순서대로 실행합니다.
+각 설치 명령의 성공을 확인한 뒤 마지막 명령으로 호스트를 시작합니다.
 
-| 사용자 환경 | 호스트를 실행할 곳 | setup의 환경 준비 |
+| 사용자 환경 | 설치·호스트 실행 위치 | setup의 환경 준비 |
 |---|---|---|
 | macOS | 터미널 | macOS 준비 도구 사용 |
 | Windows | PowerShell | Windows 준비 도구 사용 |
 
 ### Codex
 
-Codex 대화창에서 플러그인 관리 화면을 엽니다.
+터미널 또는 PowerShell에서 플러그인을 설치한 뒤 Codex를 시작합니다.
 
-```text
-/plugins
+```shell
+codex plugin marketplace add https://github.com/VVoodyHong/DAERI.git --ref main
+codex plugin add daeri@daeri-marketplace
+codex
 ```
 
-**Add marketplace**를 선택하고 다음 저장소 주소를 입력합니다.
-
-```text
-https://github.com/VVoodyHong/DAERI.git
-```
-
-추가된 **daeri-marketplace**에서 **daeri**를 선택해 설치합니다.
-설치 후 새 대화를 열고 실행합니다.
+Codex 대화창에서 setup을 실행합니다.
 
 ```text
 $daeri:setup service-prod
@@ -51,25 +48,25 @@ $daeri:setup service-prod
 Skill이 보이지 않으면 `/skills` 또는 `$` 선택기에서 **DAERI의 setup**을 확인합니다.
 질문 도구를 사용하려면 Plan 모드가 필요한 경우 `/plan`으로 입력을 정리합니다.
 설치·설정 저장·로그인은 실행 가능한 모드로 돌아온 뒤 진행합니다.
-플러그인 관리 화면은 [OpenAI 공식 안내](https://learn.chatgpt.com/docs/plugins#plugin-browser-in-codex-cli)를 참고하세요.
+설치 명령은 [OpenAI 공식 안내](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace)를 참고하세요.
 
 ### Claude Code
 
-Claude Code 대화창에서 순서대로 입력합니다.
+터미널 또는 PowerShell에서 플러그인을 설치한 뒤 Claude Code를 시작합니다.
 
-```text
-/plugin marketplace add https://github.com/VVoodyHong/DAERI.git#main
-/plugin install daeri@daeri-marketplace
+```shell
+claude plugin marketplace add 'https://github.com/VVoodyHong/DAERI.git#main'
+claude plugin install daeri@daeri-marketplace --scope user
+claude
 ```
 
-설치 범위를 선택해 설치를 마칩니다.
-현재 세션에 반영되지 않으면 `/reload-plugins`를 실행하거나 새 대화를 열고 시작합니다.
+Claude Code 대화창에서 setup을 실행합니다.
 
 ```text
 /daeri:setup service-prod
 ```
 
-명령 규격은 [Claude Code 공식 안내](https://code.claude.com/docs/en/discover-plugins#add-a-marketplace)를 참고하세요.
+설치 명령은 [Claude Code 공식 안내](https://code.claude.com/docs/en/discover-plugins#manage-plugins-from-your-shell)를 참고하세요.
 사내 저장소로 배포했다면 위 명령의 URL을 해당 Git 저장소 주소로 바꿉니다.
 비공개 저장소의 Git 인증은 먼저 준비해야 합니다.
 

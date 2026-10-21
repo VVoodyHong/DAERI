@@ -63,31 +63,38 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 
 아래 URL은 사내 저장소를 가정한 예시다.
 실제 clone URL로 바꾸고 지정한 브랜치를 먼저 원격에 배포해야 한다.
-Codex CLI 대화창에서는 [플러그인 관리 화면](https://learn.chatgpt.com/docs/plugins#plugin-browser-in-codex-cli)을 연다.
+첫 설치는 호스트를 종료한 상태에서 OS 터미널로 수행하고 설치 성공 뒤 호스트를 시작한다.
+Codex는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 다음 명령을 사용한다.
 
-```text
-/plugins
+```shell
+codex plugin marketplace add https://gitlab.example.com/team/DAERI.git --ref main
+codex plugin add daeri@daeri-marketplace
+codex
 ```
 
-`Add marketplace`를 선택하고 실제 clone URL을 입력한 뒤 `daeri-marketplace`의 `daeri`를 설치한다.
-URL만 입력하면 저장소의 기본 브랜치를 사용하므로 배포자가 의도한 기본 브랜치인지 확인한다.
-터미널에서 브랜치를 지정해 등록해야 할 때는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 `codex plugin marketplace add <URL> --ref main`을 사용한다.
-
-설치 후 새 대화에서 `$daeri:setup service-prod`로 준비한다.
+시작한 Codex의 새 대화에서 `$daeri:setup service-prod`로 준비한다.
 준비 후에는 `$daeri:profile service-prod`, `$daeri:work 요청 내용`, `$daeri:list-profiles`로 호출한다.
 삭제는 `$daeri:profile delete service-prod`로 요청한다.
 Codex 플러그인의 Skill 이름은 [공식 구현](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/core-skills/src/loader/namespace.rs#L175-L180)의 `플러그인명:Skill명`이며 `$`는 호스트의 Skill 호출 표시다.
 `/skills`·`$` 선택기 또는 앱의 Skill 선택 화면에서도 DAERI의 같은 Skill을 선택할 수 있다.
 
-Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/docs/en/discover-plugins#add-a-marketplace)에 따라 대화에서 아래를 순서대로 입력한다.
+Claude Code는 [터미널 설치 규격](https://code.claude.com/docs/en/discover-plugins#manage-plugins-from-your-shell)에 따라 아래를 순서대로 실행한다.
 브랜치 지정은 URL의 `#ref`이며 Codex 터미널 명령의 `--ref`와 구분한다.
 
-```text
-/plugin marketplace add https://gitlab.example.com/team/DAERI.git#main
-/plugin install daeri@daeri-marketplace
+```shell
+claude plugin marketplace add 'https://gitlab.example.com/team/DAERI.git#main'
+claude plugin install daeri@daeri-marketplace --scope user
+claude
 ```
 
-설치 범위를 선택해 설치를 마치고 현재 세션에 반영되지 않으면 `/reload-plugins`를 실행하거나 새 세션을 연다.
+Claude Code 플러그인은 위 명령에서 사용자 범위로 설치하고 시작한 대화에서 사용한다.
+이미 실행 중인 호스트에서 설치·업데이트한 경우의 새로고침은 복구 절차로만 안내한다.
+이 경우 `/reload-plugins`로 플러그인 변경을 반영한다.
+활성화한 플러그인의 `/daeri:setup`이 목록에 없으면 `/reload-skills`로 Skill·명령 디렉터리를 다시 읽고 `/skills` 또는 `/` 메뉴에서 확인한다.
+그래도 없으면 `/plugin`의 Installed에서 활성화 상태를, Errors에서 로딩 실패를 확인한다.
+새로고침 명령을 지원하지 않거나 문제가 계속되면 Claude Code 프로세스를 종료하고 다시 실행한다.
+두 새로고침의 역할은 [공식 명령 안내](https://code.claude.com/docs/en/commands)를 따른다.
+Skill 목록의 노출과 로컬 MCP 연결 상태는 각각 확인하며 `/reload-skills`가 MCP 설정·프로세스까지 다시 연결한다고 해석하지 않는다.
 그다음 `/daeri:setup service-prod`로 준비하고 `/daeri:work` 또는 자연어로 업무를 요청한다.
 대화의 기본 대상을 고를 때는 `/daeri:profile`, 저장한 목록만 볼 때는 `/daeri:list-profiles`를 사용한다.
 삭제는 `/daeri:profile delete service-prod`로 요청하며 같은 profile Skill에서 대상·범위를 확인한다.
@@ -95,7 +102,7 @@ Claude Code에서는 [마켓플레이스 설치 규격](https://code.claude.com/
 업무 진입 Skill명은 work이며 이전 업무 Skill의 별칭은 제공하지 않는다.
 
 이미 pull한 로컬 사본을 쓰려면 두 호스트 모두 마켓플레이스 추가의 URL 대신 해당 저장소 루트 경로를 받는다.
-공백이 있는 경로는 터미널에서 한 인자로 인용하며 Claude의 대화 명령으로 처리하기 어려운 경로는 공식 `claude plugin marketplace add` 터미널 명령을 사용한다.
+공백이 있는 경로는 터미널에서 한 인자로 인용한다.
 로컬 경로 추가에는 Git 브랜치 선택 인자를 붙이지 않고 준비한 checkout을 사용한다.
 비공개 저장소는 사용자의 Git 인증·회사 접근 정책이 먼저 충족되어야 하며 DAERI profile 인증으로 대신하지 않는다.
 
