@@ -11,7 +11,7 @@
       "name": "daeri",
       "source": "./",
       "description": "DAERI local operations agent with profile-scoped resources, conversation approval, reports and memory.",
-      "version": "0.1.14"
+      "version": "0.1.15"
     }
   ]
 }
