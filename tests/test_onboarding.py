@@ -35,10 +35,12 @@ def completed(store, selections=None):
 
 def test_catalog_groups_all_roles_and_available_products(monkeypatch):
     groups = selection_catalog()['groups']
-    assert {g['type'] for g in groups} == {'DB', 'Cache', 'Infra', 'Source', 'Document'}
+    assert {g['type'] for g in groups} == {'DB', 'Cache', 'Infra', 'Source', 'Document', 'Issue'}
     assert {g['type']: g['label'] for g in groups} == {
         'DB': '데이터베이스', 'Cache': '캐시', 'Infra': '인프라',
-        'Source': '소스 코드', 'Document': '문서'}
+        'Source': '소스 코드', 'Document': '문서', 'Issue': '이슈'}
+    assert {group['type']: group['instance_prefix'] for group in groups} == {
+        kind: kind.lower() for kind in ('DB', 'Cache', 'Infra', 'Source', 'Document', 'Issue')}
     from daeri import onboarding
     catalog = onboarding.load_catalog()
     monkeypatch.setattr(onboarding, 'load_catalog', lambda: catalog | {
@@ -64,6 +66,97 @@ def test_draft_contains_only_selected_schema_fields_and_no_service_description(s
     if os.name != 'nt':
         from pathlib import Path
         assert Path(draft['path']).stat().st_mode & 0o777 == 0o600
+
+
+def test_unnamed_resources_use_category_names_and_repeat_with_stable_suffixes(store):
+    from pathlib import Path
+    from daeri.setup_yaml import read_yaml
+    recipes = ['db-postgres', 'db-postgres', 'cache-redis']
+    draft = create_draft(store, 'production', recipes=recipes, embedding='keyword_only')
+    blocks = read_yaml(draft['path'])['resources']
+    assert list(blocks) == ['db', 'db-2', 'cache']
+    assert blocks['db']['adapter'] == blocks['db-2']['adapter'] == 'db-postgres'
+    edit(draft, lambda value: value['resources']['db-2']['inputs'].update(DB, host='other.example.test'))
+    path = Path(draft['path'])
+    original = path.read_bytes()
+    resumed = create_draft(store, 'production', recipes=recipes)
+    assert resumed['resources'] == ['db', 'db-2', 'cache']
+    assert path.read_bytes() == original
+
+
+def test_automatic_names_reserve_role_names_and_skip_another_product(store):
+    from daeri.setup_yaml import read_yaml
+    draft = create_draft(store, 'production', {'db': 'cache-redis', 'db-2': 'db-postgres'},
+                         recipes=['db-postgres'], embedding='keyword_only')
+    assert list(read_yaml(draft['path'])['resources']) == ['db', 'db-2', 'db-3']
+    assert read_yaml(draft['path'])['resources']['db']['adapter'] == 'cache-redis'
+
+
+@pytest.mark.parametrize('instance', ['db', 'team:db', 'd' * 128])
+def test_valid_connection_names_produce_stable_native_credential_references(store, instance):
+    from daeri.credentials import Credentials
+    from daeri.setup import profile_template
+    name = 'p' * 64
+    draft = create_draft(store, name, {instance: 'db-postgres'}, embedding='keyword_only')
+    edit(draft, lambda value: value['resources'][instance]['inputs'].update(DB))
+    checked = validate_draft(store, name)
+    assert checked['valid'], checked['issues']
+    saved = apply_draft(store, name, checked['confirmation_token'])
+    reference = saved['resources'][0]['connection']['auth_env']['DATABASE_PASSWORD']
+    Credentials()._name(reference)
+    repeated = profile_template(store, 'db-postgres', name, instance)['resources'][0]
+    assert repeated['connection']['auth_env']['DATABASE_PASSWORD'] == reference
+    other = profile_template(store, 'db-postgres', name, instance[:-1] + 'x')['resources'][0]
+    assert other['connection']['auth_env']['DATABASE_PASSWORD'] != reference
+    if instance == 'db':
+        assert reference == f'credential:{name}.db.database_password'
+
+
+def test_automatic_names_reuse_saved_default_connections_and_preserve_legacy_names(store):
+    from daeri.setup import build_setup_resource
+    from daeri.setup_yaml import read_yaml
+    resources = [build_setup_resource(store, 'db-postgres', 'production', name, DB)
+                 for name in ('db', 'legacy-postgres')]
+    store.put_profile('production', resources=resources, embedding={'provider': 'keyword_only'})
+    draft = create_draft(store, 'production', recipes=['db-postgres', 'db-postgres'])
+    assert list(read_yaml(draft['path'])['resources']) == ['db', 'db-2']
+    assert read_yaml(draft['path'])['resources']['db']['inputs'] == DB
+    edit(draft, lambda value: value['resources']['db-2']['inputs'].update(DB, host='other.example.test'))
+    result = validate_draft(store, 'production')
+    saved = apply_draft(store, 'production', result['confirmation_token'])
+    assert {resource['instance_id'] for resource in saved['resources']} == {'db', 'db-2', 'legacy-postgres'}
+
+
+def test_another_recipe_for_the_same_adapter_gets_a_new_default_slot(store, monkeypatch):
+    from daeri import onboarding
+    catalog = onboarding.load_catalog()
+    monkeypatch.setattr(onboarding, 'load_catalog', lambda: catalog | {
+        'db-alternative': dict(catalog['db-postgres'])})
+    selected = onboarding._automatic_resources(store, 'production', {}, ['db-alternative'],
+        {'db': {'adapter': 'db-postgres', 'inputs': DB}}, None)
+    assert selected == {'db-2': 'db-alternative'}
+
+
+def test_automatic_names_preserve_manual_connections_outside_the_selected_recipe(store):
+    import sys
+    from daeri.setup import build_setup_resource
+    resource = build_setup_resource(store, 'db-postgres', 'production', 'db', DB)
+    resource['connection']['command'] = sys.executable
+    resource['connection']['args'] = []
+    store.put_profile('production', resources=[resource], embedding={'provider': 'keyword_only'})
+    draft = create_draft(store, 'production', recipes=['db-postgres'])
+    assert draft['resources'] == ['db-2']
+    assert store.get_profile('production')['resources'] == [resource]
+
+
+@pytest.mark.parametrize('recipes', ['db-postgres', [None], [[]], ['unregistered']])
+def test_invalid_automatic_resource_requests_preserve_the_draft(store, recipes):
+    from pathlib import Path
+    draft = completed(store)
+    original = Path(draft['path']).read_bytes()
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        create_draft(store, 'production', recipes=recipes)
+    assert Path(draft['path']).read_bytes() == original
 
 
 def test_whole_yaml_apply_is_atomic_and_idempotent(store):
@@ -94,15 +187,41 @@ def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
         'infra-aws': {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
         'source-gitlab': {'server': 'https://git.example.test'},
         'document-confluence': {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
+        'issue-jira': {'server': 'https://issues.example.test', 'auth_type': 'api_token', 'username': 'reader@example.test'},
     }
     edit(draft, lambda value: [value['resources'][name]['inputs'].update(fields)
                                for name, fields in answers.items()])
     result = validate_draft(store, 'production')
     assert result['valid'], result['issues']
     profile = apply_draft(store, 'production', result['confirmation_token'])
-    assert profile['revision'] == 1 and len(profile['resources']) == 5
-    assert {r['type'] for r in profile['resources']} == {'DB', 'Cache', 'Infra', 'Source', 'Document'}
+    assert profile['revision'] == 1 and len(profile['resources']) == len(selections)
+    assert {r['type'] for r in profile['resources']} == {'DB', 'Cache', 'Infra', 'Source', 'Document', 'Issue'}
     assert all(r['policy'] == {} for r in profile['resources'])
+
+
+def test_multiple_jira_domains_apply_separate_connection_only_yaml_blocks(store):
+    from daeri.setup_yaml import read_yaml
+    draft = create_draft(store, 'production', recipes=['issue-jira', 'issue-jira'], embedding='keyword_only')
+    blocks = read_yaml(draft['path'])['resources']
+    assert list(blocks) == ['issue', 'issue-2']
+    assert all(set(block['inputs']) == {'server', 'auth_type', 'username'} for block in blocks.values())
+    def connect(value):
+        value['resources']['issue']['inputs'].update(server='https://team-a.atlassian.net',
+                                                    username='reader@example.test')
+        value['resources']['issue-2']['inputs'].update(server='https://issues.team-b.example.test',
+                                                      auth_type='personal_token')
+    edit(draft, connect)
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    saved = apply_draft(store, 'production', checked['confirmation_token'])
+    first, second = saved['resources']
+    assert (first['instance_id'], second['instance_id']) == ('issue', 'issue-2')
+    assert first['target']['server'] == 'https://team-a.atlassian.net'
+    assert second['target']['server'] == 'https://issues.team-b.example.test'
+    assert first['connection']['auth_env'] == {'JIRA_API_TOKEN': 'credential:production.issue.jira_api_token'}
+    assert second['connection']['auth_env'] == {'JIRA_PERSONAL_TOKEN': 'credential:production.issue-2.jira_personal_token'}
+    assert first['identity_ref'] != second['identity_ref']
+    assert first['policy'] == second['policy'] == {}
 
 
 @pytest.mark.parametrize('account,identifier', [
@@ -197,6 +316,8 @@ def test_missing_blocks_and_fields_preserve_existing_values_and_policies(store):
     lambda v: v['resources']['primary']['inputs'].update(port='5432'),
     lambda v: v['resources']['primary'].update(adapter='cache-redis'),
     lambda v: v.update(retention_days=0),
+    lambda v: v.update(retention_days=10 ** 100),
+    lambda v: v.update(long_term_memory_days=10 ** 100),
     lambda v: v.update(memory_policy={'model_allowed': 'yes'}),
 ])
 def test_invalid_yaml_never_activates_or_echoes_values(store, change):

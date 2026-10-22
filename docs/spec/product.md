@@ -29,11 +29,11 @@ DAERI는 자연어로 서버 운영 업무를 맡기고 수행 과정·결과를
 | P-09 | 프로젝트를 사내외 Git 저장소에 올려 호스트 마켓플레이스 등록·플러그인 설치로 배포할 수 있어야 한다. | [배포](installation/environment.md#배포-출처와-최초-전달) |
 | P-10 | 필요한 프로그램·버전을 확인하고 누락·비호환 환경을 설치 기능으로 준비한다. | [환경 준비](installation/environment.md) |
 | P-11 | Windows·macOS 지원을 설계하고 최초 구현·실행 검증은 사용자의 Mac에서 진행한다. | [환경 준비](installation/environment.md) |
-| P-12 | DB·Cache·Infra·Source·Document 등 필요한 리소스 범주를 어댑터로 연결하고 추가 범주로 확장한다. | [리소스 범주](resources/initial-adapters.md) |
+| P-12 | DB·Cache·Infra·Source·Document·Issue 등 필요한 리소스 범주를 어댑터로 연결하고 추가 범주로 확장한다. | [리소스 범주](resources/initial-adapters.md) |
 | P-13 | 리소스 연결은 기존 MCP 재사용을 기본으로 하고 필요한 부족분만 보완한다. | [MCP 재사용](resources/contract.md#연결-구조) |
 | P-14 | 서비스별 profile에 여러 인프라·리소스와 연결 정보를 등록해 관리한다. | [profile 구성](configuration/profiles.md) |
 | P-15 | profile별 재사용 지식을 선별해 기억하고, 선택한 임베딩과 키워드·벡터 검색으로 계획 전 조회와 업무 후 갱신에 활용한다. | [기억·검색·보존](tasks/memory.md) |
-| P-16 | setup에서 선택한 연결의 접속 정보·공개 인증 설정을 YAML 초안으로 생성하고 사용자 편집·검증·변경 확인 뒤 적용한다. 업무별 조회 대상은 계획에서 승인받는다. | [setup YAML 설계](configuration/profiles.md#사용자용-setup-yaml) |
+| P-16 | setup에서 리소스 종류·제품·제품별 연결 개수를 정해 접속 정보·공개 인증 설정의 YAML 초안을 생성한다. 사용자 편집·검증·변경 확인 뒤 적용하고 업무별 조회 대상은 계획에서 승인받는다. | [setup YAML 설계](configuration/profiles.md#사용자용-setup-yaml) |
 | P-17 | profile별로 로컬·회사 임베딩 API·키워드 전용을 선택하고, API 선택에는 별도 전송 허용을 적용하며 로컬 모델 설치를 생략한다. | [임베딩 선택](configuration/profiles.md#임베딩-제공자-선택) |
 
 사용자 PC에는 Codex 또는 Claude Code만 준비되어 있다고 가정한다.
@@ -41,10 +41,8 @@ DAERI profile 안에 동일 종류의 리소스를 여러 개 등록할 수 있�
 리소스 범주는 역할을, 등록한 어댑터는 현재 사용할 제품·연결 방식을 나타낸다.
 추가 제품은 같은 리소스·승인 계약에 맞춰 연결한다.
 
-기억은 업무에서 검증된 규칙·구조·절차·실패 예방 지식을 선별해 재사용하는 기능이다.
-호스트가 검색 결과를 참고해 판단하고 로컬 실행기가 profile·실제 대상·현재 권한·보존기한을 검사한다.
-장기 운영지식은 별도 허용한 범주를 보존한다.
-새 업무는 검색한 지식의 적용 조건·현재 상태를 확인하고 현재 계획의 승인을 받아 실행한다.
+기억은 검증된 규칙·구조·절차·실패 예방 지식을 선별해 재사용한다.
+호스트는 적용 조건과 현재 상태를 확인하고 실행기는 [기억 계약](tasks/memory.md)에 따라 대상·권한·보존기한을 검사한다.
 
 사용자 결과는 요청에 맞는 대화 응답과 파일로 제공한다.
 텍스트·표·JSON·CSV·DB 파일 등은 결과 형식의 예시이며 등록 생성기를 통해 확장한다.
@@ -53,8 +51,7 @@ DAERI profile 안에 동일 종류의 리소스를 여러 개 등록할 수 있�
 ## 사용 예정 환경
 
 아래는 사용자가 처음 사용할 예정인 환경이다.
-현재 지원 조합·실제 검증 결과와 사용 예정 환경을 구분한다.
-처음 제공하는 연결 recipe와 확인한 조합·미검증 범위는 [리소스 사양](resources/initial-adapters.md)에서 구분한다.
+현재 제공하는 연결과 검증 범위는 [리소스 사양](resources/initial-adapters.md)에서 확인한다.
 
 | 역할 | 사용 예정 환경 |
 |---|---|
@@ -65,6 +62,7 @@ DAERI profile 안에 동일 종류의 리소스를 여러 개 등록할 수 있�
 | profile의 DB | PostgreSQL |
 | profile의 Cache | Redis |
 | profile의 Document | Confluence |
+| profile의 Issue | 도메인이 다른 여러 Jira |
 
 DAERI 자체의 배포 저장소와 profile에서 분석할 Source 리소스는 서로 다른 설정이다.
 배포 위치를 바꾸거나 리소스 제품을 교체해도 공통 업무·승인 계약을 유지한다.

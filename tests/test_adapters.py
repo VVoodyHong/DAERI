@@ -79,6 +79,7 @@ def exercise_stdio_read(registry, resource):
     ("aws_read", "Infra", "call_aws"),
     ("gitlab_read", "Source", "get_repository_file"),
     ("confluence_read", "Document", "confluence_get_page"),
+    ("jira_read", "Issue", "jira_get_issue"),
 ])
 def test_builtin_selection_exposes_the_read_adapter_contract(adapter_id, resource_type, read_tool):
     from daeri import adapters
@@ -103,7 +104,7 @@ def test_builtin_registry_maps_canonical_ids_to_the_selected_instances():
     registered = getattr(adapters, "BUILTIN_ADAPTERS")
     assert isinstance(registered, dict)
     assert set(registered) == {
-        "postgres_read", "redis_read", "aws_read", "gitlab_read", "confluence_read",
+        "postgres_read", "redis_read", "aws_read", "gitlab_read", "confluence_read", "jira_read",
     }
     for adapter_id, adapter in registered.items():
         assert get_adapter(adapter_id) is adapter

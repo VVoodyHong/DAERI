@@ -4,6 +4,7 @@ from .aws import AwsReadAdapter
 from .base import ReadAdapter, clean_path
 from .confluence import ConfluenceReadAdapter
 from .gitlab import GitlabReadAdapter
+from .jira import JiraReadAdapter
 from .postgres import PostgresReadAdapter
 from .redis import RedisReadAdapter
 from ..storage import StoreError
@@ -24,7 +25,7 @@ def _build_registry(adapters):
 
 
 BUILTIN_ADAPTERS = _build_registry((
-    PostgresReadAdapter(), RedisReadAdapter(), AwsReadAdapter(), GitlabReadAdapter(), ConfluenceReadAdapter(),
+    PostgresReadAdapter(), RedisReadAdapter(), AwsReadAdapter(), GitlabReadAdapter(), ConfluenceReadAdapter(), JiraReadAdapter(),
 ))
 
 

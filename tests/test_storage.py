@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sqlite3
@@ -79,6 +80,28 @@ def test_invalid_policy_or_plaintext_credentials_are_rejected(store, options):
         store.put_profile("alpha", **options)
     assert "do-not-echo" not in str(caught.value)
     assert store.list_profiles() == []
+
+
+@pytest.mark.parametrize('field', ['retention_days', 'long_term_memory_days'])
+@pytest.mark.parametrize('days', [3_000_000, 10 ** 100])
+def test_unrepresentable_retention_is_rejected_without_replacing_profile(store, field, days):
+    previous = store.put_profile('alpha', retention_days=30, long_term_memory_days=365)
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        store.put_profile('alpha', **{field: days})
+    assert store.get_profile('alpha') == previous
+
+
+@pytest.mark.parametrize('field', ['retention_days', 'long_term_memory_days'])
+def test_legacy_unrepresentable_retention_returns_a_configuration_error(store, field):
+    profile = store.put_profile('alpha')
+    profile[field] = 10 ** 100
+    content = json.dumps(profile).encode()
+    row = store._db.execute('SELECT path FROM profiles WHERE name=?', ('alpha',)).fetchone()
+    (store.data_dir / row['path']).write_bytes(content)
+    store._db.execute('UPDATE profiles SET size=?,sha256=? WHERE name=?',
+                      (len(content), hashlib.sha256(content).hexdigest(), 'alpha'))
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        store.get_profile('alpha')
 
 
 def test_unconnected_resources_are_not_silently_published(store):

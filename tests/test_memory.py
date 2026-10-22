@@ -98,6 +98,31 @@ def test_source_bound_expiry_is_earliest_permission(memory):
     assert datetime.fromisoformat(item["expires_at"]) <= datetime.now(UTC) + timedelta(days=2)
 
 
+@pytest.mark.parametrize('days', [3_000_000, 10 ** 100])
+def test_unrepresentable_approved_retention_never_publishes_memory(memory, days):
+    service, profile = memory
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        save(service, profile, policy={'retention': 'long_term', 'retention_days': days})
+    assert service.search(profile['profile_id'], 'E_CONN_001')['items'] == []
+
+
+@pytest.mark.parametrize('missing', ['expires_at', 'body'])
+def test_incomplete_memory_schema_returns_recovery_error_without_migration(tmp_path, missing):
+    store = Store(tmp_path)
+    columns = ['memory_ref TEXT PRIMARY KEY', 'memory_id TEXT', 'profile_id TEXT', 'version INTEGER',
+               'body TEXT', 'content_hash TEXT', 'source_hash TEXT', 'created_at TEXT',
+               'expires_at TEXT', 'index_state TEXT']
+    columns = [column for column in columns if column.split()[0] != missing]
+    store._db.execute('CREATE TABLE memory_versions (' + ','.join(columns) + ')')
+    before = list(store._db.execute('PRAGMA table_info(memory_versions)'))
+    try:
+        with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
+            MemoryService(store, auto_load=False)
+        assert list(store._db.execute('PRAGMA table_info(memory_versions)')) == before
+    finally:
+        store.close()
+
+
 def test_repeated_same_source_does_not_extend_retention(memory):
     service, profile = memory
     evidence = source(service, profile)

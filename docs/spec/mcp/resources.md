@@ -22,7 +22,7 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 | `limit` | integer | 아니요 | 기본 20, 범위 1~100 |
 
 `types`를 생략하면 접근 가능한 모든 유형을 대상으로 한다.
-기본 범주는 DB·Cache·Infra·Source·Document·Log·Ticket·Mail이며 새 범주를 등록할 수 있다.
+기본 범주는 DB·Cache·Infra·Source·Document·Issue·Log·Mail이며 새 범주를 등록할 수 있다.
 빈 배열은 거부한다.
 현재 목록 커서는 업무·유형 필터·인스턴스 및 기능 요약의 서명에 연결한다.
 다른 조건에 재사용하거나 등록부 변경으로 유효성을 잃으면 `CURSOR_INVALID`로 반환한다.

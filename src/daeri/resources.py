@@ -174,7 +174,6 @@ def validate_resource(config):
             _fail("Remote authentication headers cannot override HTTP routing or protocol headers.")
     else:
         _fail("Only stdio and HTTPS Streamable HTTP are supported.")
-    adapter.validate_connection(config)
     capabilities = config["capabilities"]
     if not isinstance(capabilities, list) or not 1 <= len(capabilities) <= 128:
         _fail()
@@ -183,12 +182,14 @@ def validate_resource(config):
         if (not isinstance(capability, dict) or set(capability) - {"capability_id", "tool_name", "description", "constraints"}
                 or not {"capability_id", "tool_name", "constraints"} <= set(capability)
                 or not isinstance(capability["capability_id"], str) or not _ID.fullmatch(capability["capability_id"])
+                or not isinstance(capability["tool_name"], str)
                 or capability["tool_name"] not in adapter.read_tools):
             _fail("Only supported, explicitly selected read tools may be registered.")
         ids.append(capability["capability_id"])
         _guards(capability["constraints"])
     if len(set(ids)) != len(ids):
         _fail()
+    adapter.validate_connection(config)
     # The policy module validates the resource's separate model/export/retention policy.
     if "policy" in config and not isinstance(config["policy"], dict):
         _fail()

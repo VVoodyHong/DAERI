@@ -7,13 +7,13 @@ import io
 import json
 import math
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 
 from .policy import pointer_get, pointer_path
 from .planning import evidence_matches_step
 from .security import redact
-from .storage import StoreError
+from .storage import StoreError, retention_deadline
 
 
 def require(condition, message):
@@ -429,8 +429,7 @@ class ResultService:
         with self.store.transaction():
             task_expiry = self.store._db.execute("SELECT expires_at FROM tasks WHERE task_id=?", (task["task_id"],)).fetchone()[0]
             days = (task.get("profile_snapshot") or {}).get("retention_days")
-            expiry = instant(task_expiry) if task_expiry is not None else (
-                datetime.now(UTC) + timedelta(days=days) if days is not None else None)
+            expiry = instant(task_expiry) if task_expiry is not None else retention_deadline(days)
             if expiry is not None and expiry <= datetime.now(UTC):
                 raise StoreError("RECORD_EXPIRED", "보고의 보존기한이 끝났습니다.")
             normalized = redact(copy.deepcopy(report))

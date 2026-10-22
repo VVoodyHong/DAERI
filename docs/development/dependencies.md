@@ -12,7 +12,7 @@
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
-| `adapters/`의 `setup_fields`·`normalize_setup_values` | 어댑터별 접속·공개 인증 입력 스키마·필수값·저장 표현·설정 목적지 |
+| `adapters/`의 `setup_fields`·`normalize_setup_values`·`finalize_setup_resource` | 어댑터별 입력 스키마·저장 표현·설정 목적지와 선택한 인증 방식의 최종 구성 |
 | `embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
@@ -82,13 +82,7 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 
 | 입력 | 처리와 반환 |
 |---|---|
-| `setup catalog` | 리소스 종류·지원 제품과 구현된 임베딩 API 연결 방식·표시 설명 반환 |
-| `setup status PROFILE` | 저장소 개설 전에도 [초안 파일 상태](../spec/configuration/profiles.md#생성과-파일-위치)를 읽어 신규·재개 또는 복구 필요 반환 |
-| `setup draft PROFILE --resource INSTANCE=RECIPE` | 선택한 연결의 접속·공개 인증 YAML 초안과 기준 상태 생성; 옵션 반복으로 복수 인스턴스 지정 |
-| `setup draft PROFILE --embedding PROVIDER` | 선택한 임베딩 방식의 입력만 초안에 포함; 생략하면 기존 선택 보존 |
-| `setup draft PROFILE --embedding api --embedding-adapter ID` | 확인한 API 연결 방식의 입력 생성; 새 API에서 ID를 생략하면 미완료 초안 보존 |
-| `setup validate PROFILE` | 파일 전체 검증과 변경 요약·확인값 반환 |
-| `setup apply PROFILE --confirm TOKEN` | 검증한 파일·기준 상태 대조 후 하나의 profile 개정으로 일괄 저장 |
+| `setup catalog/status/draft/validate/apply` | 카탈로그·초안 상태 조회, 선택별 YAML 생성·검증·일괄 적용; 인수·확인값·복수 연결은 [YAML 관리 계약](../spec/configuration/profiles.md#관리-명령과-재시도) 참조 |
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
 | `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
 | `profile export NAME` | 이동 가능한 공개 구성 필드 반환 |
@@ -103,13 +97,14 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 | `resource diagnose PROFILE INSTANCE` | 인증·대상과 MCP 도구 목록을 확인해 기능 계약 등록 |
 | `auth set/status/delete REFERENCE` | 사용자 터미널의 숨김 입력·지정 참조 상태·삭제; 터미널 부재는 `input_required`·종료 코드 0 |
 | `memory configure PROFILE --config CONFIG_JSON --expected-revision N` | 임베딩 객체만 검증·개정 대조 후 선택 적용; 다른 profile 설정 보존 |
-| `memory status [--profile NAME]` | 네트워크·비밀 해소 없이 제공자·API 연결 방식·로컬 준비 확인; 원격 호환은 미검증 |
-| `memory diagnose --profile NAME` | 로컬 모델 또는 허용된 회사 API를 고정 시험 문장으로 검사 |
-| `memory prepare [--profile NAME]` | 로컬 제공자만 명시적 모델 준비 |
-| `memory reindex [--profile NAME]` | 선택한 제공자로 현재 허용 정본 기반 재색인 |
+| `memory status/diagnose/prepare/reindex` | 선택한 제공자의 상태·시험 진단·로컬 준비·허용 정본 재색인; 인수·실패는 [준비 계약](../spec/installation/environment.md#임베딩-선택과-준비) 참조 |
 | `cleanup` | 만료된 업무 본문·기억·색인 정리 |
 
-일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
+일반 관리 결과는 JSON으로 반환한다.
+CLI 예외는 `status: error`·`data: null`·오류 코드·고정된 안전 메시지·`next_action: stop`과 종료 코드 1로 반환한다.
+인수 파싱 실패의 종료 코드는 2다.
+호스트는 오류 코드와 현재 단계로 영향·복구 방법을 안내하며 예외의 원문 메시지는 내부 진단 정보다.
+`setup validate`·`resource validate-setup`의 입력 오류는 각 검증 결과의 필드별 `issues`와 종료 코드 1로 구분한다.
 `VALUES_JSON` 인자는 UTF-8 공개 값 객체를 담은 파일의 경로다.
 스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
 `setup status`는 초안 파일 상태만 읽는 명령이며 YAML 내용의 유효성은 초안 재개·전체 검증에서 확인한다.

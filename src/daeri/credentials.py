@@ -1,10 +1,20 @@
 """Resolve explicit credential references through supported native OS stores."""
 
+import hashlib
+import json
 import os
 import re
 import sys
 
 from .storage import StoreError
+
+
+def resource_reference(profile, instance, field):
+    name = profile + '.' + instance + '.' + field.lower()
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', name):
+        identity = json.dumps([profile, instance, field.lower()], separators=(',', ':')).encode()
+        name = 'resource.' + hashlib.sha256(identity).hexdigest()
+    return 'credential:' + name
 
 
 class Credentials:

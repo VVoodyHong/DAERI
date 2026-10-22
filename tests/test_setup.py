@@ -159,7 +159,7 @@ def test_plaintext_authentication_is_rejected_before_profile_write(store, tmp_pa
 
 def test_templates_use_only_catalog_pins_and_deny_data_by_default(store):
     catalog = load_catalog()
-    assert len(catalog) == 5
+    assert len(catalog) == 6
     for recipe_id, item in catalog.items():
         template = profile_template(store, recipe_id, 'service', 'resource-one')
         assert template['retention_days'] is None
@@ -174,7 +174,7 @@ def test_templates_use_only_catalog_pins_and_deny_data_by_default(store):
 def test_templates_use_product_specific_adapter_identifiers(store):
     expected = {
         'db-postgres': 'postgres_read', 'cache-redis': 'redis_read', 'infra-aws': 'aws_read',
-        'source-gitlab': 'gitlab_read', 'document-confluence': 'confluence_read',
+        'source-gitlab': 'gitlab_read', 'document-confluence': 'confluence_read', 'issue-jira': 'jira_read',
     }
     for recipe, adapter_id in expected.items():
         template = profile_template(store, recipe, 'service', 'resource-one')

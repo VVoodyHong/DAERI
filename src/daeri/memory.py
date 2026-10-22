@@ -6,13 +6,13 @@ import math
 import re
 import sqlite3
 import struct
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 from .security import redact
 from .policy import selector_covers, within_selectors
-from .storage import StoreError
+from .storage import StoreError, retention_deadline
 from .embedding import create_api_embedder, validate_embedding_config
 
 
@@ -254,10 +254,13 @@ class MemoryService:
 
     def _upgrade_expiry(self, schema):
         columns = self.store._db.execute("PRAGMA table_info(memory_versions)").fetchall()
+        names = "memory_ref,memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state"
+        required = set(names.split(','))
+        _require(required <= {column['name'] for column in columns},
+                 'STORE_UNAVAILABLE', '기억 저장 구조의 필수 필드를 확인할 수 없어 복구가 필요합니다.')
         if not next(column for column in columns if column["name"] == "expires_at")["notnull"]:
             return
-        names = "memory_ref,memory_id,profile_id,version,body,content_hash,source_hash,created_at,expires_at,index_state"
-        _require({column["name"] for column in columns} == set(names.split(",")),
+        _require({column["name"] for column in columns} == required,
                  "STORE_UNAVAILABLE", "알려진 기억 스키마만 보존기한 형식을 이관할 수 있습니다.")
         db = self.store._db
         vector_schema = db.execute("SELECT sql FROM sqlite_schema WHERE name='memory_vectors'").fetchone()[0]
@@ -447,10 +450,7 @@ class MemoryService:
                 _require(all(source.get("long_term_allowed") is True for source in sources),
                          "ACCESS_DENIED", "모든 출처가 독립적인 장기 운영지식 보존을 허용해야 합니다.")
                 limits = [profile["long_term_memory_days"], policy.get("retention_days", profile["long_term_memory_days"])]
-                _require(all(value is None or (type(value) is int and value > 0) for value in limits),
-                         "INVALID_INPUT", "서버가 해소한 장기 보존기간은 null 또는 양의 정수여야 합니다.")
-                days = _finite_min(*limits)
-                expiry = datetime.now(UTC) + timedelta(days=days) if days is not None else None
+                expiry = _finite_min(*(retention_deadline(days, datetime.now(UTC)) for days in limits))
             else:
                 _require("expires_at" in policy, "RESULT_VALIDATION_FAILED", "업무 보존기한 또는 명시적인 무기한 값이 필요합니다.")
                 expiry = _finite_min(*(_expiry(source["expires_at"]) for source in sources), _expiry(policy["expires_at"]))

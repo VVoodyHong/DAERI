@@ -80,7 +80,7 @@ def _parser():
     setup.add_parser('status', help='Inspect draft availability without creating user data').add_argument('profile')
     draft = setup.add_parser('draft')
     draft.add_argument('profile')
-    draft.add_argument('--resource', action='append', default=[], metavar='INSTANCE=RECIPE')
+    draft.add_argument('--resource', action='append', default=[], metavar='[INSTANCE=]RECIPE')
     draft.add_argument('--embedding', choices=('local', 'api', 'openai_compatible', 'keyword_only'))
     draft.add_argument('--embedding-adapter', metavar='ADAPTER')
     draft.add_argument('--refresh', action='store_true')
@@ -198,13 +198,16 @@ def _with_store(args):
             from .onboarding import create_draft, validate_draft, apply_draft
             if args.setup_command == 'draft':
                 from .storage import StoreError
-                selected = {}
+                selected, recipes = {}, []
                 for value in args.resource:
+                    if '=' not in value:
+                        recipes.append(value)
+                        continue
                     if value.count('=') != 1 or value.split('=')[0] in selected:
                         raise StoreError('INVALID_INPUT', 'Select unique resource names and registered products.')
                     instance, recipe = value.split('=')
                     selected[instance] = recipe
-                return create_draft(store, args.profile, selected, embedding=args.embedding,
+                return create_draft(store, args.profile, selected, recipes=recipes, embedding=args.embedding,
                                     embedding_adapter=args.embedding_adapter, refresh=args.refresh)
             if args.setup_command == 'validate':
                 return validate_draft(store, args.profile)

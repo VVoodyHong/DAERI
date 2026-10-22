@@ -2,11 +2,11 @@
 
 import hashlib
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from .policy import as_pointer, pointer_path, selected_paths
 from .security import redact
-from .storage import StoreError
+from .storage import StoreError, retention_deadline
 
 
 TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
@@ -131,7 +131,7 @@ def update(engine, args, task):
         common_expiry = instant(expiry_row) if expiry_row is not None else None
         days = (task.get("profile_snapshot") or {}).get("retention_days", profile.get("retention_days"))
         if storing and common_expiry is None and days is not None:
-            common_expiry = instant(finished) + timedelta(days=days)
+            common_expiry = retention_deadline(days, instant(finished))
         for reference, record in leaves.items():
             kind = record["record_kind"]
             body = record.get("result") if kind == "call_result" else record["payload"]

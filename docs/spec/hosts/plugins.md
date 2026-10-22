@@ -55,23 +55,13 @@ setup·profile·list-profiles·work의 대화 응답은 확인한 결과와 필�
 setup은 간단한 선택과 사용자용 YAML을 조합한다.
 호스트별 질문 도구는 [선택·확인 계약](#setup의-정형-질문), 접속값 입력은 사용자용 YAML 계약을 따른다.
 
-1. 배포자가 저장소에 DAERI 소스와 호스트별 마켓플레이스 배포 구성을 제공한다.
-2. 사용자가 해당 저장소의 마켓플레이스를 Codex 또는 Claude Code에 추가하고 DAERI 플러그인을 설치한다.
-3. 사용자가 `/setup {profile}`에 해당하는 호스트 진입점으로 세팅을 시작하고 시작 여부를 확인한다.
-4. 최소 환경을 확인·준비하고 실제 카탈로그에서 사용할 리소스와 제품을 선택한다.
-5. 선택한 어댑터의 접속 정보·공개 인증 설정만 담은 사용자용 YAML 초안을 생성하고 사용자가 편집한다.
-6. 코드가 전체 입력을 검증하고 비밀 없는 변경 요약을 보여 준 뒤 명시적으로 확인한 구성을 하나의 profile 개정으로 적용한다.
-7. 선택한 연결의 프로그램·인증·진단과 기억 준비를 진행한다.
-8. profile 저장·리소스별 연결·기억 준비·현재 호스트 MCP 연결의 실제 결과와 남은 조치를 구분해 안내한다.
-9. 해당 대화에서 확인한 profile을 대상으로 work 또는 자연어로 업무를 요청한다.
+배포자는 소스와 호스트별 마켓플레이스 구성을 제공한다.
+사용자는 마켓플레이스 추가·플러그인 설치 후 호스트의 setup 진입점으로 세팅한다.
+setup은 시작 확인 → 전용 환경 준비 → 종류·제품·개수 선택 → YAML 편집·검증·확인·적용 → 연결·기억 준비 순서다.
+준비 결과는 profile 저장·리소스별 연결·기억·현재 호스트 MCP 연결로 구분한다.
+해당 대화에서 확인한 profile을 대상으로 work 또는 자연어로 업무를 요청한다.
 
-초안의 구조·저장 위치·기존 설정 보존·검증·적용 계약은 [사용자용 setup YAML](../configuration/profiles.md#사용자용-setup-yaml)을 따른다.
-호스트는 코드가 생성한 파일을 안내하고 검증·적용 결과를 전달한다.
-대화의 표시 범위는 [사용자 안내](#사용자-안내), 기술 정보 확인은 [상세 진단](../installation/environment.md#검사계획설치)을 따른다.
-
-`/setup {profile}`은 공통 사용 흐름을 설명하는 논리적 호출 형식이다.
-실제 호출 이름과 설치 방식은 아래 호스트별 구성을 따른다.
-사용 준비는 소스 배포·마켓플레이스 등록·플러그인 설치·환경 준비·profile 설정의 각 완료 결과로 확인한다.
+입력·중단·재개의 단계별 처리는 [정형 질문](#setup의-정형-질문), 파일의 생성·적용은 [YAML 계약](../configuration/profiles.md#사용자용-setup-yaml)을 따른다.
 
 배포 저장소와 profile이 접근할 Source 리소스는 서로 다른 역할이다.
 구체적인 첫 배포·사용 대상은 [사용 예정 환경](../product.md#사용-예정-환경)에 모아 관리한다.
@@ -91,45 +81,22 @@ setup은 간단한 선택과 사용자용 YAML을 조합한다.
 각 카탈로그는 저장소 루트의 플러그인을 가리키며 호스트는 설치한 사본에서 Skill과 프로그램을 읽는다.
 마켓플레이스를 추가할 때는 두 호스트의 카탈로그를 포함한 저장소 전체를 제공한다.
 
-아래 URL은 사내 저장소를 가정한 예시다.
-실제 clone URL로 바꾸고 지정한 브랜치를 먼저 원격에 배포해야 한다.
-첫 설치는 호스트를 종료한 상태에서 OS 터미널로 수행하고 설치 성공 뒤 호스트를 시작한다.
-Codex는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)에 따라 다음 명령을 사용한다.
+첫 설치 명령과 사용자 호출은 [사용자 안내](../../../README.md#설치)가 정본이다.
+호스트를 종료한 상태에서 OS 터미널로 설치하고 성공 뒤 호스트를 시작한다.
+사내 배포는 해당 clone URL·원격 브랜치를 사용한다.
+Codex의 브랜치는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)의 `--ref`, Claude Code는 [터미널 설치 규격](https://code.claude.com/docs/en/discover-plugins#manage-plugins-from-your-shell)의 URL `#ref`로 지정한다.
 
-```shell
-codex plugin marketplace add https://gitlab.example.com/team/DAERI.git --ref main
-codex plugin add daeri@daeri-marketplace
-codex
-```
-
-시작한 Codex의 새 대화에서 `$daeri:setup service-prod`로 준비한다.
-준비 후에는 `$daeri:profile service-prod`, `$daeri:work 요청 내용`, `$daeri:list-profiles`로 호출한다.
-삭제는 `$daeri:profile delete service-prod`로 요청한다.
 Codex 플러그인의 Skill 이름은 [공식 구현](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/core-skills/src/loader/namespace.rs#L175-L180)의 `플러그인명:Skill명`이며 `$`는 호스트의 Skill 호출 표시다.
 `/skills`·`$` 선택기 또는 앱의 Skill 선택 화면에서도 DAERI의 같은 Skill을 선택할 수 있다.
+Claude Code는 [공식 이름 규칙](https://code.claude.com/docs/en/skills#choose-where-skills-load)에 따라 `/플러그인명:Skill명`으로 노출한다.
 
-Claude Code는 [터미널 설치 규격](https://code.claude.com/docs/en/discover-plugins#manage-plugins-from-your-shell)에 따라 아래를 순서대로 실행한다.
-브랜치 지정은 URL의 `#ref`이며 Codex 터미널 명령의 `--ref`와 구분한다.
-
-```shell
-claude plugin marketplace add 'https://gitlab.example.com/team/DAERI.git#main'
-claude plugin install daeri@daeri-marketplace --scope user
-claude
-```
-
-Claude Code 플러그인은 위 명령에서 사용자 범위로 설치하고 시작한 대화에서 사용한다.
 이미 실행 중인 호스트에서 설치·업데이트한 경우의 새로고침은 복구 절차로만 안내한다.
-이 경우 `/reload-plugins`로 플러그인 변경을 반영한다.
+Claude Code에서는 `/reload-plugins`로 플러그인 변경을 반영한다.
 활성화한 플러그인의 `/daeri:setup`이 목록에 없으면 `/reload-skills`로 Skill·명령 디렉터리를 다시 읽고 `/skills` 또는 `/` 메뉴에서 확인한다.
 그래도 없으면 `/plugin`의 Installed에서 활성화 상태를, Errors에서 로딩 실패를 확인한다.
 새로고침 지원이 없거나 로딩 문제가 지속되면 Claude Code 프로세스를 종료하고 다시 실행한다.
 두 새로고침의 역할은 [공식 명령 안내](https://code.claude.com/docs/en/commands)를 따른다.
 `/reload-skills`의 Skill 목록 노출과 MCP의 실제 연결은 각각 확인한다.
-그다음 `/daeri:setup service-prod`로 준비하고 `/daeri:work` 또는 자연어로 업무를 요청한다.
-대화의 기본 대상을 고를 때는 `/daeri:profile`, 저장한 목록만 볼 때는 `/daeri:list-profiles`를 사용한다.
-삭제는 `/daeri:profile delete service-prod`로 요청하며 같은 profile Skill에서 대상·범위를 확인한다.
-플러그인 Skill은 [공식 이름 규칙](https://code.claude.com/docs/en/skills#choose-where-skills-load)에 따라 `/플러그인명:Skill명`으로 노출된다.
-현재 제공하는 업무 진입 Skill명은 work다.
 
 이미 pull한 로컬 사본을 쓰려면 두 호스트 모두 마켓플레이스 추가의 URL 대신 해당 저장소 루트 경로를 받는다.
 공백이 있는 경로는 터미널에서 한 인자로 인용한다.
@@ -185,18 +152,6 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 선택·확인은 아래의 정형 질문으로 받고 접속값은 YAML로 입력한다.
 선택창의 모양과 항목 수는 호스트가 제공한다.
 
-| 사용자 입력·상황 | 호스트·DAERI의 처리 | 사용자에게 보이는 결과 |
-|---|---|---|
-| 최초 setup 요청 | profile과 고정된 시작 확인 뒤 전용 환경 준비 | 세팅 시작·중단 선택과 실제 준비 상태 |
-| 프로그램 준비 완료 | 실행기 검사 결과와 현재 호스트 연결을 구분해 확인 | 필요한 경우 호스트 재시작·MCP 재연결 안내 |
-| profile 준비 요청 | 대상 서비스의 리소스·연결·인증 참조 구성 | 등록 정보와 리소스별 진단 결과 |
-| profile 선택 요청 | 저장 목록·지정 profile을 확인하고 대화의 기본 대상 선택 | 이후 새 업무에 사용할 profile·식별자 |
-| profile 삭제 요청 | 관리 CLI로 대상·범위를 미리 확인하고 사용자 확인 뒤 연관 자료 정리 | 완료 또는 사용 차단을 유지한 정리 대기 |
-| profile 목록 요청 | 저장된 profile 목록을 이름순으로 요약 | profile·리소스 범주, 구별에 필요한 식별자 |
-| 자연어 업무 요청 | 현재 제공 도구와 profile의 저장 정보를 읽고 접수 | 업무 식별자·필요한 추가 입력 |
-| 승인 답변 | 현재 업무·저장된 계획·대기 승인 요청과 실제 사용자 답변 연결 | 승인·수정 요청·거절·미결 상태 |
-| 재개 요청 | 최근 업무나 지정 업무의 저장 상태·계획·남은 작업 확인 | 필요한 새 승인과 이어갈 범위 |
-
 공통 MCP 시작은 준비된 전용 Python으로 설치된 패키지만 실행한다.
 필수 모델·패키지 누락 또는 버전 불일치는 setup 준비 안내로 처리한다.
 실행기의 표준 출력은 MCP 전달에만 사용하며 시작 실패는 진단 출력으로 구분한다.
@@ -206,7 +161,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 
 ## setup의 정형 질문
 
-setup은 **profile 확인 → 시작 확인 → 리소스·제품 선택 → YAML 편집 → 적용 확인** 순서다.
+setup은 **profile 확인 → 시작 확인 → 리소스 종류·제품 선택 → 제품별 연결 개수 확인 → YAML 편집 → 적용 확인** 순서다.
 첫 대화 응답은 [DAERI 시작 로고](../../../skills/setup/SKILL.md#시작-로고)와 현재 단계의 질문·진행 안내로 구성한다.
 profile 문자열은 대화 입력, 선택·확인은 질문 도구, 접속값은 [사용자용 YAML](../configuration/profiles.md#사용자용-setup-yaml)로 받는다.
 각 단계의 사용자 안내는 현재 질문·선택지와 입력에 필요한 예시로 구성한다.
@@ -218,8 +173,9 @@ setup의 사용자 입력은 아래 단계 표로 구성하고 기존 설정의 
 |---|---|---|
 | profile 미지정 | 자유 문자열 입력 요청과 형식 예시 | 실제 입력을 기다리고 검증 후 시작 확인 |
 | profile이 지정된 새 세팅 | 세팅 시작·중단 확인 | 시작이면 환경 준비, 중단이면 현재 설정을 보존하고 종료 |
-| 리소스 선택 | “연결할 리소스 종류를 선택해 주세요.” | 선택한 종류의 제품 확인 |
-| 선택한 범주에 제품이 여럿 | “사용할 제품을 선택해 주세요.” | 선택값을 YAML 생성에 사용 |
+| 리소스 선택 | “연결할 리소스 종류를 선택해 주세요.” | 종류를 복수 선택하고 각 종류의 제품 확인 |
+| 선택한 종류에 제품이 여럿 | “데이터베이스에서 사용할 제품을 모두 선택해 주세요.”처럼 해당 종류를 표시 | 제품을 복수 선택하고 각 제품의 연결 개수 확인 |
+| 제품 선택 완료 | “PostgreSQL은 몇 개 연결할까요?”처럼 실제 제품명과 연결 개수 질문 | 제품별로 사용자가 확정한 1 이상의 정수를 YAML 생성에 사용 |
 | 초안·기존 profile에 임베딩 설정 없음 | “기억 검색에 사용할 임베딩 방식을 선택해 주세요.” | 아래 선택값으로 YAML 구성 |
 | 회사 API의 연결 방식 미확인 | “회사 API의 연결 방식을 확인해 주세요.” | 실제 지원 목록과 회사 규격을 대조해 선택; 미확인이면 초안 보존 |
 | YAML 생성 완료 | 생성한 파일 위치와 “파일을 작성한 뒤 알려 주세요.” | 작성 완료 응답을 받아 검증 |
@@ -250,15 +206,22 @@ setup의 사용자 입력은 아래 단계 표로 구성하고 기존 설정의 
 
 | 필드 | 역할 |
 |---|---|
-| `groups[].label` | 종류 선택지의 표시명; 데이터베이스·캐시·인프라·소스 코드·문서 |
+| `groups[].label` | 종류 선택지의 표시명; 데이터베이스·캐시·인프라·소스 코드·문서·이슈 |
 | `groups[].description` | 종류 선택지의 설명; “사용 가능한 제품: …”과 해당 그룹의 모든 제품명 |
 | `groups[].type` | 사용자가 선택한 종류를 연결하는 내부 값 |
+| `groups[].instance_prefix` | 코드가 제공하는 기본 연결 이름; 생성·복수 연결은 [YAML 이름 규칙](../configuration/profiles.md#공통-구조와-어댑터-입력) 적용 |
 | `groups[].products[].display_name` | 복수 제품이 있는 종류에서 선택할 제품명 |
 | `groups[].products[].recipe_id` | 제품 선택 뒤 YAML 생성에 사용하는 내부 값 |
 
 선택지의 표시명·설명은 해당 필드의 문자열을 그대로 사용한다.
-제품이 하나면 그 제품을 선택하고 여럿이면 실제 목록에서 선택받는다.
-표시한 범주·제품을 코드의 식별값에 매핑해 선택한 연결의 YAML 필드를 생성한다.
+제품이 하나면 그 제품을 선택하고 여럿이면 실제 목록에서 사용할 제품을 복수 선택받는다.
+제품별 개수는 실제 사용자 응답의 1 이상 정수로 확정한다.
+요청에서 알려준 개수를 재사용하고 나머지만 “1개”·“2개”·“3개”와 호스트의 입력 경로로 받는다.
+형식 오류는 유효한 예시와 함께 해당 제품의 개수를 다시 받는다.
+질문은 도구가 지원하는 수만큼 묶고 YAML 안내에 종류·제품·개수를 짧게 표시한다.
+
+개수 확인은 Skill을 따르는 호스트의 책임이다.
+실행기는 [초안 생성 계약](../configuration/profiles.md#생성과-파일-위치)의 반복된 `--resource` 항목을 검증해 연결 블록으로 변환한다.
 입력할 접속 정보·공개 인증 설정은 YAML 계약, 업무의 세부 조회 대상은 [계획 승인](../tasks/approval.md)을 따른다.
 
 카탈로그의 모든 범주는 같은 선택 단계와 복수 선택 형식을 사용한다.
@@ -267,7 +230,7 @@ setup의 사용자 입력은 아래 단계 표로 구성하고 기존 설정의 
 페이지는 실제 항목만으로 도구의 최소·최대 선택지 수를 만족하도록 균등하게 구성한다.
 추가 범주·제품도 카탈로그 등록만으로 같은 규칙을 따른다.
 
-단일 선택만 지원하는 도구에서는 각 범주에 같은 “사용”·“사용 안 함” 선택을 제공한다.
+단일 선택만 지원하는 도구에서는 각 종류·제품에 같은 “사용”·“사용 안 함” 선택을 제공한다.
 가능한 질문 수만큼 묶어 표시한다.
 호출 인자는 현재 질문 도구 스키마에 선언된 필드로 구성한다.
 
@@ -308,15 +271,9 @@ Claude Code의 `Read`처럼 파일 내용을 직접 읽는 도구가 있으면 �
 | work | `skills/work/SKILL.md` | 선택한 대상의 업무 접수·계획·승인·실행·보고 |
 | list-profiles | `skills/list-profiles/SKILL.md` | 저장한 profile의 목록 요약 |
 
-setup은 사용자가 환경·연결 관리를 요청했을 때 시작한다.
-work의 환경 준비 필요 상태는 setup 안내로 연결한다.
-설정 완료 시 profile·식별자와 실제 확인한 준비 상태를 안내하고 해당 대화에서 선택한 맥락으로 사용한다.
-profile 선택·list-profiles는 관리 CLI의 `profile list`·`profile show`를 사용하고 선택은 현재 대화의 맥락에 둔다.
-선택 우선순위·재선택·목록의 범위는 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)을 따른다.
-profile 삭제도 같은 Skill을 사용한다.
-호스트는 `profile delete NAME`의 미리보기를 요약해 사용자에게 확인받고 `--confirm TOKEN`으로 실행한다.
-사용 차단·연관 자료 정리·재시도·최종 삭제는 [실행기의 삭제 계약](../configuration/profiles.md#profile-삭제)이 담당한다.
-삭제의 기술 절차는 실행기가 수행하고 profile Skill은 대상·범위 확인과 관리 명령 연결을 담당한다.
+setup은 환경·연결 관리 요청으로 시작하고 work의 미준비 상태는 setup 안내로 연결한다.
+대화의 기본 대상·목록 조회는 [profile 선택](../configuration/profiles.md#선택과-기본값), 확인 후 연관 자료 정리는 [profile 삭제](../configuration/profiles.md#profile-삭제)를 따른다.
+Skill은 사용자 확인과 관리 호출을 연결하고 실행기는 저장 상태·권한·삭제 절차를 검사한다.
 
 work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 [work Skill](../../../skills/work/SKILL.md)은 아래 정본의 동작을 현재 MCP의 도구·입력에 연결한다.

@@ -13,6 +13,7 @@ import tomllib
 from uuid import uuid4
 
 from .adapters import get_adapter
+from .credentials import resource_reference
 from .security import redact
 from .storage import StoreError
 
@@ -161,12 +162,15 @@ def profile_template(store, recipe_id, profile_name, instance_id):
     item, _, _ = _recipe(recipe_id)
     _require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', profile_name)))
     _require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', instance_id)))
+    identity = 'identity:' + profile_name + ':' + instance_id
+    if len(identity) > 128:
+        identity = 'identity:' + hashlib.sha256(json.dumps([profile_name, instance_id]).encode()).hexdigest()
     resource = {'instance_id': instance_id, 'type': item['type'], 'adapter': item['adapter'],
                 'target': copy.deepcopy(get_adapter(item['adapter']).target_template),
-                'identity_ref': 'identity:' + profile_name + ':' + instance_id,
+                'identity_ref': identity,
                 'connection': {'transport': 'stdio', 'command': str(prepared_executable(store, recipe_id)),
                                'args': copy.deepcopy(item['args']), 'env': copy.deepcopy(item['env']),
-                               'auth_env': {name: 'credential:' + profile_name + '.' + instance_id + '.' + name.lower()
+                               'auth_env': {name: resource_reference(profile_name, instance_id, name)
                                             for name in item['auth_env']}},
                 'capabilities': copy.deepcopy(item['capabilities']), 'policy': {}}
     return {'name': profile_name, 'core_context': [], 'resources': [resource],
@@ -276,7 +280,7 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
             bound = str(value).lower() if type(value) is bool else str(value)
             pointer_set(resource, _setup_pointer(destination),
                         bound if destination[:2] == ['connection', 'env'] else value)
-    return resource
+    return get_adapter(contract['adapter']).finalize_setup_resource(resource, profile_name=profile_name)
 
 
 def configure_resource(store, recipe_id, profile_name, instance_id, path, *, expected_revision):

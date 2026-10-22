@@ -86,6 +86,10 @@ class ReadAdapter:
         """Return validated setup inputs in the adapter's stored representation."""
         return values.copy()
 
+    def finalize_setup_resource(self, resource, *, profile_name):
+        """Finalize adapter-owned public/authentication fields after setup binding."""
+        return resource
+
     def validate_connection(self, config):
         connection = config["connection"]
         if connection["transport"] != "stdio":

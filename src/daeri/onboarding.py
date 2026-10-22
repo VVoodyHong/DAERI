@@ -16,16 +16,21 @@ from .setup import (PROFILE_FIELDS, _current_setup_values, _no_secrets, _require
                     _validate_setup_values, build_setup_resource, load_catalog,
                     profile_template, read_config, setup_schema)
 from .setup_yaml import parse_yaml, write_yaml
-from .storage import StoreError, _profile_memory_policy
+from .storage import StoreError, _profile_memory_policy, retention_deadline
+
+
+def _instance_prefix(resource_type):
+    return re.sub(r'[^a-z0-9]+', '-', resource_type.lower()).strip('-')[:64].rstrip('-') or 'resource'
 
 
 def selection_catalog():
     labels = {'DB': '데이터베이스', 'Cache': '캐시', 'Infra': '인프라',
-              'Source': '소스 코드', 'Document': '문서'}
+              'Source': '소스 코드', 'Document': '문서', 'Issue': '이슈'}
     groups = {}
     for recipe, item in load_catalog().items():
         group = groups.setdefault(item['type'], {
-            'type': item['type'], 'label': labels.get(item['type'], item['type']), 'products': []})
+            'type': item['type'], 'label': labels.get(item['type'], item['type']),
+            'instance_prefix': _instance_prefix(item['type']), 'products': []})
         group['products'].append({'recipe_id': recipe, 'display_name': item['display_name']})
     for group in groups.values():
         group['description'] = '사용 가능한 제품: ' + ', '.join(item['display_name'] for item in group['products'])
@@ -195,11 +200,44 @@ def _render(document):
     return '\n'.join(lines) + '\n'
 
 
-def create_draft(store, name, selections=None, *, embedding=None, embedding_adapter=None, refresh=False):
+def _automatic_resources(store, name, selections, recipes, blocks, profile):
+    selected = selections.copy()
+    if not recipes:
+        return selected
+    catalog = load_catalog()
+    existing = {resource['instance_id']: resource for resource in profile['resources']} if profile else {}
+    occupied = set(existing) | set(blocks)
+    for recipe in recipes:
+        _require(isinstance(recipe, str) and recipe in catalog, '연결할 제품을 확인하세요.')
+        item = catalog[recipe]
+        prefix, number = _instance_prefix(item['type']), 1
+        instance = prefix
+        while instance in selected or instance in occupied:
+            if instance not in selected:
+                if instance in blocks:
+                    block = blocks[instance]
+                    if isinstance(block, dict) and block.get('adapter') == recipe:
+                        break
+                else:
+                    try:
+                        build_setup_resource(store, recipe, name, instance, {}, existing=existing[instance])
+                    except StoreError:
+                        pass
+                    else:
+                        break
+            number += 1
+            instance = prefix + '-' + str(number)
+        selected[instance] = recipe
+    return selected
+
+
+def create_draft(store, name, selections=None, *, recipes=None, embedding=None, embedding_adapter=None, refresh=False):
     """Preserve edited values; refresh a stale base only when explicitly requested."""
     path, metadata = _paths(store, name)
     selections = {} if selections is None else selections
     _require(isinstance(selections, dict), '연결할 리소스를 확인하세요.')
+    recipes = [] if recipes is None else recipes
+    _require(isinstance(recipes, list), '연결할 제품 목록을 확인하세요.')
     _require(embedding is not None or embedding_adapter is None,
              '회사 API 연결 방식은 기억 검색 방식과 함께 선택하세요.')
     requested_embedding = _embedding_draft(name, embedding, embedding_adapter) if embedding is not None else None
@@ -211,6 +249,7 @@ def create_draft(store, name, selections=None, *, embedding=None, embedding_adap
         else:
             document = {'profile': name, 'resources': {}}
             meta = {'profile': name, 'base': _base(profile), 'schemas': {}}
+        selections = _automatic_resources(store, name, selections, recipes, document['resources'], profile)
         changed = not exists
         for instance, recipe in selections.items():
             _require(isinstance(instance, str) and isinstance(recipe, str), '연결할 리소스 이름과 제품을 확인하세요.')
@@ -316,8 +355,10 @@ def _configuration(store, name, document, profile, meta):
         else:
             config['resources'].append(resource)
     for key in ('retention_days', 'long_term_memory_days'):
-        if config[key] is not None and (type(config[key]) is not int or config[key] <= 0):
-            issues.append(_issue(key, message='양의 정수 또는 null을 입력하세요.'))
+        try:
+            retention_deadline(config[key])
+        except StoreError:
+            issues.append(_issue(key, message='계산 가능한 보존기간의 양의 정수 또는 null을 입력하세요.'))
     if not isinstance(config['core_context'], list) or any(not isinstance(v, str) for v in config['core_context']):
         issues.append(_issue('core_context'))
     try:

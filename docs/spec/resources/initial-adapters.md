@@ -12,12 +12,9 @@
 사용자는 profile마다 필요한 범주와 그 범주를 연결할 어댑터를 선택한다.
 같은 범주에 여러 제품·연결 방식·인스턴스를 함께 등록할 수 있다.
 
-setup은 실제 준비 카탈로그의 `type`으로 범주를 묶고 먼저 필요한 범주를 선택하게 한다.
-범주 설명에는 해당 범주의 `display_name`을 모두 보여 준다.
-제품이 하나면 그 제품을 선택하고 여럿이면 선택받은 제품을 내부 recipe 식별자에 대응시킨다.
-모든 범주는 같은 선택 흐름을 따르며 질문당 항목 수는 [호스트의 항목 제한](../hosts/plugins.md#setup의-정형-질문)을 따른다.
-선택지는 카탈로그와 실행·검증 계약에 등록한 어댑터에서 생성한다.
-추가 제품은 해당 계약과 검증을 갖춘 뒤 같은 선택 흐름에 포함한다.
+setup은 카탈로그의 `type`으로 범주를 묶고 `display_name`으로 사용 가능한 제품을 표시한다.
+범주·제품·연결 개수의 선택과 YAML 생성은 [setup 질문 계약](../hosts/plugins.md#setup의-정형-질문)을 따른다.
+선택지는 실행·검증 계약을 갖춘 등록 어댑터에서 생성하며 추가 제품도 같은 흐름에 포함한다.
 
 | 범주 예시 | 역할과 기능 예시 | 계획에서 확인할 조회 범위 |
 |---|---|---|
@@ -27,7 +24,7 @@ setup은 실제 준비 카탈로그의 `type`으로 범주를 묶고 먼저 필�
 | Source | 소스 구조·내용·변경 이력 조회 | 저장소·개정·경로·조회 범위 |
 | Document | 운영 문서 검색·본문 조회 | 공간·문서·공개 범위·검색 조건 |
 | Log | 실행 기록 검색·분석 | 서비스·로그 영역·기간·민감 정보 |
-| Ticket | 이슈·업무 요청·진행 기록 조회 | 조직·프로젝트·티켓·접근 범위 |
+| Issue | 이슈·업무 요청·진행 기록 조회 | 서버·프로젝트·이슈·질의·접근 범위 |
 | Mail | 업무 이력 검색·본문 조회 | 계정·함·기간·수신자·개인정보 |
 
 에이전트는 사용자 목표·승인 범위에 맞춰 등록된 기능을 조합하고 새로운 업무의 방법·순서를 판단한다.
@@ -57,7 +54,7 @@ setup은 실제 준비 카탈로그의 `type`으로 범주를 묶고 먼저 필�
 Cache의 전체 탐색·특정 항목 읽기와 Infra의 목록 조회·특정 자원 접근은 각각의 실제 접근 범위로 판정한다.
 반환 결과를 줄이는 것과 원격으로 읽는 범위를 제한하는 것을 구분한다.
 
-Source는 확인한 소스 개정을, Document는 읽은 문서와 그 시점을 결과 근거에 남긴다.
+Source는 확인한 소스 개정을, Document·Issue는 읽은 문서·이슈와 조회 시점을 결과 근거에 남긴다.
 보고에는 검색한 영역·제공 권한·잘림과 누락 범위를 함께 표시한다.
 여러 리소스의 결과를 비교할 때에는 기준·시점·완전성 차이를 함께 설명한다.
 
@@ -134,7 +131,7 @@ profile의 `resources`에는 필요한 인스턴스를 여러 개 넣을 수 있
 설정의 `constraints`는 연결에서 허용할 최대 범위다.
 업무 계획의 `scope`는 그 안에서 이번 업무에 허용하는 범위를 더 좁힌다.
 기본 setup은 접속 정보·공개 인증 설정을 받고 조회 대상은 계획에서 정한다.
-새 Source·Document 연결의 `target`은 서버 주소이며 같은 서버의 실제 저장소·문서는 계획의 명시 조건으로 검사한다.
+새 Source·Document·Issue 연결의 `target`은 서버 주소이며 같은 서버의 실제 저장소·문서·이슈는 계획의 명시 조건으로 검사한다.
 접속값 갱신은 기존 `target`의 추가 정보·조회 상한·자료 정책을 보존한다.
 상시 조회 상한이 필요한 관리자는 전체 JSON의 `capabilities[].constraints`를 설정할 수 있다.
 기능 계약의 `scope_schema.x-daeri-access-constraints`에서 등록한 상한을 확인할 수 있다.
@@ -162,6 +159,7 @@ profile의 `resources`에는 필요한 인스턴스를 여러 개 넣을 수 있
 | `aws_read` | 파싱 가능한 단일 조회 명령과 명시한 위치 | 선택한 조회 자료; 검증한 조회 연산만 허용 |
 | `gitlab_read` | GitLab 저장소·개정·상대 경로 등 구조화된 인수 | 명시한 프로젝트·개정·상대 경로의 파일·구조·조회 결과 |
 | `confluence_read` | Confluence 문서·공간 등 구조화된 식별자 | 명시한 공간·문서의 조회 결과; 지원 입력·질의 검사 |
+| `jira_read` | Jira 이슈·프로젝트 식별자 또는 승인한 JQL | 선택한 서버의 이슈·프로젝트·전환 정보·검색 결과; 도구·대상·조회 한도 검사 |
 
 setup으로 생성하는 최초 기능은 다음과 같다.
 
@@ -172,6 +170,10 @@ setup으로 생성하는 최초 기능은 다음과 같다.
 | Infra | `describe` | `call_aws` |
 | Source | `read-file` | `gitlab_get_file` |
 | Document | `read-page` | `confluence_get_page` |
+| Issue | `read-issue` | `jira_get_issue` |
+| Issue | `list-project-issues` | `jira_get_project_issues` |
+| Issue | `read-transitions` | `jira_get_transitions` |
+| Issue | `search-issues` | `jira_search` |
 
 연결 진단은 명시한 도구만 등록하며 호스트는 해당 기능의 계약을 읽고 승인 범위 안에서 호출 방법을 정한다.
 같은 어댑터의 추가 읽기 도구는 [관리 등록](../configuration/profiles.md#관리-등록과-진단)에서 도구별 입력·제약을 설정하고 진단해 등록한다.
@@ -232,6 +234,23 @@ Source·Document의 접근 범위는 하위 MCP가 실제로 읽는 원본으로
 파일 전체를 읽고 일부를 반환하는 기능은 해당 파일 전체의 접근 승인이 필요하다.
 계획의 더 좁은 접근 조건을 강제할 수 없으면 `UNSUPPORTED_CONSTRAINT`로 반환한다.
 
+Issue는 연결의 서버를 고정하고 명시한 이슈 키·프로젝트 키 또는 JQL로 조회한다.
+`issue-jira`는 기존 [mcp-atlassian의 Jira 도구](https://github.com/sooperset/mcp-atlassian/blob/v0.23.1/src/mcp_atlassian/servers/jira.py)를 재사용한다.
+각 기능의 입력·결과는 진단한 하위 스키마로 공개하고 실제 인수는 계획의 승인 조건과 대조한다.
+
+| 기능 | 입력과 기본 상한 |
+|---|---|
+| 이슈 조회 | `issue_key`; 선택 필드·확장·댓글 수 등은 하위 스키마와 승인 조건 적용; `update_history: false` 고정 |
+| 프로젝트 이슈 목록 | `project_key`, `start_at`, `limit`; 호출당 `limit` 최대 50 |
+| 전환 정보 조회 | `issue_key`; 현재 가능한 전환 정보 반환 |
+| 이슈 검색 | `jql`, 필드·페이지·추가 필터 등; 호출당 `limit` 최대 50 |
+
+JQL은 `scope.equals.jql`에 승인한 질의 원문을 명시하고 실제 요청과 정확히 비교한다.
+구체 질의는 호스트가 목표·현재 기능을 바탕으로 작성하며 질의 변경에는 해당 계획 조건을 다시 확인한다.
+JQL의 의미 동치·프로젝트 포함 관계 추론은 현재 지원 경계 밖이며 원문 비교로 범위를 강제한다.
+서버 선택은 연결의 `target`에서, 이슈·프로젝트·검색 조건은 해당 인스턴스의 계획에서 결정한다.
+조회 결과는 공통 `data` 객체로 정규화하고 이어지는 페이지·잘림은 불완전 결과로 표시한다.
+
 이 목록은 최초 검증한 수단의 경계다.
 새 도구·제품은 [등록 계약](contract.md)의 대상·효과·제약을 해석하는 어댑터와 검증을 추가해 확장한다.
 
@@ -254,8 +273,15 @@ Cache는 설정한 호스트·포트·저장 영역을 비교한다.
 선택한 Cache MCP에는 환경 설정과 동일한 대상의 명시적 실행 인수를 생성한다.
 비밀번호는 지정한 인증 참조에서 해소해 자격 증명 환경 변수로 전달한다.
 별도 접속 URL 등 대상과 충돌하는 설정은 검증 오류로 반환한다.
-Source·Document는 연결의 서버 주소와 등록 대상이 일치해야 한다.
+Source·Document·Issue는 연결의 서버 주소와 등록 대상이 일치해야 한다.
 현재 로컬 어댑터는 명시한 토큰 참조를 해소해 인증한다.
+
+Issue의 `api_token`은 사용자명과 `JIRA_API_TOKEN`, `personal_token`은 Server/Data Center의 `JIRA_PERSONAL_TOKEN`을 사용한다.
+토큰 방식은 [하위 MCP 인증 계약](https://github.com/sooperset/mcp-atlassian/blob/v0.23.1/src/mcp_atlassian/jira/config.py)과 등록 입력을 대조해 선택한다.
+Jira Cloud는 사용자명·API 토큰 방식으로 연결한다.
+선택한 방식의 토큰 참조 한 개와 서버 인증서 검증·읽기 전용·등록된 조회 도구를 고정한다.
+다른 도메인·계정은 별도 인스턴스로 등록하고 각 `target.server`·`identity_ref`·인증 참조·자료 정책·승인을 독립적으로 검사한다.
+같은 profile의 여러 Jira 연결 예시는 [setup YAML](../configuration/profiles.md#공통-구조와-어댑터-입력)을 따른다.
 
 Infra는 명시한 제공자 profile·위치와 로컬 설정의 계정 또는 역할 계정을 대조한다.
 사용한 제공자 설정·인증 파일이 바뀌면 기존 호출을 차단하고 다시 진단한다.
@@ -318,6 +344,7 @@ DB의 기존 MCP가 Python 리터럴 형태로 반환한 자료는 제한된 크
 | DB | 배열의 행 수가 실제 결과 상한 이상이면 `false`, 그 외 `null` |
 | Cache | 도구 이름이 정확히 `get`이면 `true`, 그 외 `null` |
 | Source | `gitlab_get_file`·`get_repository_file`의 전체 파일 읽기에 명시적인 `truncated: false`가 있으면 `true`, 그 외 `null` |
+| Issue | 목록·검색이 `start_at: 0`이고 이슈 수와 `total`이 같으면 `true`, 다음 페이지·부분·수량 불일치는 `false`, 판정 정보가 부족하면 `null` |
 | Infra·Document | `null` |
 
 Source의 전체 파일 조건은 `start_line`·`end_line`·`limit` 생략과 `offset` 생략 또는 0이다.

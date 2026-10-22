@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 from time import monotonic
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -14,7 +14,7 @@ from jsonschema import Draft202012Validator
 
 from .contracts import INPUT_MODELS
 from .security import redact
-from .storage import Store, StoreError, process_alive
+from .storage import Store, StoreError, process_alive, retention_deadline
 from .credentials import Credentials
 from .memory import MemoryService
 from .resources import ResourceRegistry
@@ -896,7 +896,7 @@ class Engine:
         days = (task.get("profile_snapshot") or {}).get("retention_days")
         expiry = record["expires_at"]
         if expiry is None and days is not None:
-            expiry = (datetime.now(UTC) + timedelta(days=days)).isoformat()
+            expiry = retention_deadline(days).isoformat()
         metadata = {"record_kind": kind, "payload": copy.deepcopy(payload), "expires_at": expiry,
                     "observed_at": task.get("created_at", task["last_activity_at"]), "evidence_refs": []}
         if kind == "call_result":
@@ -984,7 +984,8 @@ class Engine:
             return
         task["state"], task["waiting_reason"], task["finished_at"] = state, None, now()
         days = (task.get("profile_snapshot") or {}).get("retention_days")
-        expiry = (datetime.fromisoformat(task["finished_at"]) + timedelta(days=days)).isoformat() if days is not None else None
+        deadline = retention_deadline(days, datetime.fromisoformat(task["finished_at"]))
+        expiry = deadline.isoformat() if deadline is not None else None
         self.store.set_task_expiry(task["task_id"], expiry)
         for call in task.get("calls", []):
             self._reduce_call(task, call)

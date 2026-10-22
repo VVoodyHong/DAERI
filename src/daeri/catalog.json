@@ -63,5 +63,23 @@
     "auth_env": ["CONFLUENCE_API_TOKEN"],
     "capabilities": [{"capability_id": "read-page", "tool_name": "confluence_get_page", "constraints": {}}],
     "source": "https://github.com/sooperset/mcp-atlassian"
+  },
+  "issue-jira": {
+    "display_name": "Jira",
+    "type": "Issue",
+    "adapter": "jira_read",
+    "package": "mcp-atlassian",
+    "version": "0.23.1",
+    "executable": "mcp-atlassian",
+    "args": [],
+    "env": {"READ_ONLY_MODE": "true", "ENABLED_TOOLS": "jira_get_issue,jira_get_project_issues,jira_get_transitions,jira_search", "JIRA_SSL_VERIFY": "true", "JIRA_URL": "", "JIRA_USERNAME": "", "DAERI_JIRA_AUTH_TYPE": "api_token"},
+    "auth_env": ["JIRA_API_TOKEN"],
+    "capabilities": [
+      {"capability_id": "read-issue", "tool_name": "jira_get_issue", "constraints": {"fixed": {"update_history": false}}},
+      {"capability_id": "list-project-issues", "tool_name": "jira_get_project_issues", "constraints": {"max_values": {"limit": 50}}},
+      {"capability_id": "read-transitions", "tool_name": "jira_get_transitions", "constraints": {}},
+      {"capability_id": "search-issues", "tool_name": "jira_search", "constraints": {"max_values": {"limit": 50}}}
+    ],
+    "source": "https://github.com/sooperset/mcp-atlassian"
   }
 }

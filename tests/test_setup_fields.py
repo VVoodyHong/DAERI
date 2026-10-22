@@ -64,6 +64,7 @@ def test_infra_setup_accepts_twelve_digit_account_strings_and_integers(account):
     ('aws_read', {'profile', 'region', 'account'}),
     ('gitlab_read', {'server'}),
     ('confluence_read', {'server', 'username'}),
+    ('jira_read', {'server', 'auth_type', 'username'}),
 ])
 def test_setup_collects_connection_fields_for_every_resource_category(adapter, names):
     fields = get_adapter(adapter).setup_fields

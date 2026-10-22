@@ -31,7 +31,7 @@ def test_setup_catalog_does_not_create_user_data(tmp_path):
     result = run_cli('--data-dir', str(data_dir), 'setup', 'catalog')
     assert result.returncode == 0, result.stdout
     groups = json.loads(result.stdout)['groups']
-    assert len(groups) == 5 and groups[-1]['type'] == 'Document'
+    assert {group['type'] for group in groups} == {'DB', 'Cache', 'Infra', 'Source', 'Document', 'Issue'}
     assert not data_dir.exists()
 
 
@@ -151,6 +151,25 @@ def test_setup_duplicate_instance_arguments_are_rejected(tmp_path):
                      '--resource', 'primary=db-postgres', '--resource', 'primary=cache-redis')
     assert result.returncode != 0
     assert json.loads(result.stdout)['error']['code'] == 'INVALID_INPUT'
+
+
+@pytest.mark.parametrize('recipes,expected', [
+    (['db-postgres'] * 2 + ['cache-redis'] + ['issue-jira'] * 3,
+     ['db', 'db-2', 'cache', 'issue', 'issue-2', 'issue-3']),
+    (['issue-jira'] * 7, ['issue'] + [f'issue-{number}' for number in range(2, 8)]),
+])
+def test_setup_unnamed_resource_arguments_use_category_names_and_allow_repeated_products(tmp_path, recipes, expected):
+    from pathlib import Path
+    prefix = ('--data-dir', str(tmp_path / 'private'), 'setup', 'draft', 'service')
+    arguments = tuple(part for recipe in recipes for part in ('--resource', recipe)) + ('--embedding', 'keyword_only')
+    draft = run_cli(*prefix, *arguments)
+    assert draft.returncode == 0, draft.stdout
+    result = json.loads(draft.stdout)
+    assert result['resources'] == expected
+    path = Path(result['path'])
+    original = path.read_bytes()
+    assert run_cli(*prefix, *arguments).returncode == 0
+    assert path.read_bytes() == original
 
 
 def test_profile_round_trip_across_processes(tmp_path):

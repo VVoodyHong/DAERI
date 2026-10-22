@@ -9,7 +9,7 @@ import sqlite3
 import sys
 import threading
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
 from uuid import uuid4
@@ -21,6 +21,18 @@ class StoreError(Exception):
     def __init__(self, code: str, message: str):
         self.code, self.message = code, message
         super().__init__(f"{code}: {message}")
+
+
+def retention_deadline(days, start=None):
+    """Resolve a representable finite deadline or an explicitly unlimited period."""
+    if days is None:
+        return None
+    try:
+        if type(days) is not int or days <= 0:
+            raise ValueError
+        return (start or datetime.now(UTC)) + timedelta(days=days)
+    except (ValueError, OverflowError):
+        raise StoreError('INVALID_INPUT', '보존기간은 계산 가능한 양의 정수 또는 null이어야 합니다.') from None
 
 
 def process_alive(pid):
@@ -293,10 +305,10 @@ class Store:
         resources = [] if resources is None else resources
         if (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name)
                 or not isinstance(core_context, list) or any(not isinstance(item, str) for item in core_context)
-                or not isinstance(resources, list)
-                or any(days is not None and (type(days) is not int or days <= 0)
-                       for days in (retention_days, long_term_memory_days))):
+                or not isinstance(resources, list)):
             raise StoreError("INVALID_INPUT", "Invalid profile, context, or retention policy.")
+        for days in (retention_days, long_term_memory_days):
+            retention_deadline(days)
         if resources:
             from .resources import validate_resource
 
@@ -349,6 +361,8 @@ class Store:
             profile = self._read(row, "STORE_UNAVAILABLE")
             if any(profile.get(key) != row[key] for key in ("profile_id", "name", "revision")):
                 raise StoreError("STORE_UNAVAILABLE", "The active profile revision does not match.")
+            for key in ('retention_days', 'long_term_memory_days'):
+                retention_deadline(profile.get(key))
             from .embedding import validate_embedding_config
             profile['embedding'] = validate_embedding_config(profile.get('embedding'))
             return profile
