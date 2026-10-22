@@ -79,3 +79,39 @@ def test_setup_does_not_limit_provider_profile_names_to_an_identifier_alphabet()
                                  'operations\rreader', 'operations\x00reader', 'operations\n', '', 'a' * 129])
 def test_setup_rejects_provider_profile_names_that_cannot_be_safely_written_to_ini(name):
     assert not accepts('aws_read', 'profile', name)
+
+
+@pytest.mark.parametrize('adapter', BUILTIN_ADAPTERS.values(), ids=lambda item: item.adapter_id)
+def test_setup_credential_slots_are_declared_by_each_adapter(adapter):
+    assert set(adapter.setup_credentials) == set(adapter.authentication_fields)
+    for metadata in adapter.setup_credentials.values():
+        assert set(metadata) == {'field', 'description'}
+        assert metadata['field'] and metadata['description']
+
+
+def test_setup_credential_fields_follow_active_resource_references(tmp_path):
+    from daeri.setup import profile_template, resource_credential_fields, setup_schema
+    from daeri.storage import Store
+    store = Store(tmp_path)
+    try:
+        resource = profile_template(store, 'db-postgres', 'service-prod', 'db')['resources'][0]
+        fields = resource_credential_fields(resource)
+        assert set(fields) == {'password'}
+        assert fields['password']['reference'] == 'credential:service-prod.db.database_password'
+        assert fields['password']['environment'] == 'DATABASE_PASSWORD'
+        resource['connection']['auth_env'] = {'DATABASE_URI': 'credential:legacy-uri'}
+        assert resource_credential_fields(resource)['uri']['reference'] == 'credential:legacy-uri'
+        assert setup_schema('db-postgres')['authentication']['fields'] == get_adapter('postgres_read').setup_credentials
+    finally:
+        store.close()
+
+
+def test_embedding_credential_slots_use_selected_api_contract():
+    from daeri.embedding import embedding_credential_fields
+    assert embedding_credential_fields({'provider': 'local'}) == {}
+    assert embedding_credential_fields({'provider': 'api', 'adapter': None}) == {}
+    fields = embedding_credential_fields({'provider': 'api', 'adapter': 'openai_compatible',
+                                         'credential_ref': 'env:COMPANY_KEY'})
+    assert set(fields) == {'api_key'}
+    assert fields['api_key']['reference'] == 'env:COMPANY_KEY'
+    assert fields['api_key']['config_key'] == 'credential_ref'

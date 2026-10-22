@@ -55,6 +55,7 @@ class RedisReadAdapter(ReadAdapter):
         "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",
     })
     authentication_fields = frozenset({"REDIS_PWD"})
+    setup_credentials = {'REDIS_PWD': {'field': 'password', 'description': '캐시 접속에 사용할 비밀번호입니다.'}}
     executable = "redis-mcp-server"
     normalize_results = True
     text_error_prefixes = ("Error:", "Error retrieving ")

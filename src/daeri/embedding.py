@@ -89,6 +89,7 @@ class OpenAICompatibleEmbedder:
     remote = True
     label = 'OpenAI 호환 API'
     description = 'OpenAI embeddings 요청·응답 형식과 Bearer 인증을 사용합니다.'
+    setup_credentials = {'credential_ref': {'field': 'api_key', 'description': '회사 임베딩 API의 인증 키입니다.'}}
     field_comments = {
         'adapter': '회사 API의 요청·응답·인증 규격입니다.\n'
                    'openai_compatible은 OpenAI 호환 형식과 Bearer 인증을 사용합니다.',
@@ -96,7 +97,7 @@ class OpenAICompatibleEmbedder:
                     '가상 예: https://embedding.example.test/v1/embeddings',
         'model': '회사에서 지정한 모델 또는 배포 이름입니다. 가상 예: company-embedding',
         'credential_ref': '인증 참조입니다. credential:등록이름 또는 env:환경변수명을 입력합니다.\n'
-                          '실제 인증값은 DAERI 보안 입력으로 등록하거나 해당 환경변수에 설정합니다.',
+                          '인증값은 credentials.api_key에 입력합니다. 적용하면 이 참조의 인증 저장소에 보관합니다.',
         'dimensions': 'API가 지원하는 벡터 차원입니다(정수 1~8192). 생략하면 응답의 차원을 사용합니다.',
         'timeout_seconds': '네트워크 단계별 대기 제한(초)입니다. 정수 1~60, 기본값은 15입니다.',
     }
@@ -186,6 +187,22 @@ class OpenAICompatibleEmbedder:
 
 
 API_ADAPTERS = {'openai_compatible': OpenAICompatibleEmbedder}
+
+
+def embedding_credential_fields(config):
+    """Describe credential inputs of the selected API adapter, including partial drafts."""
+    if not isinstance(config, dict) or config.get('provider') not in ('api', 'openai_compatible'):
+        return {}
+    name = config.get('adapter', 'openai_compatible' if config['provider'] == 'openai_compatible' else None)
+    if not isinstance(name, str) or name not in API_ADAPTERS:
+        return {}
+    fields = {}
+    for config_key, metadata in getattr(API_ADAPTERS[name], 'setup_credentials', {}).items():
+        field = metadata['field']
+        _valid(field not in fields)
+        fields[field] = {'reference': config.get(config_key), 'description': metadata['description'],
+                         'config_key': config_key}
+    return fields
 
 
 def embedding_field_comments(config):

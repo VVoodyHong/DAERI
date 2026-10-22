@@ -3,7 +3,7 @@ import json
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,6 +17,56 @@ def store(tmp_path):
     instance = Store(tmp_path / "data")
     yield instance
     instance.close()
+
+
+@pytest.mark.parametrize('fail_commit', [False, True])
+def test_transaction_guard_restores_side_effects_before_releasing_database(store, fail_commit):
+    connection = store._db
+    events = []
+
+    class FailingCommit:
+        def __getattr__(self, name):
+            return getattr(connection, name)
+
+        def commit(self):
+            raise sqlite3.OperationalError('COMMIT_FAILED')
+
+    @contextmanager
+    def guard():
+        assert connection.in_transaction
+        events.append('entered')
+        try:
+            yield
+        except BaseException:
+            assert connection.in_transaction
+            events.append('restored')
+            raise
+
+    if fail_commit:
+        store._db = FailingCommit()
+    try:
+        with pytest.raises(StoreError if fail_commit else RuntimeError):
+            with store.transaction(guard=guard()):
+                store.put_profile('guarded')
+                if not fail_commit:
+                    raise RuntimeError('CALLER_FAILED')
+    finally:
+        store._db = connection
+    assert events == ['entered', 'restored']
+    assert not connection.in_transaction
+    assert store.list_profiles() == []
+
+
+def test_transaction_guard_requires_its_own_commit_boundary(store):
+    @contextmanager
+    def guard():
+        pytest.fail('Nested side effects must be rejected before entry.')
+        yield
+
+    with store.transaction():
+        with pytest.raises(StoreError, match='INVALID_INPUT'):
+            with store.transaction(guard=guard()):
+                pass
 
 
 def task_for(store, task_id="task-one", profile_name="alpha", created_at="2026-10-20T00:00:00+00:00"):

@@ -7,14 +7,18 @@ import json
 import os
 import re
 import stat
+from contextlib import contextmanager
 from uuid import uuid4
 
+import yaml
+
+from .credentials import Credentials, resource_reference
 from .embedding import (api_adapter_catalog, api_embedding_draft, embedding_field_comments,
-                        validate_embedding_config)
+                        embedding_credential_fields, validate_embedding_config)
 from .security import redact
-from .setup import (PROFILE_FIELDS, _current_setup_values, _no_secrets, _require,
+from .setup import (PROFILE_FIELDS, REFERENCE, _current_setup_values, _no_secrets, _require,
                     _validate_setup_values, build_setup_resource, load_catalog,
-                    profile_template, read_config, setup_schema)
+                    profile_template, read_config, resource_credential_fields, setup_schema)
 from .setup_yaml import parse_yaml, write_yaml
 from .storage import StoreError, _profile_memory_policy, retention_deadline
 
@@ -117,20 +121,31 @@ def _read_draft(store, name):
     _require(isinstance(meta, dict) and set(meta) == {'profile', 'base', 'schemas'}
              and meta['profile'] == name and isinstance(meta['schemas'], dict),
              '초안 관리 정보를 확인하세요.')
-    # Comments share the host-visible file, so validate their credential patterns too.
     try:
         with path.open('rb') as stream:
             content = stream.read(2 * 1024 * 1024 + 1)
     except OSError:
         raise StoreError('INVALID_INPUT', '설정 YAML 파일을 읽을 수 없습니다.') from None
     _require(len(content) <= 2 * 1024 * 1024, '설정 파일의 크기 제한을 초과했습니다.')
-    try:
-        _require(redact(content.decode('utf-8')) == content.decode('utf-8'),
-                 '비밀값은 보안 입력 경로로 등록하고 YAML에는 접속값과 인증 참조를 사용하세요.')
-    except UnicodeError:
-        raise StoreError('INVALID_INPUT', 'UTF-8 YAML 파일을 사용하세요.') from None
     document = parse_yaml(content)
-    _no_secrets(document)
+    public = copy.deepcopy(document)
+    for block in public.get('resources', {}).values() if isinstance(public.get('resources'), dict) else ():
+        if isinstance(block, dict):
+            block.pop('credentials', None)
+    if isinstance(public.get('embedding'), dict):
+        public['embedding'].pop('credentials', None)
+    _no_secrets(public)
+    # Parsed scalar values have their own schema; retain the comment credential check.
+    text = content.decode('utf-8')
+    comments, cursor = [], 0
+    for token in yaml.scan(text):
+        if isinstance(token, yaml.tokens.ScalarToken):
+            comments.append(text[cursor:token.start_mark.index])
+            comments.append(' ' * (token.end_mark.index - token.start_mark.index))
+            cursor = token.end_mark.index
+    comments.append(text[cursor:])
+    comments = ''.join(comments)
+    _require(redact(comments) == comments, '비밀값은 해당 연결의 credentials 항목에 입력하세요.')
     _require(document.get('profile') == name, '요청한 profile과 YAML의 profile이 다릅니다.')
     _require(set(document) <= (PROFILE_FIELDS - {'name'}) | {'profile'}, '알 수 없는 설정 항목이 있습니다.')
     _require(isinstance(document.get('resources'), dict), 'resources는 이름별 설정 객체여야 합니다.')
@@ -170,17 +185,25 @@ def _resource_block(store, name, instance, recipe, profile):
     return {'adapter': recipe, 'inputs': values}
 
 
-def _render(document):
-    text = '# 접속 정보와 공개 인증 설정을 입력하세요.\n'
-    text += '# 비밀번호·토큰은 DAERI가 안내하는 터미널 숨김 입력 또는 제공자 로그인으로 등록합니다.\n'
+def _render(document, credential_fields=None):
+    text = '# 접속 정보와 credentials의 비밀번호·토큰을 입력하세요.\n'
+    text += '# 적용하면 비밀값을 인증 저장소에 저장하고 이 파일에는 참조를 남깁니다.\n'
     text += '# 빈 필수값을 채운 뒤 DAERI에 검증과 적용을 요청하세요.\n'
     text += write_yaml(document)
     # Keep field guidance beside the values users edit, using each adapter's metadata.
-    lines, inputs, section = [], None, None
+    lines, inputs, section, instance, resource_section = [], None, None, None, None
+    credential_fields = credential_fields or {}
     embedding_comments = embedding_field_comments(document.get('embedding'))
+    embedding_credentials = embedding_credential_fields(document.get('embedding'))
+    if embedding_credentials:
+        embedding_comments.setdefault('credentials', '인증값을 입력하거나 저장한 인증 참조를 사용합니다.')
     for line in text.splitlines():
         if line and not line.startswith(' '):
-            inputs, section = None, line
+            inputs, section, instance, resource_section = None, line, None, None
+        if section == 'resources:' and line.startswith('  ') and not line.startswith('    '):
+            instance = line.strip().removesuffix(':')
+        if section == 'resources:' and line.startswith('    ') and not line.startswith('      '):
+            resource_section = line.strip().split(':', 1)[0]
         if section == 'resources:' and line.startswith('    adapter: '):
             recipe = line.split(': ', 1)[1]
             inputs = setup_schema(recipe)['input_schema']['properties']
@@ -188,7 +211,7 @@ def _render(document):
             key = line.strip().split(':', 1)[0]
             for comment in embedding_comments.get(key, '').splitlines():
                 lines.append('  # ' + comment)
-        if inputs and line.startswith('      ') and not line.startswith('        '):
+        if inputs and resource_section == 'inputs' and line.startswith('      ') and not line.startswith('        '):
             key = line.strip().split(':', 1)[0]
             if key in inputs:
                 schema = inputs[key]
@@ -196,8 +219,41 @@ def _render(document):
                 example = schema.get('examples', [])
                 suffix = ' 예: ' + json.dumps(example[0], ensure_ascii=False) if example else ''
                 lines.append('      # ' + ' '.join(hint.splitlines()) + suffix)
+        if resource_section == 'credentials' and line.startswith('      ') and not line.startswith('        '):
+            key = line.strip().split(':', 1)[0]
+            field = credential_fields.get(instance, {}).get(key)
+            if field:
+                lines.append('      # ' + field['description'])
+        if section == 'embedding:' and line.startswith('    ') and not line.startswith('      '):
+            key = line.strip().split(':', 1)[0]
+            field = embedding_credentials.get(key)
+            if field:
+                lines.append('    # ' + field['description'])
         lines.append(line)
     return '\n'.join(lines) + '\n'
+
+
+def _credential_slots(store, name, document, profile):
+    fields, changed = {}, False
+    existing = {resource['instance_id']: resource for resource in profile['resources']} if profile else {}
+    for instance, block in document['resources'].items():
+        if (not isinstance(block, dict) or not isinstance(block.get('adapter'), str)
+                or block['adapter'] not in load_catalog()):
+            continue
+        resource = existing.get(instance) or profile_template(store, block['adapter'], name, instance)['resources'][0]
+        fields[instance] = resource_credential_fields(resource)
+        if fields[instance] and 'credentials' not in block:
+            block['credentials'] = {field: {'ref': spec['reference']} if instance in existing else None
+                                    for field, spec in fields[instance].items()}
+            changed = True
+    embedding = document.get('embedding')
+    selected = embedding_credential_fields(embedding)
+    if selected and 'credentials' not in embedding:
+        previous = embedding_credential_fields(profile['embedding']) if profile else {}
+        embedding['credentials'] = {field: {'ref': spec['reference']} if field in previous else None
+                                    for field, spec in selected.items()}
+        changed = True
+    return fields, changed
 
 
 def _automatic_resources(store, name, selections, recipes, blocks, profile):
@@ -280,6 +336,8 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
                          '기존 초안의 기억 검색 방식은 YAML에서 수정하세요.')
         elif not exists and not profile:
             document['embedding'] = _embedding_draft(name, 'local')
+        credential_fields, added_credentials = _credential_slots(store, name, document, profile)
+        changed = changed or added_credentials
         if refresh:
             meta['base'] = _base(profile)
             _require(all(isinstance(block, dict) and isinstance(block.get('adapter'), str)
@@ -293,7 +351,7 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
             path.parent.parent.chmod(0o700)
             path.parent.chmod(0o700)
         if changed:
-            _write(path, _render(document))
+            _write(path, _render(document, credential_fields))
         _write(metadata, json.dumps(meta, ensure_ascii=False, allow_nan=False))
         return {'profile': name, 'path': str(path), 'existing': exists,
                 'base_revision': meta['base']['revision'] if meta['base'] else None,
@@ -302,6 +360,51 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
 
 def _issue(field, code='INVALID_INPUT', message='입력값과 허용 범위를 확인하세요.'):
     return {'field': field, 'code': code, 'message': message}
+
+
+def _credential_values(document):
+    values = {}
+    blocks = [('resources.' + instance, block) for instance, block in document.get('resources', {}).items()]
+    blocks.append(('embedding', document.get('embedding', {})))
+    for prefix, block in blocks:
+        supplied = block.get('credentials', {}) if isinstance(block, dict) else {}
+        if isinstance(supplied, dict):
+            values.update({prefix + '.credentials.' + key: value for key, value in supplied.items()})
+    return values
+
+
+def _collect_credentials(values, fields, prefix, updates, issues):
+    if not isinstance(values, dict) or not set(values) <= set(fields):
+        issues.append(_issue(prefix, message='선택한 연결의 인증 항목을 확인하세요.'))
+        return {}
+    sanitized = {}
+    for key, field in fields.items():
+        value = values.get(key)
+        reference = field['reference']
+        path = prefix + '.' + key
+        if isinstance(value, dict) and set(value) == {'ref'} and isinstance(value['ref'], str) and REFERENCE.fullmatch(value['ref']):
+            reference = value['ref']
+        elif value is not None:
+            if (not isinstance(value, str) or not 1 <= len(value) <= 16384
+                    or any(ord(char) < 32 or ord(char) == 127 for char in value)
+                    or not isinstance(reference, str) or not reference.startswith('credential:')
+                    or not REFERENCE.fullmatch(reference)):
+                issues.append(_issue(path, message='인증값은 한 줄 문자열, null 또는 유효한 ref 객체로 입력하세요.'))
+                continue
+            try:
+                value.encode('utf-8')
+            except UnicodeError:
+                issues.append(_issue(path, message='UTF-8 인증값을 입력하세요.'))
+                continue
+            if reference in updates and updates[reference] != value:
+                issues.append(_issue(path, message='같은 인증 참조에는 동일한 값을 입력하세요.'))
+                continue
+            updates[reference] = value
+        if not isinstance(reference, str) or not REFERENCE.fullmatch(reference):
+            issues.append(_issue(path, message='유효한 인증 참조를 확인하세요.'))
+            continue
+        sanitized[key] = {'ref': reference}
+    return sanitized
 
 
 def _configuration(store, name, document, profile, meta):
@@ -313,14 +416,15 @@ def _configuration(store, name, document, profile, meta):
     for key in PROFILE_FIELDS - {'name', 'resources'}:
         if key in document:
             config[key] = copy.deepcopy(document[key])
-    issues = []
+    issues, updates = [], {}
+    sanitized = copy.deepcopy(document)
     for instance, block in document['resources'].items():
         if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', instance):
             issues.append(_issue('resources', message='리소스 이름을 확인하세요.'))
             continue
         field = 'resources.' + instance
         if (not isinstance(block, dict) or not {'adapter', 'inputs'} <= block.keys()
-                or not set(block) <= {'adapter', 'inputs', 'policy'}
+                or not set(block) <= {'adapter', 'inputs', 'policy', 'credentials'}
                 or not isinstance(block['adapter'], str) or block['adapter'] not in meta['schemas']):
             issues.append(_issue(field, message='선택한 제품과 입력 항목을 확인하세요.'))
             continue
@@ -343,6 +447,23 @@ def _configuration(store, name, document, profile, meta):
             continue
         try:
             resource = build_setup_resource(store, recipe, name, instance, block['inputs'], existing=existing)
+            credential_fields = resource_credential_fields(resource)
+            supplied = copy.deepcopy(block.get('credentials', {}))
+            if existing and isinstance(supplied, dict):
+                previous = resource_credential_fields(existing)
+                for key, spec in credential_fields.items():
+                    old = previous.get(key)
+                    if (old and old['environment'] != spec['environment'] and
+                            old['reference'] == resource_reference(name, instance, old['environment']) and
+                            supplied.get(key) == {'ref': old['reference']}):
+                        supplied[key] = {'ref': spec['reference']}
+            safe = _collect_credentials(supplied, credential_fields,
+                                        field + '.credentials', updates, issues)
+            if safe:
+                sanitized['resources'][instance]['credentials'] = safe
+                for key, spec in credential_fields.items():
+                    if key in safe:
+                        resource['connection']['auth_env'][spec['environment']] = safe[key]['ref']
             if 'policy' in block:
                 resource['policy'] = copy.deepcopy(block['policy'])
             validate_resource(resource)
@@ -363,7 +484,16 @@ def _configuration(store, name, document, profile, meta):
         issues.append(_issue('core_context'))
     try:
         _require(isinstance(config['embedding'], dict), '기억 검색 설정은 객체로 입력하세요.')
+        embedding = config['embedding']
+        fields = embedding_credential_fields(embedding)
+        credentials = embedding.pop('credentials', {})
+        safe = _collect_credentials(credentials, fields, 'embedding.credentials', updates, issues)
+        for key, spec in fields.items():
+            if key in safe:
+                embedding[spec['config_key']] = safe[key]['ref']
         config['embedding'] = validate_embedding_config(config['embedding'])
+        if safe:
+            sanitized['embedding']['credentials'] = safe
     except StoreError:
         embedding = config['embedding']
         if (isinstance(embedding, dict) and embedding.get('provider') == 'api'
@@ -376,7 +506,7 @@ def _configuration(store, name, document, profile, meta):
         config['memory_policy'] = _profile_memory_policy(config['memory_policy'], config['resources'])
     except StoreError:
         issues.append(_issue('memory_policy'))
-    return config, issues
+    return config, issues, sanitized, updates
 
 
 def _inspect(store, name):
@@ -387,15 +517,17 @@ def _inspect(store, name):
     for recipe, fingerprint in meta['schemas'].items():
         if recipe not in load_catalog() or fingerprint != _schema_digest(recipe):
             raise StoreError('REVISION_CONFLICT', '제품 입력 규격이 변경되었습니다. 초안을 확인하고 기준을 갱신하세요.')
-    config, issues = _configuration(store, name, document, profile, meta)
+    config, issues, sanitized, updates = _configuration(store, name, document, profile, meta)
     token = _digest([meta, digest]) if not issues else None
-    preview = copy.deepcopy(document) if not issues else None
+    preview = copy.deepcopy(sanitized) if not issues else None
     if preview is not None:
         for instance, block in preview['resources'].items():
             resource = next(r for r in config['resources'] if r['instance_id'] == instance)
             block['inputs'] = _current_setup_values(resource, setup_schema(block['adapter']))
             block['policy'] = copy.deepcopy(resource['policy'])
         preview['embedding'] = copy.deepcopy(config['embedding'])
+        if sanitized.get('embedding', {}).get('credentials'):
+            preview['embedding']['credentials'] = copy.deepcopy(sanitized['embedding']['credentials'])
         preview['defaults'] = {'retention_days': config['retention_days'],
                                'long_term_memory_days': config['long_term_memory_days']}
         current_resources = {r['instance_id']: r for r in profile['resources']} if profile else {}
@@ -404,10 +536,12 @@ def _inspect(store, name):
                                                     if r != current_resources.get(r['instance_id'])],
                               'settings': [key for key in sorted(PROFILE_FIELDS - {'name', 'resources'})
                                            if profile is None or config[key] != profile[key]],
-                              'changed': profile is None or any(config[key] != profile[key] for key in PROFILE_FIELDS)}
+                              'changed': bool(updates) or profile is None or any(config[key] != profile[key] for key in PROFILE_FIELDS),
+                              'credentials': [path for path, value in _credential_values(document).items()
+                                              if isinstance(value, str)]}
     result = {'valid': not issues, 'complete': not issues, 'issues': issues,
               'preview': preview, 'confirmation_token': token}
-    return result, config, profile, path, metadata, meta
+    return result, config, profile, path, metadata, meta, sanitized, updates
 
 
 def validate_draft(store, name):
@@ -422,15 +556,47 @@ def validate_draft(store, name):
                     'preview': None, 'confirmation_token': None}
 
 
-def apply_draft(store, name, confirmation):
-    with store.transaction():
-        result, config, profile, path, metadata, meta = _inspect(store, name)
-        token = result['confirmation_token']
-        if (not token or not isinstance(confirmation, str) or not re.fullmatch('[0-9a-f]{64}', confirmation) or
-                not hmac.compare_digest(confirmation, token)):
-            raise StoreError('REVISION_CONFLICT', '현재 YAML의 검증 결과를 확인한 뒤 적용하세요.')
-        if profile is None or any(config[key] != profile[key] for key in PROFILE_FIELDS):
+def _confirm(result, confirmation):
+    token = result['confirmation_token']
+    if (not token or not isinstance(confirmation, str) or not re.fullmatch('[0-9a-f]{64}', confirmation) or
+            not hmac.compare_digest(confirmation, token)):
+        raise StoreError('REVISION_CONFLICT', '현재 YAML의 검증 결과를 확인한 뒤 적용하세요.')
+
+
+def apply_draft(store, name, confirmation, *, credentials=None):
+    vault = credentials if credentials is not None else Credentials()
+    originals, changed_refs = {}, set()
+
+    @contextmanager
+    def apply_guard():
+        inspected = _inspect(store, name)
+        _confirm(inspected[0], confirmation)
+        with vault.updating(inspected[-1]) as changed:
+            changed_refs.update(changed)
+            try:
+                yield
+            except BaseException:
+                restored = True
+                for file, original in originals.items():
+                    try:
+                        if not file.exists() or file.read_bytes() != original:
+                            _write(file, original.decode('utf-8'))
+                    except (OSError, StoreError):
+                        restored = False
+                if not restored:
+                    raise StoreError('CREDENTIAL_UPDATE_PENDING', '설정 파일 복구를 확인한 뒤 같은 YAML로 다시 적용하세요.') from None
+                raise
+
+    with store.transaction(guard=apply_guard()):
+        result, config, profile, path, metadata, meta, sanitized, _ = _inspect(store, name)
+        _confirm(result, confirmation)
+        originals.update({file: file.read_bytes() for file in (path, metadata)})
+        if profile is None or changed_refs or any(config[key] != profile[key] for key in PROFILE_FIELDS):
             profile = store.put_profile(**config, create_only=profile is None)
+        original_values, safe_values = _credential_values(parse_yaml(originals[path])), _credential_values(sanitized)
+        if any(value is not None and value != safe_values.get(key) for key, value in original_values.items()):
+            fields = {resource['instance_id']: resource_credential_fields(resource) for resource in config['resources']}
+            _write(path, _render(sanitized, fields))
         meta['base'] = _base(profile)
         _write(metadata, json.dumps(meta, ensure_ascii=False, allow_nan=False))
-        return profile
+    return profile

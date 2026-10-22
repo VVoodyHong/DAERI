@@ -27,7 +27,7 @@ class JiraReadAdapter(ReadAdapter):
             'examples': ['api_token']},
             'required': True, 'paths': [['connection', 'env', 'DAERI_JIRA_AUTH_TYPE']]},
         'username': {'schema': {
-            'title': '이슈 인증 계정', 'description': 'api_token 인증에 사용할 계정입니다. personal_token 인증은 빈 문자열을 사용합니다. 토큰은 별도 보안 입력으로 등록합니다.',
+            'title': '이슈 인증 계정', 'description': 'api_token 인증에 사용할 계정입니다. personal_token 인증은 빈 문자열을 사용합니다.',
             'type': 'string', 'maxLength': 320, 'pattern': r'^[^\x00-\x1f\x7f]*$', 'default': '',
             'examples': ['reader@example.test']},
             'required': False, 'paths': [['connection', 'env', 'JIRA_USERNAME']]},
@@ -35,6 +35,8 @@ class JiraReadAdapter(ReadAdapter):
     environment_prefixes = ('JIRA_', 'CONFLUENCE_', 'ATLASSIAN_', 'OAUTH_', 'DAERI_JIRA_')
     control_fields = frozenset({'READ_ONLY_MODE', 'ENABLED_TOOLS'})
     authentication_fields = frozenset({'JIRA_API_TOKEN', 'JIRA_PERSONAL_TOKEN'})
+    setup_credentials = {name: {'field': 'token', 'description': '이슈 서비스 접속에 사용할 토큰입니다.'}
+                         for name in authentication_fields}
     executable = 'mcp-atlassian'
     explicit_credentials = True
     normalize_results = True

@@ -41,6 +41,8 @@ class GitlabReadAdapter(ReadAdapter):
         "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",
     })
     authentication_fields = frozenset({"GITLAB_TOKEN", "GITLAB_PAT", "GITLAB_PERSONAL_ACCESS_TOKEN", "GITLAB_API_TOKEN"})
+    setup_credentials = {name: {'field': 'token', 'description': '소스 코드 서비스 접속에 사용할 토큰입니다.'}
+                         for name in authentication_fields}
     executable = "mcp-gitlab"
     explicit_credentials = True
     decode_result_strings = True

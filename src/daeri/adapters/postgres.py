@@ -127,7 +127,7 @@ class PostgresReadAdapter(ReadAdapter):
                                 "type": "string", "minLength": 1, "maxLength": 128,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["service_db"]},
                      "required": True, "paths": [["target", "database"]]},
-        "username": {"schema": {"title": "DB 사용자 이름", "description": "연결에 사용할 계정 이름이며 비밀번호는 별도 보안 경로로 입력합니다.",
+        "username": {"schema": {"title": "DB 사용자 이름", "description": "연결에 사용할 계정 이름입니다.",
                                 "type": "string", "minLength": 1, "maxLength": 128,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["readonly_user"]},
                      "required": True, "paths": [["target", "username"]]},
@@ -138,6 +138,10 @@ class PostgresReadAdapter(ReadAdapter):
         "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",
     })
     authentication_fields = frozenset({"DATABASE_PASSWORD", "DATABASE_URI"})
+    setup_credentials = {
+        'DATABASE_PASSWORD': {'field': 'password', 'description': 'DB 접속에 사용할 비밀번호입니다.'},
+        'DATABASE_URI': {'field': 'uri', 'description': '기존 URI 인증 연결에 사용할 전체 DB 접속 URI입니다.'},
+    }
     executable = "postgres-mcp"
     launcher_arguments = (("--access-mode=restricted",), ("--access-mode", "restricted"))
     normalize_results = True

@@ -85,7 +85,8 @@ DAERI는 호스트에는 MCP 서버, 하위 MCP에는 클라이언트로 동작�
 ## 실제 요청이 왕복하는 방식
 
 준비와 업무 실행은 다른 진입 경로다.
-setup은 사용자가 선택한 리소스·인증·모델에 필요한 구성만 준비하고 profile과 기능 계약을 등록한다.
+setup은 선택한 리소스·모델의 YAML에 접속 정보·인증값을 입력받고 검증·확인 뒤 적용한다.
+로컬 실행기가 인증값을 OS 인증 저장소에 등록하고 같은 파일을 인증 참조로 정리하며 profile과 기능 계약을 준비한다.
 profile로 대화의 기본 대상을 선택하고 list-profiles로 저장 목록을 확인하며 work로 업무를 시작한다.
 진입점별 역할은 [Skill 지침](../spec/hosts/plugins.md#skill-지침), 대상 선택은 [profile 계약](../spec/configuration/profiles.md#선택과-기본값)을 따른다.
 일반 MCP 시작은 준비된 실행기를 연결한다.

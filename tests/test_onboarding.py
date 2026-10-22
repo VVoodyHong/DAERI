@@ -334,7 +334,8 @@ def test_company_api_template_does_not_require_local_model_or_expose_secrets(sto
     from daeri.setup_yaml import read_yaml
     value = read_yaml(draft['path'])
     assert value['embedding'] == {'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None,
-        'model': None, 'credential_ref': 'credential:production.embedding', 'allow_remote': False}
+        'model': None, 'credential_ref': 'credential:production.embedding', 'allow_remote': False,
+        'credentials': {'api_key': None}}
     edit(draft, lambda v: v['embedding'].update(endpoint='https://embedding.example.test/v1/embeddings', model='company-model', allow_remote=True))
     result = validate_draft(store, 'production')
     assert result['valid']
@@ -385,7 +386,8 @@ def test_api_embedding_comments_cover_authentication_consent_and_optional_fields
     assert 'HTTPS' in text and '모델' in text
     assert '인증 참조' in text and '기억·검색 질의' in text
     assert '1~8192' in text and '1~60' in text
-    assert parse_yaml(text.encode())['embedding'] == config
+    assert parse_yaml(text.encode())['embedding'] == {
+        **config, 'credentials': {'api_key': {'ref': config['credential_ref']}}}
     assert validate_draft(store, 'production')['valid']
 
 
@@ -499,7 +501,8 @@ def test_new_draft_reuses_existing_api_settings_for_the_same_adapter(store):
         'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
         'credential_ref': 'credential:production.embedding', 'allow_remote': False})
     draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
-    assert read_yaml(draft['path'])['embedding'] == profile['embedding']
+    assert read_yaml(draft['path'])['embedding'] == {
+        **profile['embedding'], 'credentials': {'api_key': {'ref': profile['embedding']['credential_ref']}}}
 
 
 def test_explicit_null_embedding_does_not_switch_to_local(store):

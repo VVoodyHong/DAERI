@@ -59,6 +59,45 @@ def test_setup_company_api_adapter_selection_round_trips_through_cli(tmp_path):
     assert json.loads(applied.stdout)['embedding']['adapter'] == 'openai_compatible'
 
 
+def test_setup_cli_imports_yaml_credentials_without_printing_the_values(tmp_path, monkeypatch, capsys):
+    from pathlib import Path
+    from daeri.cli import main
+    from daeri.credentials import Credentials
+    from daeri.setup_yaml import read_yaml, write_yaml
+    values = {}
+
+    class Vault:
+        def get_password(self, service, name):
+            return values.get(name)
+
+        def set_password(self, service, name, value):
+            values[name] = value
+
+        def delete_password(self, service, name):
+            values.pop(name, None)
+
+    monkeypatch.setattr(Credentials, '_native', lambda self: Vault())
+
+    def invoke(*args):
+        monkeypatch.setattr(sys, 'argv', ['daeri', '--data-dir', str(tmp_path / 'private'), 'setup', *args])
+        assert main() == 0
+        output = capsys.readouterr()
+        assert 'CLI_PRIVATE_PASSWORD' not in output.out + output.err
+        return json.loads(output.out)
+
+    draft = invoke('draft', 'service', '--resource', 'db-postgres', '--embedding', 'keyword_only')
+    path = Path(draft['path'])
+    document = read_yaml(path)
+    document['resources']['db']['inputs'].update(host='db.example.test', database='service', username='reader')
+    document['resources']['db']['credentials']['password'] = 'CLI_PRIVATE_PASSWORD'
+    path.write_text(write_yaml(document), encoding='utf-8')
+    result = invoke('validate', 'service')
+    profile = invoke('apply', 'service', '--confirm', result['confirmation_token'])
+    assert values == {'service.db.database_password': 'CLI_PRIVATE_PASSWORD'}
+    assert profile['resources'][0]['connection']['auth_env']['DATABASE_PASSWORD'] == 'credential:service.db.database_password'
+    assert read_yaml(path)['resources']['db']['credentials']['password'] == {'ref': 'credential:service.db.database_password'}
+
+
 def test_setup_company_api_without_adapter_requires_selection_before_apply(tmp_path):
     prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
     draft = run_cli(*prefix, 'draft', 'service', '--embedding', 'api')

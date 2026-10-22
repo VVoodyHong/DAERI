@@ -122,6 +122,7 @@ SQLite의 기억 메타데이터로 허용 개정 집합을 정하고 FTS5·벡�
 | `label`·`description` | 사용자에게 표시할 연결 방식과 설명 |
 | `draft_config(name)` | 해당 연결 방식의 공개 입력 초안 생성 |
 | `field_comments` | 연결 규격별 YAML 필드의 의미·가상 예시; 표시한 필드 옆에 주석으로 배치 |
+| `setup_credentials` | 설정의 인증 참조 키를 YAML의 논리 필드·한국어 설명에 연결 |
 | `validate_config(config)` | 연결 규격·공개 필드·인증 참조 검사와 정규 설정 반환 |
 | 생성자 `config`·`credentials`·`client` | 설정·인증 해소 경로·선택 HTTP 클라이언트 준비 |
 | `embed_query(text)`·`embed_document(text)` | 허용된 텍스트를 전송하고 유한 숫자 벡터 반환 |
@@ -130,7 +131,8 @@ SQLite의 기억 메타데이터로 허용 개정 집합을 정하고 FTS5·벡�
 초안·설정 검사·생성자는 로컬에서 처리하고 실제 전송은 벡터 생성 호출에서 시작한다.
 `field_comments`는 선택 메타데이터이며 필드 ID를 키로, 줄바꿈 가능한 설명 문자열을 값으로 갖는다.
 실행기는 `provider`·`adapter`·`allow_remote`의 공통 설명을 제공하고 등록 구현은 자신의 연결 필드 설명을 추가한다.
-인증 참조는 `credential_ref`로 연결해 profile 삭제·공유 참조 검사와 같은 수명 관리를 사용한다.
+현재 방식은 `credential_ref`를 `credentials.api_key` 입력에 연결한다.
+입력·등록·참조 치환은 [YAML 인증값](../configuration/profiles.md#접속-정보와-인증값)을 따르고 저장한 참조는 profile 삭제·공유 참조 검사와 같은 수명 관리를 사용한다.
 `setup catalog`의 `embedding_adapters`는 실제 등록 구현의 `adapter_id`·`label`·`description`을 반환한다.
 새 연결 규격은 해당 인증·요청·응답 계약의 어댑터를 구현하고 등록·회귀 검증을 거쳐 추가한다.
 사용자는 회사 API 계약과 이 목록을 대조해 연결 방식을 선택하며 미확인 규격은 미완료 초안으로 보존한다.

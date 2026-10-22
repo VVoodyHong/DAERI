@@ -8,7 +8,7 @@ import re
 import sqlite3
 import sys
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
@@ -203,15 +203,18 @@ class Store:
             raise StoreError("STORE_UNAVAILABLE", "Local storage could not be opened.") from None
 
     @contextmanager
-    def transaction(self):
+    def transaction(self, *, guard=None):
         with self._lock:
             outer = not self._db.in_transaction
+            if guard is not None and not outer:
+                raise StoreError('INVALID_INPUT', 'Guarded updates require their own transaction boundary.')
             try:
                 if outer:
                     self._db.execute("BEGIN IMMEDIATE")
-                yield self
-                if outer:
-                    self._db.commit()
+                with guard if guard is not None else nullcontext():
+                    yield self
+                    if outer:
+                        self._db.commit()
             except BaseException as error:
                 if outer:
                     self._db.rollback()

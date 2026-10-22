@@ -1,5 +1,6 @@
 """Resolve explicit credential references through supported native OS stores."""
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -54,14 +55,43 @@ class Credentials:
         if isinstance(ref, str) and re.fullmatch(r"env:[A-Za-z_][A-Za-z0-9_]*", ref):
             value = os.environ.get(ref.removeprefix("env:"))
         else:
-            name = self._name(ref)
-            try:
-                value = self._native().get_password("DAERI", name)
-            except Exception:
-                raise StoreError("AUTHENTICATION_REQUIRED", "The credential store is unavailable or locked.") from None
+            value = self.read_optional(ref)
         if not value:
             raise StoreError("AUTHENTICATION_REQUIRED", "The configured credential is unavailable.")
         return value
+
+    def read_optional(self, ref):
+        name = self._name(ref)
+        try:
+            return self._native().get_password('DAERI', name)
+        except Exception:
+            raise StoreError('AUTHENTICATION_REQUIRED', 'The credential store is unavailable or locked.') from None
+
+    @contextmanager
+    def updating(self, updates):
+        previous = {ref: self.read_optional(ref) for ref in updates}
+        changed = {ref for ref, value in updates.items() if value != previous[ref]}
+        attempted = []
+        try:
+            for ref in updates:
+                if ref in changed:
+                    attempted.append(ref)
+                    self.set(ref, updates[ref])
+            yield changed
+        except BaseException:
+            restored = True
+            for ref in reversed(attempted):
+                try:
+                    if previous[ref] is None:
+                        self.delete_if_present(ref)
+                    else:
+                        self.set(ref, previous[ref])
+                except Exception:
+                    restored = False
+            if not restored:
+                raise StoreError('CREDENTIAL_UPDATE_PENDING',
+                                 'Credential updates require another confirmed apply.') from None
+            raise
 
     def delete(self, ref):
         name = self._name(ref)

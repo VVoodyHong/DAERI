@@ -193,7 +193,24 @@ def setup_schema(recipe_id):
             'display_name': item['display_name'], 'input_schema': schema,
             'configuration_paths': {name: copy.deepcopy(field['paths']) for name, field in fields.items()},
             'authentication': {'credential_environment': copy.deepcopy(item['auth_env']),
+                               'fields': copy.deepcopy(adapter.setup_credentials),
                                'provider_login': adapter.login_recipe_id == recipe_id}}
+
+
+def resource_credential_fields(resource):
+    """Resolve adapter-owned YAML credential fields for the active authentication binding."""
+    adapter = get_adapter(resource['adapter'])
+    fields = {}
+    for environment, reference in resource['connection'].get('auth_env', {}).items():
+        metadata = adapter.setup_credentials.get(environment)
+        _require(isinstance(metadata, dict) and set(metadata) == {'field', 'description'},
+                 'The adapter credential setup contract is unavailable.')
+        field = metadata['field']
+        _require(isinstance(field, str) and field not in fields,
+                 'The adapter credential setup fields are ambiguous.')
+        fields[field] = {'reference': reference, 'description': metadata['description'],
+                         'environment': environment}
+    return fields
 
 
 def _validate_setup_values(contract, values):

@@ -130,7 +130,7 @@ profile의 `resources`에는 필요한 인스턴스를 여러 개 넣을 수 있
 
 설정의 `constraints`는 연결에서 허용할 최대 범위다.
 업무 계획의 `scope`는 그 안에서 이번 업무에 허용하는 범위를 더 좁힌다.
-기본 setup은 접속 정보·공개 인증 설정을 받고 조회 대상은 계획에서 정한다.
+기본 setup은 [접속 정보·인증값](../configuration/profiles.md#접속-정보와-인증값)을 받고 조회 대상은 계획에서 정한다.
 새 Source·Document·Issue 연결의 `target`은 서버 주소이며 같은 서버의 실제 저장소·문서·이슈는 계획의 명시 조건으로 검사한다.
 접속값 갱신은 기존 `target`의 추가 정보·조회 상한·자료 정책을 보존한다.
 상시 조회 상한이 필요한 관리자는 전체 JSON의 `capabilities[].constraints`를 설정할 수 있다.
@@ -257,7 +257,8 @@ JQL의 의미 동치·프로젝트 포함 관계 추론은 현재 지원 경계 
 ### 실제 접속 대상과 인증 문맥
 
 현재 DB 어댑터의 새 setup 연결은 YAML의 호스트·포트·DB명·사용자명과 `DATABASE_PASSWORD`의 비밀번호 참조를 사용한다.
-사용자는 비밀번호만 보안 저장소에 등록하고 어댑터는 [하위 MCP의 입력 규격](https://github.com/crystaldba/postgres-mcp/blob/v0.3.0/src/postgres_mcp/server.py#L514-L523)에 맞춰 자식 실행 직전에 접속 URI를 조합한다.
+사용자는 YAML의 `credentials.password`에 비밀번호를 입력하고 DAERI가 OS 인증 저장소에 등록한다.
+어댑터는 [하위 MCP의 입력 규격](https://github.com/crystaldba/postgres-mcp/blob/v0.3.0/src/postgres_mcp/server.py#L514-L523)에 맞춰 자식 실행 직전에 접속 URI를 조합한다.
 사용자명·비밀번호·DB명은 URI 구성 요소로 인코딩하며 실제 대상은 등록한 `target`에서 결정한다.
 조합한 URI는 자식 프로세스의 인증 환경에 전달하고 공개 설정·실행 인수·등록 기록에는 인증 참조를 유지한다.
 비밀번호 방식의 TLS는 `PGSSLMODE`를 사용하고 생략하면 `require`를 적용한다.

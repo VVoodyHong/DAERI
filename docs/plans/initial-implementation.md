@@ -22,7 +22,7 @@
 |---|---|---|---|
 | 호스트 | Codex·Claude Code 패키지, 네 Skill, 공통 오프라인 MCP 진입 | [플러그인](../spec/hosts/plugins.md) | [실행 진입](../../tests/test_plugin_launch.py) |
 | 최초 준비 | OS별 관리 진입·정상 미준비 판정, 전용 uv·Python·잠긴 환경 준비·실패 복구 | [환경](../spec/installation/environment.md) | [관리 진입](../../tests/test_management_entry.py)·[준비·격리](../../tests/test_bootstrap.py) |
-| 사용자 구성 | 접속값 YAML 검증·일괄 적용, 복수 profile·개정·설정 이동·삭제·인증·진단 | [profile](../spec/configuration/profiles.md) | [YAML](../../tests/test_onboarding.py)·[삭제](../../tests/test_profile_delete.py)·[관리 CLI](../../tests/test_cli.py) |
+| 사용자 구성 | 접속·인증 YAML 검증·OS 인증 등록·일괄 적용·참조 치환, 복수 profile·개정·설정 이동·삭제·진단 | [profile](../spec/configuration/profiles.md) | [YAML](../../tests/test_onboarding.py)·[인증 입력](../../tests/test_onboarding_credentials.py)·[삭제](../../tests/test_profile_delete.py)·[관리 CLI](../../tests/test_cli.py) |
 | 업무·승인 | 접수·보완·최근 목록·복구, 불변 계획·대화 응답, 일시중지·재승인·취소 | [업무](../spec/tasks/workflow.md)·[승인](../spec/hosts/approval.md) | [상태·승인](../../tests/test_engine.py)·[계획 검사](../../tests/test_planning.py) |
 | 리소스 | 어댑터 선택, stdio·HTTPS MCP 등록·정규화·읽기 호출·누적 예산, 도메인별 이슈 연결 | [연결](../spec/resources/initial-adapters.md)·[계약](../spec/resources/contract.md) | [등록·전송](../../tests/test_resources.py)·[제품별 범위](../../tests/test_adapters.py)·[Jira](../../tests/test_jira.py)·[실행 통합](../../tests/test_execution_flow.py) |
 | 결과 | 완료 근거·부분 결과·파생 표·텍스트/JSON/CSV 파일·보존 자료 조회 | [결과](../spec/mcp/tasks.md#결과-dto) | [보고·표·파일](../../tests/test_results.py)·[현재 제공 정책](../../tests/test_derived_visibility.py) |
@@ -56,7 +56,8 @@
 | 로컬 단위·계약 검사 | 입력·비밀 거부, 승인·범위·개정·멱등성, 필드·표·파일·보존·기억 정책의 허용·실패 경계 |
 | 정형 setup 입력 | 저장소 생성 전의 스키마 조회·부분 검증, 필수값·타입·중첩 제약·비밀 거부, 기존 설정·개정 보호, 사용자 지정 접속값 준비와 고정 안전값 검사 |
 | 구성·기한 계약 | JSON import의 목록·객체 null 거부, 계산 불가능한 보존기간의 저장·조회·기억 갱신 거부와 기존 구성 보존, 취소 보고의 기한·만료 검사 |
-| YAML setup | 저장소·초안 생성 전의 읽기 전용 상태 조회, 부재·재개·복구 필요 구분, 동적 카탈로그·같은 범주 선택 경로, 종류별 연결 이름·복수 연결·기존 이름 보존, 선택 초안·기존 편집 보존·단일 개정 적용, 제한된 파싱·오류 위치·비밀 거부·개정 및 파일 변경 충돌, 초안의 삭제 연동; 실제 호스트 화면 제외 |
+| YAML setup | 저장소·초안 생성 전의 읽기 전용 상태 조회, 부재·재개·복구 필요 구분, 동적 카탈로그·같은 범주 선택 경로, 종류별 연결 이름·복수 연결·기존 이름 보존, 선택 초안·기존 편집 보존·단일 개정 적용, 제한된 파싱·오류 위치·인증 입력 분리·개정 및 파일 변경 충돌, 초안의 삭제 연동; 실제 호스트 화면 제외 |
+| YAML 인증 | 연결별·API 인증 필드 생성, 문자열·참조·null 입력, 비밀 없는 미리보기, 확인 후 OS 등록·참조 치환, 기존 인증 재사용·교체·실패 복구·재시도; 실제 OS UI 제외 |
 | profile 삭제 | 임시 저장소의 미리보기·확인값, 업무·본문·과거 파일·기억·색인의 cascade와 profile 최종 삭제, 공유 자료 보존, 실패 차단·재시도·동시 진단·정상 profile 유지; 실제 OS 인증 삭제는 제외 |
 | 스냅샷 보존 | 자유 맥락·설명 제외, 이전 저장분 정리와 오래된 스냅샷 재저장 차단, 대상·정책·업무 개정과 실제 조회 유지 |
 | 검색 완료 상태 | 명시적인 키워드 전용의 정상·0건 검색 성공, 색인 누락과 벡터 제공자 장애 시 부분 검색 구분 |

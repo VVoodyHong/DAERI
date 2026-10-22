@@ -24,7 +24,7 @@ class ConfluenceReadAdapter(ReadAdapter):
                               "type": "string", "minLength": 1, "maxLength": 2048,
                               "pattern": r"^https://[^/?#@\s\\\x00-\x1f\x7f]+(?:/[^?#\s\\\x00-\x1f\x7f]*)?$", "examples": ["https://docs.example.test/wiki"]},
                    "required": True, "paths": [["target", "server"], ["connection", "env", "CONFLUENCE_URL"]]},
-        "username": {"schema": {"title": "Document 사용자 이름", "description": "API 토큰과 함께 인증할 계정 이름이며 토큰은 별도 보안 경로로 입력합니다.",
+        "username": {"schema": {"title": "Document 사용자 이름", "description": "API 토큰과 함께 인증할 계정 이름입니다.",
                                 "type": "string", "minLength": 1, "maxLength": 320,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["reader@example.test"]},
                      "required": True, "paths": [["connection", "env", "CONFLUENCE_USERNAME"]]},
@@ -35,6 +35,8 @@ class ConfluenceReadAdapter(ReadAdapter):
         "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",
     })
     authentication_fields = frozenset({"CONFLUENCE_API_TOKEN", "CONFLUENCE_PERSONAL_TOKEN"})
+    setup_credentials = {name: {'field': 'token', 'description': '문서 서비스 접속에 사용할 토큰입니다.'}
+                         for name in authentication_fields}
     executable = "mcp-atlassian"
     explicit_credentials = True
     decode_result_strings = True

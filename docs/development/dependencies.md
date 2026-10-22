@@ -12,7 +12,7 @@
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
-| `adapters/`의 `setup_fields`·`normalize_setup_values`·`finalize_setup_resource` | 어댑터별 입력 스키마·저장 표현·설정 목적지와 선택한 인증 방식의 최종 구성 |
+| `adapters/`의 setup 계약 | 어댑터별 공개·인증 입력 스키마, 저장 표현·목적지와 선택한 인증 방식의 최종 구성 |
 | `embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
@@ -66,6 +66,14 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 ## 관리 입력과 결과
 
 관리 호출은 macOS의 `sh "<플러그인 루트>/scripts/manage.sh"`, Windows의 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<플러그인 루트>\scripts\manage.ps1"`에 아래 인수를 전달한다.
+실행 프로그램·스크립트 경로·각 인수는 별도 값으로 구성한다.
+경로를 재사용할 때 변수에는 스크립트 경로를 보관하고 macOS의 sh·zsh에서 다음과 같이 호출한다.
+
+```sh
+DAERI_MANAGE="<플러그인 루트>/scripts/manage.sh"
+sh "$DAERI_MANAGE" resource prepare PROFILE INSTANCE --recipe RECIPE
+```
+
 스크립트가 전용 환경을 검사하고 준비된 `.venv/bin/python.exe`에 `-I -m daeri.cli`와 분리된 관리 인수를 전달한다.
 실행 위치는 플러그인 루트이며 부모의 Python·가상환경 관련 변수는 자식 실행에서 정리한다.
 
@@ -82,7 +90,7 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 
 | 입력 | 처리와 반환 |
 |---|---|
-| `setup catalog/status/draft/validate/apply` | 카탈로그·초안 상태 조회, 선택별 YAML 생성·검증·일괄 적용; 인수·확인값·복수 연결은 [YAML 관리 계약](../spec/configuration/profiles.md#관리-명령과-재시도) 참조 |
+| `setup catalog/status/draft/validate/apply` | 카탈로그·초안 상태 조회, 선택별 YAML 생성·검증·인증 등록·일괄 적용; 인수·확인값·복수 연결은 [YAML 관리 계약](../spec/configuration/profiles.md#관리-명령과-재시도) 참조 |
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
 | `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
 | `profile export NAME` | 이동 가능한 공개 구성 필드 반환 |
@@ -111,7 +119,7 @@ CLI 예외는 `status: error`·`data: null`·오류 코드·고정된 안전 메
 기본 setup은 [YAML 초안·검증·일괄 적용](../spec/configuration/profiles.md#사용자용-setup-yaml)을 사용한다.
 테이블·키·저장소·문서 같은 업무별 조회 대상은 승인한 계획으로 전달한다.
 초안·확인값·기준 상태의 연결과 충돌 뒤 명시적 `--refresh`도 이 계약을 따른다.
-Plan의 지원 동작은 파일 읽기·카탈로그·스키마 조회와 배포 스키마·공개 값 파일의 개별 JSON 검증이다.
+Plan의 지원 동작은 공개 문서 읽기·카탈로그·스키마 조회와 배포 스키마·공개 값 파일의 개별 JSON 검증이다.
 YAML의 전체 검증·초안 생성·적용은 profile 저장소를 사용하므로 실행 가능한 모드에서 수행한다.
 `resource configure`는 실행 모드에서 적용 요약을 확인할 때 사용한 profile 개정을 명시해 수행하며 새 profile은 먼저 `profile create`로 만든다.
 입력 스키마·기존값 재사용·검증 결과·동시 변경 거부·보존 경계는 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
@@ -124,6 +132,7 @@ YAML의 전체 검증·초안 생성·적용은 profile 저장소를 사용하�
 
 profile·정책·인증 입력의 필드·실패·지원 경계는 [사용자 구성](../spec/configuration/profiles.md), 기억 준비와 부분 검색은 [기억 사양](../spec/tasks/memory.md)을 따른다.
 입력 완성·자료 정책·인증 준비는 각 검증 결과와 미완료 사유로 안내한다.
+YAML 인증 등록·참조 치환·실패 복구는 [적용 계약](../spec/configuration/profiles.md#확인적용재개)을 따른다.
 profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
 대상 선택의 저장 범위는 현재 대화이며 선택 우선순위·목록 표시는 [profile 선택 계약](../spec/configuration/profiles.md#선택과-기본값)을 따른다.
 삭제는 같은 profile Skill에서 사용자 확인 후 관리 CLI로 수행하며 귀속 범위·공유 자료 보존·실패 재시도는 [profile 삭제 계약](../spec/configuration/profiles.md#profile-삭제)을 따른다.
@@ -154,7 +163,7 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
 | `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
 | `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
-| `onboarding.py`·`setup_yaml.py` | 초안 상태 조회·선택 초안 생성·제한된 YAML 검사·기준 상태 및 확인값 대조·일괄 적용 |
+| `onboarding.py`·`setup_yaml.py` | 초안 생성·제한된 YAML 검사·인증값 분리·확인값 대조·일괄 적용과 참조 치환 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
 | `scripts/`·호스트별 플러그인·`skills/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사와 네 사용자 Skill 전달 |
 
@@ -174,7 +183,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 | 프로그램 | 플러그인 `.runtime/uv.exe`·`.venv`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
 | 관리 런타임 | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
 | 설정·제어 | `profiles/` 개정별 JSON; SQLite의 활성 설정·업무·승인·호출·참조 |
-| 편집 초안 | `setup/<profile>/setup.yaml`과 관리 정보; 확인한 일괄 적용의 입력 |
+| 편집 초안 | `setup/<profile>/setup.yaml`과 관리 정보; 확인한 일괄 적용의 입력, 등록한 인증값은 참조로 치환 |
 | 기억·검색 | SQLite의 선별 지식 정본·FTS5·벡터 색인 |
 | 본문·산출물 | `records/`·`artifacts/`의 허용 파일; SQLite에서 기한·무결성과 참조 관리 |
 | 모델·준비 | `models/`의 로컬 모델; `staging/`의 미공개 파일 |

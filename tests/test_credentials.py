@@ -66,3 +66,54 @@ def test_cascade_does_not_treat_a_locked_vault_as_an_absent_credential():
         Credentials(backend=Locked()).delete_if_present('credential:owned')
     assert error.value.code == 'AUTHENTICATION_REQUIRED'
     assert 'PRIVATE_BACKEND_ERROR' not in str(error.value)
+
+
+def test_credential_updates_report_actual_changes_and_restore_on_caller_failure():
+    backend = NativeStore()
+    vault = Credentials(backend=backend)
+    vault.set('credential:existing', 'old-value')
+    assert vault.read_optional('credential:absent') is None
+    with vault.updating({'credential:existing': 'old-value'}) as changed:
+        assert changed == set()
+    with pytest.raises(RuntimeError, match='CALLER_FAILED'):
+        with vault.updating({'credential:existing': 'new-value', 'credential:new': 'new-secret'}) as changed:
+            assert changed == {'credential:existing', 'credential:new'}
+            assert vault.get('credential:existing') == 'new-value'
+            raise RuntimeError('CALLER_FAILED')
+    assert vault.get('credential:existing') == 'old-value'
+    assert vault.read_optional('credential:new') is None
+
+
+def test_credential_updates_restore_a_backend_write_that_mutates_then_fails():
+    class FailsOnce(NativeStore):
+        def set_password(self, service, name, value):
+            super().set_password(service, name, value)
+            if value == 'rejected-secret':
+                raise RuntimeError('PRIVATE_BACKEND_ERROR')
+    backend = FailsOnce()
+    vault = Credentials(backend=backend)
+    vault.set('credential:existing', 'old-value')
+    with pytest.raises(StoreError) as failure:
+        with vault.updating({'credential:first': 'new-value', 'credential:existing': 'rejected-secret'}):
+            pytest.fail('The failed write must abort the caller.')
+    assert failure.value.code == 'AUTHENTICATION_REQUIRED'
+    assert backend.values == {('DAERI', 'existing'): 'old-value'}
+
+
+def test_credential_update_failure_reports_incomplete_compensation_safely():
+    class RestoreFails(NativeStore):
+        def delete_password(self, service, name):
+            raise RuntimeError('PRIVATE_BACKEND_ERROR')
+    vault = Credentials(backend=RestoreFails())
+    with pytest.raises(StoreError) as failure:
+        with vault.updating({'credential:new': 'private-value'}):
+            raise OSError('PRIVATE_FILE_ERROR')
+    assert failure.value.code == 'CREDENTIAL_UPDATE_PENDING'
+    assert 'PRIVATE' not in str(failure.value)
+
+
+def test_empty_credential_updates_do_not_open_a_native_store(monkeypatch):
+    vault = Credentials()
+    monkeypatch.setattr(vault, '_native', lambda: pytest.fail('Unexpected native access'))
+    with vault.updating({}) as changed:
+        assert changed == set()
