@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import stat
 from uuid import uuid4
 
 from .embedding import validate_embedding_config
@@ -34,6 +35,34 @@ def _paths(store, name):
     for path in (store.data_dir, directory.parent, directory, directory / 'setup.yaml', directory / 'draft.json'):
         _require(not path.is_symlink(), '설정 파일 경로에 심볼릭 링크를 사용할 수 없습니다.')
     return directory / 'setup.yaml', directory / 'draft.json'
+
+
+def draft_status(store, name):
+    """Inspect draft file availability before creation, preserving unfinished edits."""
+    result = {'profile': name, 'state': 'new', 'path': None}
+    try:
+        path, metadata = _paths(store, name)
+        for directory in (store.data_dir, path.parent.parent, path.parent):
+            try:
+                mode = directory.lstat().st_mode
+            except FileNotFoundError:
+                return result
+            _require(stat.S_ISDIR(mode), '초안 디렉터리 경로를 확인하세요.')
+        present = []
+        for file in (path, metadata):
+            try:
+                mode = file.lstat().st_mode
+            except FileNotFoundError:
+                present.append(False)
+                continue
+            _require(stat.S_ISREG(mode), '초안 파일 형식을 확인하세요.')
+            with file.open('rb') as stream:
+                stream.read(1)
+            present.append(True)
+        _require(present[0] == present[1], '설정 YAML과 초안 관리 정보를 함께 복구하세요.')
+    except OSError:
+        raise StoreError('STORE_UNAVAILABLE', '초안 파일 접근 권한과 저장소 상태를 확인하세요.') from None
+    return {'profile': name, 'state': 'resume', 'path': str(path)} if all(present) else result
 
 
 def _write(path, text):

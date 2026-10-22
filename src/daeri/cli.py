@@ -76,6 +76,7 @@ def _parser():
     commands.add_parser('check', help='Check the installed runtime and local storage features')
     setup = commands.add_parser('setup', help='Generate, validate and apply a selected-resource YAML draft').add_subparsers(dest='setup_command', required=True)
     setup.add_parser('catalog')
+    setup.add_parser('status', help='Inspect draft availability without creating user data').add_argument('profile')
     draft = setup.add_parser('draft')
     draft.add_argument('profile')
     draft.add_argument('--resource', action='append', default=[], metavar='INSTANCE=RECIPE')
@@ -265,9 +266,12 @@ def main():
         if args.command == 'check':
             result = check_environment()
             code = 0 if result['ready'] else 1
-        elif args.command == 'setup' and args.setup_command == 'catalog':
-            from .onboarding import selection_catalog
-            result, code = selection_catalog(), 0
+        elif args.command == 'setup' and args.setup_command in {'catalog', 'status'}:
+            from types import SimpleNamespace
+            from .onboarding import selection_catalog, draft_status
+            result = (selection_catalog() if args.setup_command == 'catalog' else
+                      draft_status(SimpleNamespace(data_dir=data_directory(args.data_dir)), args.profile))
+            code = 0
         elif args.command == 'auth':
             result, code = _auth(args), 0
         elif args.command == 'resource' and args.resource_command in {'catalog', 'template', 'setup-schema', 'validate-setup'}:

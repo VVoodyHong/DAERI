@@ -76,6 +76,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | 입력 | 처리와 반환 |
 |---|---|
 | `setup catalog` | 리소스 범주와 해당 범주의 지원 제품·표시 설명 반환 |
+| `setup status PROFILE` | 저장소 개설 전에도 [초안 파일 상태](../spec/configuration/profiles.md#생성과-파일-위치)를 읽어 신규·재개 또는 복구 필요 반환 |
 | `setup draft PROFILE --resource INSTANCE=RECIPE` | 선택한 연결의 접속·공개 인증 YAML 초안과 기준 상태 생성; 옵션 반복으로 복수 인스턴스 지정 |
 | `setup draft PROFILE --embedding PROVIDER` | 선택한 임베딩 방식의 입력만 초안에 포함; 생략하면 기존 선택 보존 |
 | `setup validate PROFILE` | 파일 전체 검증과 변경 요약·확인값 반환 |
@@ -103,6 +104,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 일반 관리 결과는 JSON으로 반환하며 입력·저장·준비 실패는 비밀 없는 오류와 0이 아닌 종료 코드로 구분한다.
 `VALUES_JSON` 인자는 UTF-8 공개 값 객체를 담은 파일의 경로다.
 스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
+`setup status`는 초안 파일 상태만 읽는 명령이며 YAML 내용의 유효성은 초안 재개·전체 검증에서 확인한다.
 기본 setup은 [YAML 초안·검증·일괄 적용](../spec/configuration/profiles.md#사용자용-setup-yaml)을 사용한다.
 테이블·키·저장소·문서 같은 업무별 조회 대상은 승인한 계획으로 전달한다.
 초안·확인값·기준 상태의 연결과 충돌 뒤 명시적 `--refresh`도 이 계약을 따른다.
@@ -149,7 +151,7 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
 | `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
 | `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
-| `onboarding.py`·`setup_yaml.py` | 선택 초안 생성·제한된 YAML 검사·기준 상태 및 확인값 대조·일괄 적용 |
+| `onboarding.py`·`setup_yaml.py` | 초안 상태 조회·선택 초안 생성·제한된 YAML 검사·기준 상태 및 확인값 대조·일괄 적용 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
 | `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 setup·profile·work·list-profiles 지침 전달 |
 

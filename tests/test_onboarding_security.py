@@ -115,6 +115,43 @@ def test_missing_yaml_is_a_safe_validation_failure(store):
     assert store.list_profiles() == []
 
 
+@pytest.mark.parametrize('location', ['setup', 'profile', 'setup.yaml', 'draft.json'])
+def test_draft_status_rejects_symlinks_and_preserves_their_targets(store, tmp_path, location):
+    from daeri.onboarding import draft_status
+    draft = completed(store)
+    directory = Path(draft['path']).parent
+    managed = (directory.parent if location == 'setup' else directory if location == 'profile'
+               else directory / location)
+    outside = tmp_path / 'outside'
+    is_directory = managed.is_dir()
+    managed.rename(outside)
+    managed.symlink_to(outside, target_is_directory=is_directory)
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        draft_status(store, 'production')
+    assert outside.exists() and managed.is_symlink()
+
+
+@pytest.mark.parametrize('operation', ['lstat', 'open'])
+def test_draft_status_reports_access_errors_instead_of_new_setup(store, monkeypatch, operation):
+    from daeri.onboarding import draft_status
+    draft = completed(store)
+    path = Path(draft['path'])
+    before = path.read_bytes()
+    original = getattr(Path, operation)
+
+    def inaccessible(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError('PRIVATE_SENTINEL')
+        return original(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, operation, inaccessible)
+        with pytest.raises(StoreError, match='STORE_UNAVAILABLE') as error:
+            draft_status(store, 'production')
+        assert 'PRIVATE_SENTINEL' not in str(error.value)
+    assert path.read_bytes() == before
+
+
 @pytest.mark.parametrize('change', [
     lambda value: value['resources']['primary']['inputs'].update({'PRIVATE_SENTINEL': 'x'}),
     lambda value: value['resources']['primary']['inputs'].update(password='PRIVATE_SENTINEL'),

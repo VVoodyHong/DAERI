@@ -33,6 +33,61 @@ def test_setup_catalog_does_not_create_user_data(tmp_path):
     assert not data_dir.exists()
 
 
+@pytest.mark.parametrize('empty_directory', [False, True])
+def test_setup_status_treats_a_missing_draft_as_a_normal_first_run(tmp_path, empty_directory):
+    data_dir = tmp_path / 'Application Support' / 'DAERI'
+    if empty_directory:
+        (data_dir / 'setup' / 'eu-mcp-prd').mkdir(parents=True)
+    before = set(tmp_path.rglob('*'))
+    result = run_cli('--data-dir', str(data_dir), 'setup', 'status', 'eu-mcp-prd')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {'profile': 'eu-mcp-prd', 'state': 'new', 'path': None}
+    assert set(tmp_path.rglob('*')) == before
+
+
+def test_setup_status_resumes_readable_draft_without_changing_its_contents(tmp_path):
+    from pathlib import Path
+    prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
+    created = run_cli(*prefix, 'draft', 'service', '--resource', 'primary=db-postgres')
+    path = Path(json.loads(created.stdout)['path'])
+    path.write_text('profile: service\nresources: [unfinished', encoding='utf-8')
+    before = {item: item.read_bytes() for item in path.parent.iterdir()}
+    result = run_cli(*prefix, 'status', 'service')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout) == {'profile': 'service', 'state': 'resume', 'path': str(path)}
+    assert {item: item.read_bytes() for item in path.parent.iterdir()} == before
+
+
+@pytest.mark.parametrize('obstruction', ['partial', 'directory_as_file', 'file_as_directory'])
+def test_setup_status_preserves_broken_drafts_and_returns_a_safe_error(tmp_path, obstruction):
+    data_dir = tmp_path / 'private'
+    directory = data_dir / 'setup' / 'service'
+    if obstruction == 'file_as_directory':
+        data_dir.mkdir()
+        (data_dir / 'setup').write_text('PRIVATE_SENTINEL')
+    else:
+        directory.mkdir(parents=True)
+        if obstruction == 'partial':
+            (directory / 'setup.yaml').write_text('PRIVATE_SENTINEL')
+        else:
+            (directory / 'setup.yaml').mkdir()
+            (directory / 'draft.json').write_text('PRIVATE_SENTINEL')
+    before = {path: path.read_bytes() for path in data_dir.rglob('*') if path.is_file()}
+    result = run_cli('--data-dir', str(data_dir), 'setup', 'status', 'service')
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['error']['code'] == 'INVALID_INPUT'
+    assert 'PRIVATE_SENTINEL' not in result.stdout + result.stderr
+    assert {path: path.read_bytes() for path in data_dir.rglob('*') if path.is_file()} == before
+
+
+def test_setup_status_validates_profile_before_inspecting_paths(tmp_path):
+    data_dir = tmp_path / 'private'
+    result = run_cli('--data-dir', str(data_dir), 'setup', 'status', '../escape')
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['error']['code'] == 'INVALID_INPUT'
+    assert not data_dir.exists()
+
+
 def test_setup_yaml_draft_validate_and_apply_across_processes(tmp_path):
     from pathlib import Path
     from daeri.setup_yaml import read_yaml, write_yaml
