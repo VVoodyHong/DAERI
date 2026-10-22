@@ -81,7 +81,8 @@ def _parser():
     draft = setup.add_parser('draft')
     draft.add_argument('profile')
     draft.add_argument('--resource', action='append', default=[], metavar='INSTANCE=RECIPE')
-    draft.add_argument('--embedding', choices=('local', 'openai_compatible', 'keyword_only'))
+    draft.add_argument('--embedding', choices=('local', 'api', 'openai_compatible', 'keyword_only'))
+    draft.add_argument('--embedding-adapter', metavar='ADAPTER')
     draft.add_argument('--refresh', action='store_true')
     setup.add_parser('validate').add_argument('profile')
     apply = setup.add_parser('apply')
@@ -155,13 +156,15 @@ def _auth(args):
     from .storage import StoreError
     credentials = Credentials()
     if args.auth_command == 'set':
+        credentials._name(args.reference)
         if args.stdin:
             value = sys.stdin.read(16385)
             if value.endswith('\n'): value = value[:-1]
             if value.endswith('\r'): value = value[:-1]
         else:
             if not sys.stdin.isatty():
-                raise StoreError('AUTHENTICATION_REQUIRED', 'Use an actual local terminal or explicit secure standard input.')
+                return {'status': 'input_required', 'reference': args.reference, 'stored': False,
+                        'message': '사용자 터미널에서 인증값을 숨김 입력으로 등록해 주세요.'}
             import getpass
             import warnings
             try:
@@ -201,7 +204,8 @@ def _with_store(args):
                         raise StoreError('INVALID_INPUT', 'Select unique resource names and registered products.')
                     instance, recipe = value.split('=')
                     selected[instance] = recipe
-                return create_draft(store, args.profile, selected, embedding=args.embedding, refresh=args.refresh)
+                return create_draft(store, args.profile, selected, embedding=args.embedding,
+                                    embedding_adapter=args.embedding_adapter, refresh=args.refresh)
             if args.setup_command == 'validate':
                 return validate_draft(store, args.profile)
             return apply_draft(store, args.profile, args.confirm)

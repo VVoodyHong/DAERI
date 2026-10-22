@@ -9,7 +9,8 @@ import re
 import stat
 from uuid import uuid4
 
-from .embedding import validate_embedding_config
+from .embedding import (api_adapter_catalog, api_embedding_draft, embedding_field_comments,
+                        validate_embedding_config)
 from .security import redact
 from .setup import (PROFILE_FIELDS, _current_setup_values, _no_secrets, _require,
                     _validate_setup_values, build_setup_resource, load_catalog,
@@ -28,7 +29,7 @@ def selection_catalog():
         group['products'].append({'recipe_id': recipe, 'display_name': item['display_name']})
     for group in groups.values():
         group['description'] = '사용 가능한 제품: ' + ', '.join(item['display_name'] for item in group['products'])
-    return {'groups': list(groups.values())}
+    return {'groups': list(groups.values()), 'embedding_adapters': api_adapter_catalog()}
 
 
 def _paths(store, name):
@@ -131,13 +132,23 @@ def _read_draft(store, name):
     return path, metadata, meta, document, hashlib.sha256(content).hexdigest()
 
 
-def _embedding_draft(name, provider):
-    _require(isinstance(provider, str) and provider in {'local', 'openai_compatible', 'keyword_only'},
+def _embedding_draft(name, provider, adapter=None):
+    _require(isinstance(provider, str) and provider in {'local', 'api', 'openai_compatible', 'keyword_only'},
              '기억 검색 방식을 확인하세요.')
     if provider == 'openai_compatible':
-        return {'provider': provider, 'endpoint': None, 'model': None,
-                'credential_ref': 'credential:' + name + '.embedding', 'allow_remote': False}
+        _require(adapter is None or adapter == 'openai_compatible', '회사 API 연결 방식을 확인하세요.')
+        provider, adapter = 'api', 'openai_compatible'
+    if provider == 'api':
+        return api_embedding_draft(name, adapter)
+    _require(adapter is None, '회사 API 연결 방식은 회사 임베딩 API와 함께 선택하세요.')
     return {'provider': provider}
+
+
+def _embedding_identity(value):
+    if not isinstance(value, dict):
+        return None
+    provider = value.get('provider')
+    return ('api', 'openai_compatible') if provider == 'openai_compatible' else (provider, value.get('adapter'))
 
 
 def _resource_block(store, name, instance, recipe, profile):
@@ -159,12 +170,19 @@ def _render(document):
     text += '# 비밀번호·토큰은 DAERI가 안내하는 터미널 숨김 입력 또는 제공자 로그인으로 등록합니다.\n'
     text += '# 빈 필수값을 채운 뒤 DAERI에 검증과 적용을 요청하세요.\n'
     text += write_yaml(document)
-    # Render each selected product's schema hints next to its fields.
-    lines, inputs = [], None
+    # Keep field guidance beside the values users edit, using each adapter's metadata.
+    lines, inputs, section = [], None, None
+    embedding_comments = embedding_field_comments(document.get('embedding'))
     for line in text.splitlines():
-        if line.startswith('    adapter: '):
+        if line and not line.startswith(' '):
+            inputs, section = None, line
+        if section == 'resources:' and line.startswith('    adapter: '):
             recipe = line.split(': ', 1)[1]
             inputs = setup_schema(recipe)['input_schema']['properties']
+        if section == 'embedding:' and line.startswith('  ') and not line.startswith('    '):
+            key = line.strip().split(':', 1)[0]
+            for comment in embedding_comments.get(key, '').splitlines():
+                lines.append('  # ' + comment)
         if inputs and line.startswith('      ') and not line.startswith('        '):
             key = line.strip().split(':', 1)[0]
             if key in inputs:
@@ -177,11 +195,14 @@ def _render(document):
     return '\n'.join(lines) + '\n'
 
 
-def create_draft(store, name, selections=None, *, embedding=None, refresh=False):
+def create_draft(store, name, selections=None, *, embedding=None, embedding_adapter=None, refresh=False):
     """Preserve edited values; refresh a stale base only when explicitly requested."""
     path, metadata = _paths(store, name)
     selections = {} if selections is None else selections
     _require(isinstance(selections, dict), '연결할 리소스를 확인하세요.')
+    _require(embedding is not None or embedding_adapter is None,
+             '회사 API 연결 방식은 기억 검색 방식과 함께 선택하세요.')
+    requested_embedding = _embedding_draft(name, embedding, embedding_adapter) if embedding is not None else None
     with store.transaction():
         profile = _current(store, name)
         exists = path.exists() or metadata.exists()
@@ -206,12 +227,17 @@ def create_draft(store, name, selections=None, *, embedding=None, refresh=False)
                 meta['schemas'][recipe] = _schema_digest(recipe)
         if embedding is not None:
             if 'embedding' not in document:
-                document['embedding'] = (copy.deepcopy(profile['embedding']) if profile and
-                    profile['embedding']['provider'] == embedding else _embedding_draft(name, embedding))
+                document['embedding'] = (validate_embedding_config(profile['embedding']) if profile and
+                    _embedding_identity(profile['embedding']) == _embedding_identity(requested_embedding)
+                    else requested_embedding)
+                changed = True
+            elif (document['embedding'] == {'provider': 'api', 'adapter': None}
+                    and requested_embedding.get('provider') == 'api'
+                    and requested_embedding.get('adapter') is not None):
+                document['embedding'] = requested_embedding
                 changed = True
             else:
-                _require(isinstance(embedding, str) and isinstance(document['embedding'], dict)
-                         and document['embedding'].get('provider') == embedding,
+                _require(_embedding_identity(document['embedding']) == _embedding_identity(requested_embedding),
                          '기존 초안의 기억 검색 방식은 YAML에서 수정하세요.')
         elif not exists and not profile:
             document['embedding'] = _embedding_draft(name, 'local')
@@ -298,7 +324,13 @@ def _configuration(store, name, document, profile, meta):
         _require(isinstance(config['embedding'], dict), '기억 검색 설정은 객체로 입력하세요.')
         config['embedding'] = validate_embedding_config(config['embedding'])
     except StoreError:
-        issues.append(_issue('embedding', message='선택한 기억 검색 방식의 필수값과 전송 허용을 확인하세요.'))
+        embedding = config['embedding']
+        if (isinstance(embedding, dict) and embedding.get('provider') == 'api'
+                and (not isinstance(embedding.get('adapter'), str)
+                     or embedding['adapter'] not in {item['adapter_id'] for item in api_adapter_catalog()})):
+            issues.append(_issue('embedding.adapter', message='지원하는 API 연결 방식을 선택해 주세요.'))
+        else:
+            issues.append(_issue('embedding', message='선택한 기억 검색 방식의 필수값과 전송 허용을 확인하세요.'))
     try:
         config['memory_policy'] = _profile_memory_policy(config['memory_policy'], config['resources'])
     except StoreError:

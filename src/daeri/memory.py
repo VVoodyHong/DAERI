@@ -13,7 +13,7 @@ from uuid import uuid4
 from .security import redact
 from .policy import selector_covers, within_selectors
 from .storage import StoreError
-from .embedding import OpenAICompatibleEmbedder, validate_embedding_config
+from .embedding import create_api_embedder, validate_embedding_config
 
 
 CATEGORIES = {"service_rule", "resource_structure", "procedure", "lesson"}
@@ -175,12 +175,12 @@ class MemoryService:
         config = validate_embedding_config(profile.get("embedding"))
         if config["provider"] == "keyword_only":
             return None
-        if config["provider"] == "openai_compatible":
+        if config["provider"] == "api":
             if not config["allow_remote"]:
                 return None
             key = _json(config)
             if key not in self._providers:
-                self._providers[key] = OpenAICompatibleEmbedder(config, credentials=self._credentials)
+                self._providers[key] = create_api_embedder(config, credentials=self._credentials)
             embedder = self._providers[key]
         else:
             embedder = self.embedder
@@ -214,7 +214,8 @@ class MemoryService:
         config = validate_embedding_config(profile.get("embedding") if profile else None)
         embedder = self._selected_embedder(profile or {"embedding": config})
         return {"profile_id": profile["profile_id"] if profile else None,
-                "provider": config["provider"], "allow_remote": config.get("allow_remote", False),
+                "provider": config["provider"], "adapter": config.get('adapter'),
+                "allow_remote": config.get("allow_remote", False),
                 "model_prepared": config["provider"] == "local" and embedder is not None,
                 "vector_ready": embedder is not None and self.vector_ready,
                 "model_id": embedder.model_id if embedder is not None else None,
@@ -230,8 +231,9 @@ class MemoryService:
         self._vector(embedder.embed_query("DAERI embedding readiness"), embedder)
         _require(self.store.get_profile(profile_id)["embedding"] == profile["embedding"],
                  "CONTEXT_CHANGED", "임베딩 진단 중 설정이 변경되었습니다.")
-        return {"provider": config["provider"], "profile_id": profile["profile_id"],
-                "api_verified": config["provider"] == "openai_compatible",
+        return {"provider": config["provider"], "adapter": config.get('adapter'),
+                "profile_id": profile["profile_id"],
+                "api_verified": config["provider"] == "api",
                 "model_id": embedder.model_id, "dimensions": embedder.dimensions,
                 "vector_ready": self.vector_ready}
 
@@ -572,7 +574,7 @@ class MemoryService:
         embedder = self._selected_embedder(profile) if eligible or profile["embedding"]["provider"] == "local" else None
         if embedder is not None and self.vector_ready:
             try:
-                if getattr(embedder, "remote", False):
+                if profile['embedding']['provider'] == 'api':
                     self._check_embedding_context(profile, eligible, instance_ids)
                 query_vector = self._vector(embedder.embed_query(redact(query)), embedder)
             except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):

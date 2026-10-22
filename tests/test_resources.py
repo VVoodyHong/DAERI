@@ -1,6 +1,7 @@
 """Actual lower MCP transport and fail-closed scope contract tests."""
 
 import copy
+import json
 import sys
 from pathlib import Path
 
@@ -359,6 +360,154 @@ def test_db_uri_cannot_select_another_database(registry):
     fingerprint, values = registry._binding(resource)
     assert len(fingerprint) == 64
     assert "private" not in fingerprint
+
+
+def db_password_config(registry):
+    from daeri.setup import build_setup_resource
+    return build_setup_resource(registry.store, 'db-postgres', 'service', 'primary-db', {
+        'host': 'db.example.test', 'port': 5432, 'database': 'service/db', 'username': 'reader@example'})
+
+
+def test_new_db_setup_requires_only_password_and_keeps_public_target(registry):
+    resource = db_password_config(registry)
+    assert resource['connection']['auth_env'] == {
+        'DATABASE_PASSWORD': 'credential:service.primary-db.database_password'}
+    assert resource['target'] == {
+        'host': 'db.example.test', 'port': 5432, 'database': 'service/db', 'username': 'reader@example'}
+
+
+@pytest.mark.parametrize('host,authority', [('db.example.test', 'db.example.test'),
+                                          ('2001:db8::1', '[2001:db8::1]'),
+                                          ('[2001:db8::1]', '[2001:db8::1]')])
+def test_db_password_builds_only_selected_endpoint_in_private_environment(registry, host, authority):
+    from urllib.parse import quote, unquote, urlsplit
+    resource = db_password_config(registry)
+    resource['target']['host'] = host
+    original = copy.deepcopy(resource)
+    password = 'private:/@?#%+ value'
+    ref = next(iter(resource['connection']['auth_env'].values()))
+    registry.resolve = lambda selected: password
+    fingerprint, credentials = registry._binding(resource)
+    environment = get_adapter('postgres_read').session_environment(resource, {'DATABASE_PASSWORD': credentials[ref]})
+    assert environment == {
+        'DATABASE_URI': f'postgresql://reader%40example:{quote(password, safe="")}@{authority}:5432/service%2Fdb?sslmode=require'}
+    parsed = urlsplit(environment['DATABASE_URI'])
+    assert unquote(parsed.password) == password
+    assert unquote(parsed.username) == resource['target']['username']
+    assert unquote(parsed.path[1:]) == resource['target']['database']
+    assert parsed.port == 5432
+    assert credentials == {ref: password}
+    assert resource == original
+    assert password not in json.dumps(registry._launch_connection(resource))
+    assert environment['DATABASE_URI'] not in json.dumps(registry._launch_connection(resource))
+    registry.resolve = lambda selected: password + 'rotated'
+    assert registry._binding(resource)[0] != fingerprint
+
+
+@pytest.mark.parametrize('target', [
+    {'host': 'primary.example,other.example'}, {'host': '/tmp/postgres'}, {'host': 'primary.example@other.example'},
+    {'host': 'primary.example?host=other.example'}, {'host': 'primary.example:5432'}, {'host': 'primary%2eexample'},
+    {'host': '[invalid]'}, {'port': 5432.0}, {'port': True}, {'port': 0}, {'port': 65536},
+    {'database': ''}, {'username': ''}, {'database': 'service\noptions=-c'},
+])
+def test_db_password_rejects_ambiguous_targets_before_launch(registry, target):
+    resource = db_password_config(registry)
+    resource['target'].update(target)
+    registry.resolve = lambda ref: 'private'
+    with pytest.raises(StoreError):
+        registry._binding(resource)
+
+
+def test_db_password_and_legacy_uri_require_one_explicit_authentication_mode(registry):
+    resource = db_password_config(registry)
+    resource['connection']['auth_env']['DATABASE_URI'] = 'credential:legacy.uri'
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        validate_resource(resource)
+
+
+@pytest.mark.parametrize('password', ['private://[invalid]:/@?#%+ value', '1', 'A'])
+def test_db_runtime_secret_environment_masks_password_and_derived_uri(registry, monkeypatch, password):
+    import asyncio
+    from contextlib import AsyncExitStack, asynccontextmanager
+    from urllib.parse import quote
+    resource = db_password_config(registry)
+    ref = next(iter(resource['connection']['auth_env'].values()))
+    registry.resolve = lambda selected: password
+    _, credentials = registry._binding(resource)
+    captured = {}
+
+    @asynccontextmanager
+    async def transport(parameters, **kwargs):
+        captured.update(environment=parameters.env, cwd=str(parameters.cwd), arguments=parameters.args)
+        yield None, None
+
+    class Session:
+        def __init__(self, *args): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def initialize(self): pass
+        async def send_request(self, *args):
+            from mcp.types import CallToolResult
+            body = '|'.join([password, quote(password, safe=''), captured['environment']['DATABASE_URI']])
+            return CallToolResult(content=[], structuredContent={'body': body, 'count': 1})
+
+    monkeypatch.setattr('daeri.resources.stdio_client', transport)
+    monkeypatch.setattr('daeri.resources.ClientSession', Session)
+    async def run():
+        async with AsyncExitStack() as stack:
+            _, secrets = await registry._session(stack, resource, 30, credentials)
+            return secrets
+    secrets = asyncio.run(run())
+    assert 'DATABASE_PASSWORD' not in captured['environment']
+    assert captured['environment']['DATABASE_URI'] in secrets
+    assert password in secrets
+    assert quote(password, safe='') in secrets
+    assert captured['environment']['DATABASE_URI'] not in captured['cwd'] + repr(captured['arguments'])
+    if len(password) > 1:
+        assert password not in captured['cwd'] + repr(captured['arguments'])
+
+    async def registered_tools(session):
+        return [{'name': 'execute_sql', 'inputSchema': {
+            'type': 'object', 'properties': {'sql': {'type': 'string'}}, 'required': ['sql'],
+            'additionalProperties': False}}]
+    monkeypatch.setattr(registry, '_tools', registered_tools)
+    original = copy.deepcopy(resource)
+    current = profile(resource)
+    registry.diagnose(current, 'primary-db')
+    invocation = registry.normalize(current, 'primary-db', 'query', {'sql': 'SELECT * FROM public.orders'},
+                                    {'tables': ['*'], 'columns': ['*'], 'max_rows': 10})
+    result = registry.execute(invocation)
+    assert result['result']['data']['body'] == '[REDACTED]|[REDACTED]|[REDACTED]'
+    assert result['result']['data']['count'] == 1
+    assert resource == original
+    if len(password) > 1:
+        assert password not in repr(invocation)
+        assert password.encode() not in b''.join(path.read_bytes() for path in registry.directory.rglob('*') if path.is_file())
+
+
+@pytest.mark.parametrize('mode', ['require', 'verify-ca', 'verify-full'])
+def test_db_password_uses_explicit_allowed_tls_mode(registry, mode):
+    resource = db_password_config(registry)
+    resource['connection']['env']['PGSSLMODE'] = mode
+    registry.resolve = lambda ref: 'private'
+    registry._binding(resource)
+    environment = get_adapter('postgres_read').session_environment(resource, {'DATABASE_PASSWORD': 'private', 'PGSSLMODE': mode})
+    assert environment['DATABASE_URI'].endswith('?sslmode=' + mode)
+
+
+def test_db_password_rejects_disabled_tls_and_legacy_uri_settings_remain_explicit(registry):
+    from daeri.setup import build_setup_resource
+    resource = db_password_config(registry)
+    resource['connection']['env']['PGSSLMODE'] = 'disable'
+    registry.resolve = lambda ref: 'private'
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        registry._binding(resource)
+    resource['connection']['env'] = {}
+    resource['connection']['auth_env'] = {'DATABASE_URI': 'credential:service.primary-db.database_uri'}
+    updated = build_setup_resource(registry.store, 'db-postgres', 'service', 'primary-db', {'port': 6432}, existing=resource)
+    assert updated['connection']['auth_env'] == resource['connection']['auth_env']
+    legacy_environment = {'DATABASE_URI': 'postgresql://reader:private@db.example.test/service'}
+    assert get_adapter('postgres_read').session_environment(resource, legacy_environment) == legacy_environment
 
 
 def test_infra_sso_binding_checks_account_and_provider_changes(registry, tmp_path, monkeypatch):

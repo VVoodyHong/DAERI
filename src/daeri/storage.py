@@ -349,7 +349,8 @@ class Store:
             profile = self._read(row, "STORE_UNAVAILABLE")
             if any(profile.get(key) != row[key] for key in ("profile_id", "name", "revision")):
                 raise StoreError("STORE_UNAVAILABLE", "The active profile revision does not match.")
-            profile.setdefault("embedding", {"provider": "local"})
+            from .embedding import validate_embedding_config
+            profile['embedding'] = validate_embedding_config(profile.get('embedding'))
             return profile
 
     def list_profiles(self) -> list:

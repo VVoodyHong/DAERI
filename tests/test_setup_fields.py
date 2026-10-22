@@ -41,7 +41,9 @@ def test_setup_describes_every_target_field_without_collecting_secrets(adapter):
     ('postgres_read', 'port', True), ('postgres_read', 'port', '5432'),
     ('postgres_read', 'host', 'db\x00.example.test'),
     ('redis_read', 'db', -1), ('redis_read', 'tls', 'true'),
-    ('aws_read', 'account', '123'), ('aws_read', 'account', 123456789012),
+    ('aws_read', 'account', '123'), ('aws_read', 'account', 12345678901),
+    ('aws_read', 'account', 1234567890123), ('aws_read', 'account', -123456789012),
+    ('aws_read', 'account', True),
     ('gitlab_read', 'server', 'http://git.example.test'),
     ('gitlab_read', 'server', 'https://user:password@git.example.test'),
     ('gitlab_read', 'server', 'https://git.example.test/\x00private'),
@@ -49,6 +51,11 @@ def test_setup_describes_every_target_field_without_collecting_secrets(adapter):
 ])
 def test_setup_rejects_values_that_cannot_represent_the_selected_binding(adapter, name, value):
     assert not accepts(adapter, name, value)
+
+
+@pytest.mark.parametrize('account', ['012345678901', '123456789012', 100000000000, 999999999999])
+def test_infra_setup_accepts_twelve_digit_account_strings_and_integers(account):
+    assert accepts('aws_read', 'account', account)
 
 
 @pytest.mark.parametrize('adapter,names', [

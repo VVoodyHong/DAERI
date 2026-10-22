@@ -8,7 +8,7 @@
     "executable": "postgres-mcp",
     "args": ["--access-mode=restricted"],
     "env": {},
-    "auth_env": ["DATABASE_URI"],
+    "auth_env": ["DATABASE_PASSWORD"],
     "capabilities": [{"capability_id": "query", "tool_name": "execute_sql", "constraints": {"sql_field": "sql", "tables": ["*"], "columns": ["*"], "max_rows": 100}}],
     "source": "https://github.com/crystaldba/postgres-mcp"
   },

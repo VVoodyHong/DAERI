@@ -38,7 +38,7 @@ def company_api(monkeypatch):
                 hook()
             return OpenAICompatibleEmbedder(config, credentials=Credentials(Vault()), client=client)
 
-        monkeypatch.setattr("daeri.memory.OpenAICompatibleEmbedder", create)
+        monkeypatch.setattr("daeri.memory.create_api_embedder", create)
         yield state
 
 
@@ -135,3 +135,96 @@ def test_permission_revoked_during_provider_selection_prevents_http_transmission
         else:
             service.search(selected["profile_id"], "PRIVATE_QUERY_AFTER_REVOCATION")
         assert company_api["requests"] == []
+
+
+def test_saved_legacy_config_keeps_profile_revision_files_and_vectors(tmp_path, company_api):
+    from daeri.setup import configure_embedding, export_profile
+    with closing(Store(tmp_path)) as store:
+        selected = profile(store, embedding=api_config())
+        legacy = {**selected, 'embedding': dict(selected['embedding'])}
+        legacy['embedding'].pop('adapter')
+        legacy['embedding']['provider'] = 'openai_compatible'
+        path, size, digest = store._prepare('profiles', legacy)
+        store._db.execute('UPDATE profiles SET path=?,size=?,sha256=? WHERE profile_id=?',
+                          (path, size, digest, selected['profile_id']))
+        before = (store.data_dir / path).read_bytes()
+        assert store.get_profile('alpha') == selected
+        assert export_profile(store, 'alpha')['embedding'] == selected['embedding']
+        service = MemoryService(store)
+        item = save(service, selected)
+        vector = tuple(store._db.execute('SELECT * FROM memory_vectors').fetchone())
+        config = tmp_path / 'canonical.json'
+        config.write_text(json.dumps(api_config()))
+        same = configure_embedding(store, 'alpha', config, expected_revision=selected['revision'])
+        assert same == selected
+        assert (store.data_dir / path).read_bytes() == before
+    with closing(Store(tmp_path)) as store:
+        result = MemoryService(store).search(selected['profile_id'], 'semantic-question')
+        assert result['retrieval_state'] == 'hybrid'
+        assert result['items'][0]['memory_ref'] == item['memory_ref']
+        assert tuple(store._db.execute('SELECT * FROM memory_vectors').fetchone()) == vector
+        assert store.get_profile('alpha')['revision'] == selected['revision']
+
+
+@pytest.mark.parametrize('revoke', [False, True])
+def test_company_format_uses_registry_and_core_transmission_guard(tmp_path, monkeypatch, revoke):
+    from daeri.embedding import API_ADAPTERS
+    requests, state = [], {'hook': None}
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        assert request.headers['X-Company-Token'] == 'company-test-token'
+        return httpx.Response(200, json={'result': {'values': [1.0, 0.25]}})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        class CompanyFormat:
+            label, description = '사내 전용 API', '시험용 독자 요청·응답 규격'
+            dimensions, model_id = 2, 'company-format:test-v1'
+            validate_config = staticmethod(dict)
+
+            @staticmethod
+            def draft_config(name):
+                return {'provider': 'api', 'adapter': 'company_format', 'deployment': None}
+
+            def __init__(self, config, credentials=None, **kwargs):
+                self.config = config
+                self.credentials = credentials or Credentials()
+                hook, state['hook'] = state['hook'], None
+                if hook:
+                    hook()
+
+            def embed_document(self, text):
+                return self._request(text, 'document')
+
+            def embed_query(self, text):
+                return self._request(text, 'query')
+
+            def _request(self, text, purpose):
+                response = client.post('https://company.example.test/vector',
+                    json={'text': text, 'purpose': purpose, 'deployment': self.config['deployment']},
+                    headers={'X-Company-Token': self.credentials.get(self.config['credential_ref'])})
+                return response.json()['result']['values']
+
+        monkeypatch.setitem(API_ADAPTERS, 'company_format', CompanyFormat)
+        monkeypatch.setenv('DAERI_TEST_COMPANY_TOKEN', 'company-test-token')
+        with closing(Store(tmp_path)) as store:
+            selected = profile(store, embedding={'provider': 'api', 'adapter': 'company_format',
+                'deployment': 'internal-model', 'credential_ref': 'env:DAERI_TEST_COMPANY_TOKEN',
+                'allow_remote': True})
+            service = MemoryService(store)
+            item = save(service, selected)
+            assert item['index_state'] == 'ready'
+            assert requests[0]['purpose'] == 'document'
+            requests.clear()
+            if revoke:
+                def withdraw_consent():
+                    profile(store, embedding={**selected['embedding'], 'allow_remote': False})
+                state['hook'] = withdraw_consent
+                service._providers.clear()
+            result = service.search(selected['profile_id'], 'semantic-question')
+            if revoke:
+                assert requests == []
+            else:
+                assert result['retrieval_state'] == 'hybrid'
+                assert result['items'][0]['memory_ref'] == item['memory_ref']
+                assert requests == [{'text': 'semantic-question', 'purpose': 'query', 'deployment': 'internal-model'}]

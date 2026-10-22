@@ -12,7 +12,8 @@
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
-| `adapters/`의 `setup_fields` | 어댑터별 접속·공개 인증 입력 스키마·필수값·설정 목적지 |
+| `adapters/`의 `setup_fields`·`normalize_setup_values` | 어댑터별 접속·공개 인증 입력 스키마·필수값·저장 표현·설정 목적지 |
+| `embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
 
@@ -81,10 +82,11 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 
 | 입력 | 처리와 반환 |
 |---|---|
-| `setup catalog` | 리소스 범주와 해당 범주의 지원 제품·표시 설명 반환 |
+| `setup catalog` | 리소스 종류·지원 제품과 구현된 임베딩 API 연결 방식·표시 설명 반환 |
 | `setup status PROFILE` | 저장소 개설 전에도 [초안 파일 상태](../spec/configuration/profiles.md#생성과-파일-위치)를 읽어 신규·재개 또는 복구 필요 반환 |
 | `setup draft PROFILE --resource INSTANCE=RECIPE` | 선택한 연결의 접속·공개 인증 YAML 초안과 기준 상태 생성; 옵션 반복으로 복수 인스턴스 지정 |
 | `setup draft PROFILE --embedding PROVIDER` | 선택한 임베딩 방식의 입력만 초안에 포함; 생략하면 기존 선택 보존 |
+| `setup draft PROFILE --embedding api --embedding-adapter ID` | 확인한 API 연결 방식의 입력 생성; 새 API에서 ID를 생략하면 미완료 초안 보존 |
 | `setup validate PROFILE` | 파일 전체 검증과 변경 요약·확인값 반환 |
 | `setup apply PROFILE --confirm TOKEN` | 검증한 파일·기준 상태 대조 후 하나의 profile 개정으로 일괄 저장 |
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
@@ -99,9 +101,9 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 | `resource prepare PROFILE INSTANCE --recipe ID` | 선택한 고정 recipe만 격리 환경에 준비·검사 |
 | `resource login PROFILE INSTANCE` | 지원되는 제공자 로그인 시작·공개 확인 URL 표시·결과 반환 |
 | `resource diagnose PROFILE INSTANCE` | 인증·대상과 MCP 도구 목록을 확인해 기능 계약 등록 |
-| `auth set/status/delete REFERENCE` | 실제 터미널의 숨김 입력·지정 참조 상태·삭제만 처리 |
+| `auth set/status/delete REFERENCE` | 사용자 터미널의 숨김 입력·지정 참조 상태·삭제; 터미널 부재는 `input_required`·종료 코드 0 |
 | `memory configure PROFILE --config CONFIG_JSON --expected-revision N` | 임베딩 객체만 검증·개정 대조 후 선택 적용; 다른 profile 설정 보존 |
-| `memory status [--profile NAME]` | 네트워크·비밀 해소 없는 선택 제공자·로컬 준비 확인; 원격 호환은 미검증 |
+| `memory status [--profile NAME]` | 네트워크·비밀 해소 없이 제공자·API 연결 방식·로컬 준비 확인; 원격 호환은 미검증 |
 | `memory diagnose --profile NAME` | 로컬 모델 또는 허용된 회사 API를 고정 시험 문장으로 검사 |
 | `memory prepare [--profile NAME]` | 로컬 제공자만 명시적 모델 준비 |
 | `memory reindex [--profile NAME]` | 선택한 제공자로 현재 허용 정본 기반 재색인 |
@@ -149,11 +151,11 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `engine.py`·`planning.py` | 업무 상태·소유권·멱등 처리, 계획·승인·실행·예산과 근거 연결 |
 | `resources.py` | 공통 기능 등록·계약 지문·인증 참조 해소·하위 MCP 세션·스키마 및 전송 검사 |
 | `adapters/__init__.py`·`adapters/base.py` | 신뢰하는 어댑터 등록·식별자 조회와 공통 읽기 검사·결과 처리 계약 |
-| `adapters/`의 제품별 모듈 | 제품별 설정 입력 스키마·대상 설정안·인증·로그인·요청 의미·접속 대상·범위·결과 검사 |
+| `adapters/`의 제품별 모듈 | 제품별 설정 입력 스키마·대상 설정안·실행 시 인증 변환·로그인·요청 의미·접속 대상·범위·결과 검사 |
 | `policy.py`·`security.py` | 필드 제공·마스킹·출처 경로와 알려진 인증 문자열 보조 검사 |
 | `results.py` | 실제 근거·완료 조건·표 계산·허용 파일 생성·보고 검증 |
 | `memory.py`·`knowledge.py` | profile별 지식의 출처·정책·기한·개정·검색·갱신 검사 |
-| `embedding.py` | 임베딩 제공자 설정·회사 API 요청·인증 주입·벡터 응답 검사 |
+| `embedding.py` | 임베딩 제공자·API 어댑터 등록·설정 및 호환 입력 검증·선택 구현 생성·공통 전송 허용과 어댑터별 요청·인증·응답 검사 |
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
 | `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
 | `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |

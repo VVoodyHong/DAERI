@@ -68,9 +68,11 @@ class AwsReadAdapter(ReadAdapter):
                               "pattern": r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$", "examples": ["ap-northeast-2"]},
                    "required": True, "paths": [["target", "region"], ["connection", "env", "AWS_REGION"],
                                                ["capabilities", 0, "constraints", "region"]]},
-        "account": {"schema": {"title": "Infra 계정 식별자", "description": "제공자 인증 결과와 대조할 12자리 계정 식별자입니다.",
-                               "type": "string", "pattern": r"^[0-9]{12}$", "minLength": 12, "maxLength": 12,
-                               "examples": ["111111111111"]},
+        "account": {"schema": {"title": "Infra 계정 식별자", "description": "제공자 인증 결과와 대조할 12자리 계정 식별자입니다. 숫자 또는 문자열을 입력하세요.",
+                               "type": ["string", "integer"], "pattern": r"^[0-9]{12}$",
+                               "minLength": 12, "maxLength": 12,
+                               "minimum": 100000000000, "maximum": 999999999999,
+                               "examples": [111111111111, "111111111111"]},
                     "required": True, "paths": [["target", "account"]]},
     }
     environment_prefixes = ("AWS_",)
@@ -82,6 +84,12 @@ class AwsReadAdapter(ReadAdapter):
     normalize_results = True
     login_recipe_id = "infra-aws"
     login_helper = "provider_login.py"
+
+    def normalize_setup_values(self, values):
+        values = super().normalize_setup_values(values)
+        if type(values.get("account")) is int:
+            values["account"] = str(values["account"])
+        return values
 
     def validate_connection(self, config):
         super().validate_connection(config)

@@ -35,6 +35,40 @@ def test_setup_catalog_does_not_create_user_data(tmp_path):
     assert not data_dir.exists()
 
 
+def test_setup_company_api_adapter_selection_round_trips_through_cli(tmp_path):
+    from pathlib import Path
+    from daeri.setup_yaml import read_yaml, write_yaml
+    prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
+    catalog = json.loads(run_cli(*prefix, 'catalog').stdout)
+    assert [item['adapter_id'] for item in catalog['embedding_adapters']] == ['openai_compatible']
+    draft = run_cli(*prefix, 'draft', 'service', '--embedding', 'api',
+                    '--embedding-adapter', 'openai_compatible')
+    assert draft.returncode == 0, draft.stdout + draft.stderr
+    path = Path(json.loads(draft.stdout)['path'])
+    value = read_yaml(path)
+    assert value['embedding']['provider'] == 'api'
+    assert value['embedding']['adapter'] == 'openai_compatible'
+    value['embedding'].update(endpoint='https://embedding.example.test/v1/embeddings',
+                              model='company-model', allow_remote=False)
+    path.write_text(write_yaml(value), encoding='utf-8')
+    validated = run_cli(*prefix, 'validate', 'service')
+    assert validated.returncode == 0, validated.stdout
+    token = json.loads(validated.stdout)['confirmation_token']
+    applied = run_cli(*prefix, 'apply', 'service', '--confirm', token)
+    assert applied.returncode == 0, applied.stdout
+    assert json.loads(applied.stdout)['embedding']['adapter'] == 'openai_compatible'
+
+
+def test_setup_company_api_without_adapter_requires_selection_before_apply(tmp_path):
+    prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
+    draft = run_cli(*prefix, 'draft', 'service', '--embedding', 'api')
+    assert draft.returncode == 0, draft.stdout + draft.stderr
+    validated = run_cli(*prefix, 'validate', 'service')
+    assert validated.returncode == 1
+    result = json.loads(validated.stdout)
+    assert not result['complete'] and result['confirmation_token'] is None
+
+
 @pytest.mark.parametrize('empty_directory', [False, True])
 def test_setup_status_treats_a_missing_draft_as_a_normal_first_run(tmp_path, empty_directory):
     data_dir = tmp_path / 'Application Support' / 'DAERI'
@@ -208,10 +242,20 @@ def test_catalog_and_template_are_local_and_do_not_create_user_store(tmp_path):
     assert not directory.exists()
 
 
-def test_auth_set_requires_explicit_secure_input_and_never_echoes_secret(tmp_path):
+def test_auth_set_without_a_user_terminal_returns_normal_input_required_state(tmp_path):
     result = run_cli('--data-dir', str(tmp_path), 'auth', 'set', 'credential:local')
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report['status'] == 'input_required'
+    assert report['reference'] == 'credential:local' and report['stored'] is False
+    assert '터미널' in report['message'] and 'error' not in report
+    assert not list(tmp_path.iterdir())
+
+
+def test_auth_set_checks_the_reference_before_requesting_input():
+    result = run_cli('auth', 'set', 'credential:../invalid')
     assert result.returncode != 0
-    assert json.loads(result.stdout)['error']['code'] == 'AUTHENTICATION_REQUIRED'
+    assert json.loads(result.stdout)['error']['code'] == 'INVALID_INPUT'
 
 
 def test_memory_status_does_not_prepare_model_implicitly(tmp_path):
@@ -235,9 +279,8 @@ def test_auth_standard_input_is_stored_without_returning_value(monkeypatch):
     from types import SimpleNamespace
     from io import StringIO
     stored = {}
-    class FakeCredentials:
-        def set(self, reference, value): stored[reference] = value
-    monkeypatch.setattr('daeri.credentials.Credentials', FakeCredentials)
+    monkeypatch.setattr('daeri.credentials.Credentials.set',
+                        lambda self, reference, value: stored.update({reference: value}))
     monkeypatch.setattr('sys.stdin', StringIO('AUTH_PRIVATE_SENTINEL\n'))
     result = _auth(SimpleNamespace(auth_command='set', stdin=True, reference='credential:test'))
     assert stored == {'credential:test': 'AUTH_PRIVATE_SENTINEL'}

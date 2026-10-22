@@ -1,8 +1,10 @@
 """PostgreSQL read connection, SQL scope, and typed legacy result interpretation."""
 
 import ast
+import ipaddress
+import re
 from decimal import Decimal, InvalidOperation
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from .base import ReadAdapter, _guard, denied, json_text as _json
 from ..storage import StoreError
@@ -135,7 +137,7 @@ class PostgresReadAdapter(ReadAdapter):
         "READ_OPERATIONS_ONLY", "MCP_READ_ONLY", "READ_ONLY_MODE", "ENABLED_TOOLS",
         "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",
     })
-    authentication_fields = frozenset({"DATABASE_URI"})
+    authentication_fields = frozenset({"DATABASE_PASSWORD", "DATABASE_URI"})
     executable = "postgres-mcp"
     launcher_arguments = (("--access-mode=restricted",), ("--access-mode", "restricted"))
     normalize_results = True
@@ -149,17 +151,55 @@ class PostgresReadAdapter(ReadAdapter):
         if connection["transport"] != "stdio":
             return
         env = connection.get("env", {})
+        if len(set(connection.get("auth_env", {})) & self.authentication_fields) > 1:
+            raise StoreError("UNSUPPORTED_CONSTRAINT", "Select one DB password or legacy URI authentication reference.")
         if any(key.startswith("PG") and key not in {"PGSSLMODE", "PGSSLROOTCERT", "PGSSLCERT", "PGSSLKEY"} for key in (*env, *connection.get("auth_env", {}))):
             raise StoreError("UNSUPPORTED_CONSTRAINT", "DB service files, alternate endpoints, and session startup options are unsupported.")
         if env.get("PGSSLMODE", "require") not in {"require", "verify-ca", "verify-full"}:
             raise StoreError("UNSUPPORTED_CONSTRAINT", "DB transport validation cannot be disabled through environment overrides.")
 
+    def _password_uri(self, config, password):
+        target = config["target"]
+        for field in ("host", "database", "username"):
+            schema = self.setup_fields[field]["schema"]
+            value = target.get(field)
+            if (not isinstance(value, str) or not schema["minLength"] <= len(value) <= schema["maxLength"]
+                    or not re.fullmatch(schema["pattern"], value)):
+                raise StoreError("UNSUPPORTED_CONSTRAINT", "The DB password requires an explicit valid target and login principal.")
+        host, port = target["host"], target.get("port")
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise StoreError("UNSUPPORTED_CONSTRAINT", "The DB target requires one numeric port.")
+        if any(char in host for char in ",%"):
+            raise StoreError("UNSUPPORTED_CONSTRAINT", "The DB target requires one explicit host.")
+        if ":" in host or "[" in host or "]" in host:
+            try:
+                address = ipaddress.IPv6Address(host[1:-1] if host.startswith("[") and host.endswith("]") else host)
+            except ValueError:
+                raise StoreError("UNSUPPORTED_CONSTRAINT", "The DB target has an invalid IPv6 host.") from None
+            host = "[" + str(address) + "]"
+        mode = config["connection"].get("env", {}).get("PGSSLMODE", "require")
+        return ("postgresql://" + quote(target["username"], safe="") + ":" + quote(password, safe="")
+                + "@" + host + ":" + str(port) + "/" + quote(target["database"], safe="") + "?sslmode=" + mode)
+
+    def session_environment(self, config, environment):
+        environment = super().session_environment(config, environment)
+        if "DATABASE_PASSWORD" in config["connection"].get("auth_env", {}):
+            environment["DATABASE_URI"] = self._password_uri(config, environment.pop("DATABASE_PASSWORD"))
+        return environment
+
     def binding_files(self, config, credentials):
         connection, target = config["connection"], config["target"]
         if connection["transport"] != "stdio":
             return {}
+        if "DATABASE_PASSWORD" in connection.get("auth_env", {}):
+            # Target validation also runs before discovery and every approved call.
+            self._password_uri(config, "binding-check")
+            return {}
         ref = connection.get("auth_env", {}).get("DATABASE_URI")
-        uri = urlsplit(credentials.get(ref, ""))
+        try:
+            uri = urlsplit(credentials.get(ref, ""))
+        except ValueError:
+            raise StoreError("UNSUPPORTED_CONSTRAINT", "The DB credential has an invalid endpoint.") from None
         query = parse_qsl(uri.query, keep_blank_values=True)
         if (uri.scheme not in ("postgres", "postgresql") or not uri.hostname or uri.fragment
                 or any(key != "sslmode" or value not in ("require", "verify-ca", "verify-full") for key, value in query)

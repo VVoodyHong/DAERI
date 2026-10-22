@@ -11,7 +11,7 @@ from daeri.storage import StoreError
 
 
 def api_config(**changes):
-    return {"provider": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
+    return {"provider": "api", "adapter": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
             "model": "company-deployment", "credential_ref": "env:DAERI_TEST_EMBEDDING_TOKEN",
             "allow_remote": True, **changes}
 
@@ -29,6 +29,52 @@ def test_remote_config_normalizes_defaults_and_keeps_explicit_consent():
     config = api_config()
     config.pop("allow_remote")
     assert provider().validate_embedding_config(config) == {**config, "allow_remote": False, "timeout_seconds": 15}
+
+
+def test_legacy_provider_uses_the_same_adapter_and_index_identity():
+    modern = api_config()
+    legacy = {key: value for key, value in modern.items() if key != 'adapter'}
+    legacy['provider'] = 'openai_compatible'
+    assert provider().validate_embedding_config(legacy) == provider().validate_embedding_config(modern)
+    assert provider().OpenAICompatibleEmbedder(legacy).model_id == provider().OpenAICompatibleEmbedder(modern).model_id
+    with pytest.raises(StoreError):
+        provider().validate_embedding_config({**legacy, 'adapter': 'another-format'})
+
+
+@pytest.mark.parametrize('adapter', [None, '', 'unregistered', 1])
+def test_api_requires_a_registered_connection_adapter(adapter):
+    with pytest.raises(StoreError):
+        provider().validate_embedding_config(api_config(adapter=adapter))
+
+
+def test_registered_adapter_owns_its_format_without_openai_fields(monkeypatch):
+    module = provider()
+
+    class CompanyFormat:
+        label = '사내 전용 API'
+        description = '시험용 독자 규격'
+
+        @staticmethod
+        def validate_config(config):
+            assert set(config) <= {'provider', 'adapter', 'allow_remote', 'deployment'}
+            return {**config, 'deployment': config['deployment']}
+
+        @staticmethod
+        def draft_config(name):
+            return {'provider': 'api', 'adapter': 'company_format', 'deployment': None, 'allow_remote': False}
+
+        def __init__(self, config, **kwargs):
+            self.config = config
+
+    monkeypatch.setitem(module.API_ADAPTERS, 'company_format', CompanyFormat)
+    config = {'provider': 'api', 'adapter': 'company_format', 'deployment': 'internal'}
+    selected = module.validate_embedding_config(config)
+    assert selected == {**config, 'allow_remote': False}
+    assert module.create_api_embedder(selected).config == selected
+    assert module.api_embedding_draft('production', 'company_format')['deployment'] is None
+    assert module.api_adapter_catalog()[-1]['label'] == '사내 전용 API'
+    with pytest.raises(StoreError):
+        module.create_api_embedder({**config, 'allow_remote': 'yes'})
 
 
 @pytest.mark.parametrize("changes", [

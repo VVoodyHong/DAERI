@@ -51,9 +51,13 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    선택한 제품의 `recipe_id`는 YAML 생성 명령의 내부 선택값으로 전달한다.
 4. 기억 검색 선택은 초안 → 기존 profile 순서로 재사용한다.
    처음에는 “기억 검색에 사용할 임베딩 방식을 선택해 주세요.”로 묻는다.
-   선택지는 로컬 임베딩 모델(`local`), 회사 임베딩 API(`openai_compatible`), 키워드 검색만 사용(`keyword_only`)이며 세부 입력은 YAML에 담는다.
+   표시 선택지는 “로컬 임베딩 모델”·“회사 임베딩 API”·“키워드 검색만 사용”이며 내부 값은 각각 `local`·`api`·`keyword_only`다.
+   회사 API는 `setup catalog`의 `embedding_adapters`에 있는 `label`·`description`으로 “회사 API의 연결 방식을 확인해 주세요.”라고 묻는다.
+   등록된 방식과 함께 “규격 확인 필요”를 선택지로 제공하고 그 응답은 미완료 초안으로 연결한다.
+   한 방식만 있어도 회사의 인증·요청·응답 규격과 맞는지 확인받고 선택한 `adapter_id`를 사용한다.
+   규격 확인이 남으면 미완료 API 초안을 보존하고 회사 API 계약 확인 또는 키워드 검색 전환으로 이어간다.
 5. `setup draft PROFILE --resource INSTANCE=RECIPE`로 선택한 연결의 초안을 생성한다.
-   복수 연결은 `--resource`를 반복하고 새 임베딩 선택은 `--embedding`으로 전달한다.
+   복수 연결은 `--resource`를 반복하고 새 임베딩 선택은 `--embedding`, 회사 API의 확인한 연결 방식은 `--embedding-adapter`로 전달한다.
    초안 재개는 `setup draft PROFILE`로 경로를 확인한다.
    반환한 파일 위치를 안내하고 작성 완료 응답을 기다린다.
 6. 작성 완료 응답은 `setup validate PROFILE`로 이어간다.
@@ -62,6 +66,8 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    적용 응답과 해당 검증의 `confirmation_token`이 있으면 `setup apply PROFILE --confirm TOKEN`을 실행한다.
    파일·개정·계약이 바뀌면 차이를 확인하고 새 검증·확인을 받는다.
 7. 적용한 연결을 `resource prepare`로 준비하고 [인증 계약](../../docs/spec/configuration/profiles.md#인증-저장과-전달)의 숨김 입력 또는 제공자 로그인으로 인증한다.
+   호스트는 `auth status`로 등록 여부를 확인하고 사용자는 자신의 터미널에서 `auth set`의 숨김 입력을 수행한다.
+   필요한 값의 종류와 사용자가 실행할 명령을 안내하고 등록 완료 응답 뒤 `auth status`로 다시 확인한다.
    준비 범위 확대·추가 권한이 필요하면 이유와 변경 범위를 확인받는다.
 8. `resource diagnose`와 [선택한 기억 검색 준비](../../docs/spec/installation/environment.md#임베딩-선택과-준비)를 진행한다.
    실패는 저장한 설정·제공자 선택을 보존하고 해당 미완료 단계의 다음 조치를 안내한다.

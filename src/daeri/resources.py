@@ -42,6 +42,22 @@ def _hash(value):
     return hashlib.sha256(_json(value).encode()).hexdigest()
 
 
+def _mask_secrets(value, pattern):
+    if isinstance(value, str):
+        return pattern.sub("[REDACTED]", value) if pattern else value
+    if isinstance(value, list):
+        return [_mask_secrets(item, pattern) for item in value]
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            key = _mask_secrets(key, pattern)
+            if key in result:
+                raise StoreError("RESULT_VALIDATION_FAILED", "Credential masking produced ambiguous result fields.")
+            result[key] = _mask_secrets(item, pattern)
+        return result
+    return value
+
+
 def _fail(message="The resource configuration is invalid."):
     raise StoreError("INVALID_INPUT", message)
 
@@ -244,7 +260,7 @@ class ResourceRegistry:
                 raise
             except Exception:
                 raise StoreError("AUTHENTICATION_REQUIRED", "The credential reference could not be resolved.") from None
-            if not isinstance(value, str) or not value or any(char in value for char in "\r\n"):
+            if not isinstance(value, str) or not value or any(char in value for char in "\x00\r\n"):
                 raise StoreError("AUTHENTICATION_REQUIRED", "The credential reference could not be resolved.")
             credentials[ref] = value
         provider_files = get_adapter(config["adapter"]).binding_files(config, credentials)
@@ -298,21 +314,31 @@ class ResourceRegistry:
                 return copy.deepcopy(descriptor)
         raise StoreError("NOT_FOUND", "The capability is not registered in this profile.")
 
-    async def _session(self, stack, connection, timeout, credentials):
+    async def _session(self, stack, resource, timeout, credentials):
+        connection = self._launch_connection(resource)
         secrets = []
+        def remember(value):
+            secrets.append(value)
+            if "://" in value:
+                try:
+                    password = urlsplit(value).password
+                except ValueError:
+                    password = None
+                if password:
+                    secrets.extend([password, unquote(password)])
         def resolve(ref):
             value = credentials.get(ref)
             if not isinstance(value, str) or not value or "\r" in value or "\n" in value:
                 raise StoreError("AUTHENTICATION_REQUIRED", "The credential reference could not be resolved.")
-            secrets.append(value)
-            if "://" in value:
-                uri = urlsplit(value)
-                if uri.password:
-                    secrets.append(unquote(uri.password))
+            remember(value)
             return value
         if connection["transport"] == "stdio":
             env = dict(connection.get("env", {}))
             env.update({key: resolve(ref) for key, ref in connection.get("auth_env", {}).items()})
+            env = get_adapter(resource["adapter"]).session_environment(resource, env)
+            for key, value in env.items():
+                if _SECRET_NAME.search(key) and (key not in connection.get("env", {}) or value != connection["env"][key]):
+                    remember(value)
             # SDK itself inherits a small platform allowlist, never arbitrary parent credentials.
             sink = stack.enter_context(open(os.devnull, "w"))
             working = self.directory / "processes" / _hash(connection)
@@ -327,7 +353,7 @@ class ResourceRegistry:
             read, write, _ = await stack.enter_async_context(streamable_http_client(connection["url"], http_client=client))
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
-        return session, secrets
+        return session, sorted(set(secrets), key=len, reverse=True)
 
     async def _tools(self, session):
         result, cursor, pages = [], None, 0
@@ -354,7 +380,7 @@ class ResourceRegistry:
         async def run():
             async with asyncio.timeout(timeout):
                 async with AsyncExitStack() as stack:
-                    session, _ = await self._session(stack, self._launch_connection(config), timeout, credentials)
+                    session, _ = await self._session(stack, config, timeout, credentials)
                     return await self._tools(session)
         try:
             tools = asyncio.run(run())
@@ -446,7 +472,7 @@ class ResourceRegistry:
         async def run():
             async with asyncio.timeout(timeout):
                 async with AsyncExitStack() as stack:
-                    session, secrets = await self._session(stack, self._launch_connection(invocation.resource), timeout, credentials)
+                    session, secrets = await self._session(stack, invocation.resource, timeout, credentials)
                     tools = await self._tools(session)
                     current = next((item for item in tools if item["name"] == invocation.operation), None)
                     if current != invocation.tool_contract:
@@ -467,10 +493,8 @@ class ResourceRegistry:
                     adapter.provider_error(value)
                     if len(_json(value).encode()) > 2097152:
                         raise StoreError("RESULT_TRUNCATED", "The lower result exceeds the bounded result limit; no incomplete body is exposed.")
-                    encoded = _json(redact(value))
-                    for secret in secrets:
-                        encoded = encoded.replace(json.dumps(secret, ensure_ascii=False)[1:-1], "[REDACTED]")
-                    sanitized = json.loads(encoded)
+                    pattern = re.compile("|".join(re.escape(secret) for secret in secrets)) if secrets else None
+                    sanitized = redact(_mask_secrets(value, pattern))
                     if schema is not None:
                         _validate(sanitized, schema, "RESULT_VALIDATION_FAILED")
                     return sanitized, value_types

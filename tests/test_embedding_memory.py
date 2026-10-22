@@ -13,7 +13,7 @@ from test_memory import (NumericalFixtureEmbedder, candidate, configured_resourc
 
 
 def api_config(**changes):
-    return {"provider": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
+    return {"provider": "api", "adapter": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
             "model": "company-embedding", "credential_ref": "credential:company-embedding",
             "allow_remote": True, **changes}
 
@@ -41,14 +41,14 @@ class RecordingAPI(NumericalFixtureEmbedder):
 @pytest.fixture
 def api(monkeypatch):
     RecordingAPI.calls = []
-    monkeypatch.setattr("daeri.memory.OpenAICompatibleEmbedder", RecordingAPI)
+    monkeypatch.setattr("daeri.memory.create_api_embedder", RecordingAPI)
     return RecordingAPI
 
 
 def test_profile_embedding_configuration_round_trips_and_preserves_on_update(tmp_path):
     with closing(Store(tmp_path / "data")) as store:
         original = profile(store, embedding=api_config())
-        assert original["embedding"]["provider"] == "openai_compatible"
+        assert original["embedding"]["provider"] == "api"
         changed = store.put_profile("alpha", resources=original["resources"], memory_policy=memory_policy())
         assert changed["embedding"] == original["embedding"]
         value = export_profile(store, "alpha")
@@ -187,7 +187,7 @@ def test_configure_embedding_requires_inspected_revision_and_preserves_other_set
         changed = configure_embedding(store, "alpha", path, expected_revision=selected["revision"])
         assert changed["resources"] == selected["resources"]
         assert changed["memory_policy"] == selected["memory_policy"]
-        assert changed["embedding"]["provider"] == "openai_compatible"
+        assert changed["embedding"]["provider"] == "api"
         same = configure_embedding(store, "alpha", path, expected_revision=changed["revision"])
         assert same["revision"] == changed["revision"]
 
@@ -204,7 +204,8 @@ def test_cli_configure_status_and_api_prepare_are_explicit(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     status = run_cli('--data-dir', str(directory), 'memory', 'status', '--profile', 'alpha')
     assert status.returncode == 0, status.stdout + status.stderr
-    assert json.loads(status.stdout)['provider'] == 'openai_compatible'
+    assert json.loads(status.stdout)['provider'] == 'api'
+    assert json.loads(status.stdout)['adapter'] == 'openai_compatible'
     assert json.loads(status.stdout)['api_verified'] is False
     prepared = run_cli('--data-dir', str(directory), 'memory', 'prepare', '--profile', 'alpha')
     assert prepared.returncode == 1

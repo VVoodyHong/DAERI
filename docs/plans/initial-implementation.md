@@ -26,7 +26,7 @@
 | 업무·승인 | 접수·보완·최근 목록·복구, 불변 계획·대화 응답, 일시중지·재승인·취소 | [업무](../spec/tasks/workflow.md)·[승인](../spec/hosts/approval.md) | [상태·승인](../../tests/test_engine.py)·[계획 검사](../../tests/test_planning.py) |
 | 리소스 | 어댑터 선택, stdio·HTTPS MCP 등록·정규화·읽기 호출·누적 예산 | [연결](../spec/resources/initial-adapters.md)·[계약](../spec/resources/contract.md) | [등록·전송](../../tests/test_resources.py)·[제품별 범위](../../tests/test_adapters.py)·[실행 통합](../../tests/test_execution_flow.py) |
 | 결과 | 완료 근거·부분 결과·파생 표·텍스트/JSON/CSV 파일·보존 자료 조회 | [결과](../spec/mcp/tasks.md#결과-dto) | [보고·표·파일](../../tests/test_results.py)·[현재 제공 정책](../../tests/test_derived_visibility.py) |
-| 기억 | 선별 지식·로컬/회사 API/키워드 선택·검색·정정·무효화·재색인 | [기억](../spec/tasks/memory.md) | [검색](../../tests/test_embedding_memory.py)·[API](../../tests/test_embedding_provider.py)·[업무 연결](../../tests/test_memory_flow.py) |
+| 기억 | 선별 지식·로컬/회사 API/키워드와 API 연결 방식 선택·검색·정정·무효화·재색인 | [기억](../spec/tasks/memory.md) | [검색](../../tests/test_embedding_memory.py)·[API](../../tests/test_embedding_provider.py)·[업무 연결](../../tests/test_memory_flow.py) |
 | 저장 | profile JSON·SQLite·관리 파일·인증 분리, 기한·무결성·멱등 기록 | [저장](../spec/configuration/profiles.md#로컬-저장-구조) | [저장·복구](../../tests/test_storage.py)·[파일 수명](../../tests/test_artifact_storage.py) |
 | 공개 MCP | 15개 도구의 입력·구조화 결과·오류·호스트 전달 | [도구 목록](../spec/mcp/common.md) | [스키마](../../tests/test_contracts.py)·[실제 stdio](../../tests/test_mcp_server.py) |
 
@@ -67,7 +67,7 @@ Skill·호스트 설정의 존재와 로컬 MCP 통합은 실제 호스트 UI의
 | 실제 stdio 통합 | 복수 리소스 조회·승인·표·CSV·보고·기억 회상, 재계획의 근거·분기 승계와 다른 대상 완료 거부, 실행·재전달·조회에서 잘림 유지 |
 | 어댑터 확장·호환 | 추가 시험 어댑터의 공통 stdio 실행, 식별자·범주·등록 충돌 거부, 기존 Source 등록본의 계약·인증 지문 유지와 실행, 기존 결과 해석 대조 |
 | 실제 로컬 임베딩 | 준비한 다국어 모델로 DNS를 차단한 로딩·임베딩·한국어 질의와 영어 지식 검색 |
-| 회사 임베딩 API | 실제 어댑터·모의 HTTP 응답의 요청·인증·벡터 검사, 색인·검색·장애 제한·모델 교체·재색인·전송 직전 권한 철회; 실제 네트워크 제외 |
+| 회사 임베딩 API | 제공 방식·연결 어댑터 분리, 독자 규격 시험 어댑터의 색인·검색, 이전 설정·벡터 호환, 모의 HTTP 요청·인증·벡터 검사·모델 교체·재색인·전송 직전 권한 철회; 실제 네트워크 제외 |
 | 프로그램 준비 | 임시 HOME·빈 전용 캐시의 공식 uv·관리 Python·잠긴 환경 준비, 전역 도구·shell 보존; 공통 Python 진입의 15개 도구 MCP 시작 |
 | 선택 추론 의존성 | 모의 uv의 기본·로컬 추가 준비 분기와 전용 환경 유지, 추론 패키지 import를 차단한 기본 MCP 시작·환경 검사 |
 | 배포물 | 오프라인 소스 배포물·wheel 빌드, 회사 API 모듈 포함과 로컬 추론 패키지의 선택 의존 조건 확인 |
@@ -81,6 +81,7 @@ Skill·호스트 설정의 존재와 로컬 MCP 통합은 실제 호스트 UI의
 Windows의 준비 스크립트·공통 MCP 구성은 있으나 실제 Windows 실행·정책·인증 UI는 미검증이다.
 회사의 실제 리소스·SSO 로그인·권한·조직 네트워크와 Python·패키지 캐시가 전혀 없는 PC의 전체 온라인 준비도 별도로 확인해야 한다.
 회사 임베딩 API의 실제 주소·인증·모델 배포와 응답 호환성도 별도로 확인해야 한다.
+현재 API 연결 구현은 OpenAI 호환 형식이며 추가 회사 규격은 어댑터 구현·등록·검증으로 확장한다.
 setup Skill은 회사 API·키워드 전용·로컬 선택의 가상 요청으로 설치·전송 허용·준비 분기를 별도 검토했다.
 로컬 통합 테스트의 리소스는 시험 프로세스이며 운영 환경 확인은 별도로 기록한다.
 
@@ -138,13 +139,14 @@ setup Skill은 회사 API·키워드 전용·로컬 선택의 가상 요청으�
 ## 선택형 임베딩 구현 순서
 
 회사 API를 사용해야 하거나 로컬 모델 설치가 제한된 환경을 위해 profile별 임베딩 제공자를 선택한다.
+회사 API의 선택과 실제 연결 방식은 구분하며 등록된 어댑터가 생성 필드·검증·호출을 담당한다.
 기억·질의의 외부 전송은 기존 호스트 모델 제공 허용과 구분해 명시적으로 설정한다.
 설정·인증 계약은 [profile 구성](../spec/configuration/profiles.md), 검색·색인 동작은 [기억 사양](../spec/tasks/memory.md)이 소유한다.
 
 | 순서 | 개발·검증 목표 |
 |---|---|
-| 1 | 로컬·회사 API·키워드 전용 선택의 입력 검증, 비밀 참조와 profile 개정 보호 |
-| 2 | OpenAI 호환 API 어댑터의 요청·응답·시간 제한·비밀 제거와 잘못된 응답 거부 |
+| 1 | 제공자와 API 연결 방식의 분리, 등록 목록·미완료 초안·이전 입력 호환, 비밀 참조와 profile 개정 보호 |
+| 2 | 등록된 OpenAI 호환 API 어댑터의 요청·응답·시간 제한·비밀 제거와 잘못된 응답 거부 |
 | 3 | 검색·색인의 선택 제공자 연결, 전송 전 권한 재검사·실패 시 제한·모델 변경 후 재색인 |
 | 4 | 로컬 추론 패키지의 선택 설치, 네트워크 없는 상태 조회와 고정 시험 문장의 명시적 진단 |
 | 5 | 회사 API·키워드 전용·로컬 준비의 Skill 분기, 전체 회귀와 문서 계약 검토 |

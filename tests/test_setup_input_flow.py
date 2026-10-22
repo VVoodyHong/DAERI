@@ -141,6 +141,46 @@ def test_resource_builder_creates_complete_resource_without_publishing_a_profile
         store.close()
 
 
+@pytest.mark.parametrize('account,identifier', [
+    (123456789012, '123456789012'), (100000000000, '100000000000'),
+    (999999999999, '999999999999'), ('012345678901', '012345678901'),
+])
+def test_infra_setup_stores_valid_numeric_accounts_as_identifiers(tmp_path, account, identifier):
+    supplied = {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': account}
+    path = values_file(tmp_path, supplied)
+    assert setup.validate_setup('infra-aws', path)['complete'] is True
+    store = Store(tmp_path / 'private')
+    try:
+        store.put_profile('service')
+        saved = setup.configure_resource(store, 'infra-aws', 'service', 'infra-one', path,
+                                         expected_revision=1)
+        assert saved['resources'][0]['target']['account'] == identifier
+        assert type(saved['resources'][0]['target']['account']) is str
+        assert json.loads(path.read_text(encoding='utf-8')) == supplied
+        canonical = values_file(tmp_path, {'account': identifier})
+        assert setup.configure_resource(store, 'infra-aws', 'service', 'infra-one', canonical,
+                                        expected_revision=2) == saved
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize('account', [True, False, 123456789012.0, -123456789012,
+                                     12345678901, 1234567890123, '123', '123456789012.0'])
+def test_infra_account_validation_rejects_values_without_a_twelve_digit_identifier(tmp_path, account):
+    values = {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': account}
+    report = setup.validate_setup('infra-aws', values_file(tmp_path, values))
+    assert report['valid'] is False
+    assert report['complete'] is False
+    assert any(issue['field'] == 'account' for issue in report['issues'])
+    store = Store(tmp_path / 'private')
+    try:
+        with pytest.raises(StoreError, match='INVALID_INPUT'):
+            setup.build_setup_resource(store, 'infra-aws', 'service', 'infra-one', values)
+        assert store.list_profiles() == []
+    finally:
+        store.close()
+
+
 def test_resource_builder_merges_partial_values_without_mutating_existing_resource(tmp_path):
     store = Store(tmp_path / 'private')
     try:

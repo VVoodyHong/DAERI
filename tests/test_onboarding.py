@@ -105,6 +105,25 @@ def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
     assert all(r['policy'] == {} for r in profile['resources'])
 
 
+@pytest.mark.parametrize('account,identifier', [
+    ('123456789012', '123456789012'), ('012345678901', '012345678901'),
+])
+def test_unquoted_infra_account_yaml_is_previewed_and_saved_as_a_string(store, account, identifier):
+    from pathlib import Path
+    draft = create_draft(store, 'production', {'infra': 'infra-aws'}, embedding='keyword_only')
+    path = Path(draft['path'])
+    text = path.read_text(encoding='utf-8')
+    text = text.replace('profile: null', 'profile: operations-reader')
+    text = text.replace('region: null', 'region: ap-northeast-2').replace('account: null', 'account: ' + account)
+    path.write_text(text, encoding='utf-8')
+    result = validate_draft(store, 'production')
+    assert result['valid'], result['issues']
+    assert result['preview']['resources']['infra']['inputs']['account'] == identifier
+    profile = apply_draft(store, 'production', result['confirmation_token'])
+    assert profile['resources'][0]['target']['account'] == identifier
+    assert path.read_text(encoding='utf-8') == text
+
+
 def test_yaml_syntax_error_reports_position_without_the_raw_value(store):
     from pathlib import Path
     draft = completed(store)
@@ -193,13 +212,173 @@ def test_company_api_template_does_not_require_local_model_or_expose_secrets(sto
     draft = create_draft(store, 'production', embedding='openai_compatible')
     from daeri.setup_yaml import read_yaml
     value = read_yaml(draft['path'])
-    assert value['embedding'] == {'provider': 'openai_compatible', 'endpoint': None,
+    assert value['embedding'] == {'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None,
         'model': None, 'credential_ref': 'credential:production.embedding', 'allow_remote': False}
     edit(draft, lambda v: v['embedding'].update(endpoint='https://embedding.example.test/v1/embeddings', model='company-model', allow_remote=True))
     result = validate_draft(store, 'production')
     assert result['valid']
     profile = apply_draft(store, 'production', result['confirmation_token'])
-    assert profile['embedding']['provider'] == 'openai_compatible'
+    assert profile['embedding']['provider'] == 'api'
+    assert profile['embedding']['adapter'] == 'openai_compatible'
+
+
+def test_api_adapter_catalog_and_selected_template_share_the_registered_contract(store):
+    from daeri.setup_yaml import read_yaml
+    adapters = selection_catalog()['embedding_adapters']
+    assert [adapter['adapter_id'] for adapter in adapters] == ['openai_compatible']
+    assert all(adapter['label'] and adapter['description'] for adapter in adapters)
+    draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
+    embedding = read_yaml(draft['path'])['embedding']
+    assert embedding['provider'] == 'api' and embedding['adapter'] == 'openai_compatible'
+    assert {'endpoint', 'model', 'credential_ref', 'allow_remote'} <= embedding.keys()
+
+
+@pytest.mark.parametrize('provider', ['local', 'keyword_only', 'api'])
+def test_embedding_draft_comments_explain_the_selected_fields_without_changing_values(store, provider):
+    from pathlib import Path
+    from daeri.setup_yaml import parse_yaml
+    draft = create_draft(store, 'production', embedding=provider)
+    text = Path(draft['path']).read_text(encoding='utf-8')
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith('  ') and not line.startswith('    ') and not line.lstrip().startswith('#'):
+            assert lines[index - 1].startswith('  # ')
+    assert parse_yaml(text.encode())['embedding'] == (
+        {'provider': 'api', 'adapter': None} if provider == 'api' else {'provider': provider})
+
+
+def test_api_embedding_comments_cover_authentication_consent_and_optional_fields(store):
+    from pathlib import Path
+    from daeri.setup_yaml import parse_yaml
+    config = {'provider': 'api', 'adapter': 'openai_compatible',
+        'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
+        'credential_ref': 'env:COMPANY_EMBEDDING_TOKEN', 'allow_remote': False,
+        'dimensions': 1024, 'timeout_seconds': 30}
+    store.put_profile('production', embedding=config)
+    draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
+    text = Path(draft['path']).read_text(encoding='utf-8')
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith('  ') and not line.startswith('    ') and not line.lstrip().startswith('#'):
+            assert lines[index - 1].startswith('  # '), line
+    assert 'HTTPS' in text and '모델' in text
+    assert '인증 참조' in text and '기억·검색 질의' in text
+    assert '1~8192' in text and '1~60' in text
+    assert parse_yaml(text.encode())['embedding'] == config
+    assert validate_draft(store, 'production')['valid']
+
+
+def test_registered_api_template_uses_its_own_comments_and_nested_fields(store, monkeypatch):
+    from pathlib import Path
+    from daeri.embedding import API_ADAPTERS
+    from daeri.setup_yaml import read_yaml
+
+    class CompanyFormat:
+        field_comments = {'transport': '사내 API의 접속 방식입니다.'}
+
+        @staticmethod
+        def draft_config(name):
+            return {'provider': 'api', 'adapter': 'company_format',
+                    'transport': {'adapter': 'internal'}, 'allow_remote': False}
+
+    monkeypatch.setitem(API_ADAPTERS, 'company_format', CompanyFormat)
+    draft = create_draft(store, 'production', {'primary': 'db-postgres'},
+                         embedding='api', embedding_adapter='company_format')
+    text = Path(draft['path']).read_text(encoding='utf-8')
+    assert '# 사내 API의 접속 방식입니다.\n  transport:' in text
+    assert read_yaml(draft['path'])['embedding'] == CompanyFormat.draft_config('production')
+    assert 'endpoint:' not in text and 'OpenAI' not in text
+
+
+def test_company_api_without_selected_adapter_stays_incomplete(store):
+    from daeri.setup_yaml import read_yaml
+    draft = create_draft(store, 'production', embedding='api')
+    assert read_yaml(draft['path'])['embedding'] == {'provider': 'api', 'adapter': None}
+    result = validate_draft(store, 'production')
+    assert not result['complete'] and result['confirmation_token'] is None
+    assert [issue['field'] for issue in result['issues']] == ['embedding.adapter']
+    with pytest.raises(StoreError):
+        apply_draft(store, 'production', result['confirmation_token'])
+    assert store.list_profiles() == []
+
+
+@pytest.mark.parametrize('adapter', [None, 'COMPANY_PRIVATE_SENTINEL', [], {}])
+def test_unsupported_yaml_api_adapter_reports_the_selection_field_without_raw_values(store, adapter):
+    draft = create_draft(store, 'production', embedding='api')
+    edit(draft, lambda value: value['embedding'].update(adapter=adapter))
+    result = validate_draft(store, 'production')
+    assert not result['complete'] and result['confirmation_token'] is None
+    assert [issue['field'] for issue in result['issues']] == ['embedding.adapter']
+    assert 'COMPANY_PRIVATE_SENTINEL' not in json.dumps(result)
+
+
+def test_missing_yaml_api_adapter_reports_the_selection_field(store):
+    draft = create_draft(store, 'production', embedding='api')
+    edit(draft, lambda value: value['embedding'].pop('adapter'))
+    result = validate_draft(store, 'production')
+    assert [issue['field'] for issue in result['issues']] == ['embedding.adapter']
+
+
+def test_supported_api_adapter_with_incomplete_fields_reports_embedding(store):
+    create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
+    result = validate_draft(store, 'production')
+    assert [issue['field'] for issue in result['issues']] == ['embedding']
+
+
+def test_explicit_adapter_selection_completes_a_pending_api_template(store):
+    from daeri.setup_yaml import read_yaml
+    draft = create_draft(store, 'production', embedding='api')
+    create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
+    embedding = read_yaml(draft['path'])['embedding']
+    assert embedding['adapter'] == 'openai_compatible'
+    assert {'endpoint', 'model', 'credential_ref', 'allow_remote'} <= embedding.keys()
+
+
+def test_pending_api_template_with_user_edits_uses_the_yaml_edit_path(store):
+    from pathlib import Path
+    draft = create_draft(store, 'production', embedding='api')
+    edit(draft, lambda value: value['embedding'].update(model='company-model'))
+    original = Path(draft['path']).read_bytes()
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
+    assert Path(draft['path']).read_bytes() == original
+
+
+@pytest.mark.parametrize('provider,adapter', [
+    ('api', 'unregistered'), ('local', 'openai_compatible'),
+    ('keyword_only', 'openai_compatible'), (None, 'openai_compatible'),
+    ('openai_compatible', 'unregistered'),
+])
+def test_invalid_api_adapter_selection_preserves_existing_draft(store, provider, adapter):
+    from pathlib import Path
+    draft = completed(store)
+    original = Path(draft['path']).read_bytes()
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        create_draft(store, 'production', embedding=provider, embedding_adapter=adapter)
+    assert Path(draft['path']).read_bytes() == original
+
+
+@pytest.mark.parametrize('provider,adapter', [('openai_compatible', None), ('api', 'openai_compatible')])
+def test_reopening_legacy_api_draft_preserves_user_edited_bytes(store, provider, adapter):
+    from pathlib import Path
+    draft = create_draft(store, 'production', embedding='openai_compatible')
+    edit(draft, lambda value: value['embedding'].update(provider='openai_compatible',
+        endpoint='https://embedding.example.test/v1/embeddings', model='company-model'))
+    edit(draft, lambda value: value['embedding'].pop('adapter', None))
+    path = Path(draft['path'])
+    path.write_text('# User retained this explanation.\n' + path.read_text(), encoding='utf-8')
+    original = path.read_bytes()
+    create_draft(store, 'production', embedding=provider, embedding_adapter=adapter)
+    assert path.read_bytes() == original
+
+
+def test_new_draft_reuses_existing_api_settings_for_the_same_adapter(store):
+    from daeri.setup_yaml import read_yaml
+    profile = store.put_profile('production', embedding={'provider': 'openai_compatible',
+        'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
+        'credential_ref': 'credential:production.embedding', 'allow_remote': False})
+    draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
+    assert read_yaml(draft['path'])['embedding'] == profile['embedding']
 
 
 def test_explicit_null_embedding_does_not_switch_to_local(store):

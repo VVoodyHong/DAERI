@@ -82,6 +82,10 @@ class ReadAdapter:
     login_recipe_id = None
     login_helper = None
 
+    def normalize_setup_values(self, values):
+        """Return validated setup inputs in the adapter's stored representation."""
+        return values.copy()
+
     def validate_connection(self, config):
         connection = config["connection"]
         if connection["transport"] != "stdio":
@@ -109,6 +113,10 @@ class ReadAdapter:
     def launch_connection(self, config):
         self.validate_connection(config)
         return copy.deepcopy(config["connection"])
+
+    def session_environment(self, config, environment):
+        """Prepare resolved process values at the private transport boundary."""
+        return environment.copy()
 
     def prepare_parameters(self, parameters, input_schema):
         pass

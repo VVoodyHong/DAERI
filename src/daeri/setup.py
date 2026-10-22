@@ -255,6 +255,7 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
     from .policy import pointer_set
     contract = setup_schema(recipe_id)
     _require(_validate_setup_values(contract, values)['valid'], 'Setup answers are invalid.')
+    values = get_adapter(contract['adapter']).normalize_setup_values(values)
     template = profile_template(store, recipe_id, profile_name, instance_id)['resources'][0]
     if existing is not None:
         _require(existing['instance_id'] == instance_id
