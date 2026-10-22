@@ -36,12 +36,17 @@ def completed(store, selections=None):
 def test_catalog_groups_all_roles_and_available_products(monkeypatch):
     groups = selection_catalog()['groups']
     assert {g['type'] for g in groups} == {'DB', 'Cache', 'Infra', 'Source', 'Document'}
+    assert {g['type']: g['label'] for g in groups} == {
+        'DB': '데이터베이스', 'Cache': '캐시', 'Infra': '인프라',
+        'Source': '소스 코드', 'Document': '문서'}
     from daeri import onboarding
     catalog = onboarding.load_catalog()
     monkeypatch.setattr(onboarding, 'load_catalog', lambda: catalog | {
         'db-other': dict(catalog['db-postgres'], display_name='Another DB')})
     db = selection_catalog()['groups'][0]
+    assert db['label'] == '데이터베이스'
     assert [p['display_name'] for p in db['products']] == ['PostgreSQL', 'Another DB']
+    assert [p['recipe_id'] for p in db['products']] == ['db-postgres', 'db-other']
     assert db['description'] == '사용 가능한 제품: PostgreSQL, Another DB'
 
 

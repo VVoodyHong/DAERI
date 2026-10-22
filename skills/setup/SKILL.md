@@ -44,9 +44,11 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    기존 환경의 손상·중단·버전 차이는 [준비·복구 계약](../../docs/spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)으로 처리한다.
    `setup status PROFILE`의 [초안 상태](../../docs/spec/configuration/profiles.md#생성과-파일-위치)로 다음 단계를 정한다.
    `new`는 선택 단계로, `resume`은 기존 초안 재개로, 오류는 반환한 원인의 복구 안내로 이어간다.
-3. 새 초안은 `setup catalog`의 범주·제품 표시값으로 필요한 리소스를 선택받는다.
-   모든 범주에 같은 선택 형식과 분할 규칙을 적용한다.
-   제품이 하나인 범주는 그 제품을 사용하고 여럿인 범주는 실제 목록에서 선택받는다.
+3. 새 초안은 `setup catalog`를 조회하고 “연결할 리소스 종류를 선택해 주세요.”로 복수 선택을 받는다.
+   선택지의 `label`은 `groups[].label`, `description`은 `groups[].description`을 그대로 사용한다.
+   선택한 항목은 같은 그룹의 `type`에 대응시키고 모든 종류에 같은 선택 형식과 분할 규칙을 적용한다.
+   제품이 하나인 종류는 그 제품을 사용하고 여럿이면 `products[].display_name`으로 제품을 별도 선택받는다.
+   선택한 제품의 `recipe_id`는 YAML 생성 명령의 내부 선택값으로 전달한다.
 4. 기억 검색 선택은 초안 → 기존 profile 순서로 재사용한다.
    처음에는 “기억 검색에 사용할 임베딩 방식을 선택해 주세요.”로 묻는다.
    선택지는 로컬 임베딩 모델(`local`), 회사 임베딩 API(`openai_compatible`), 키워드 검색만 사용(`keyword_only`)이며 세부 입력은 YAML에 담는다.

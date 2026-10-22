@@ -19,9 +19,12 @@ from .storage import StoreError, _profile_memory_policy
 
 
 def selection_catalog():
+    labels = {'DB': '데이터베이스', 'Cache': '캐시', 'Infra': '인프라',
+              'Source': '소스 코드', 'Document': '문서'}
     groups = {}
     for recipe, item in load_catalog().items():
-        group = groups.setdefault(item['type'], {'type': item['type'], 'label': item['type'], 'products': []})
+        group = groups.setdefault(item['type'], {
+            'type': item['type'], 'label': labels.get(item['type'], item['type']), 'products': []})
         group['products'].append({'recipe_id': recipe, 'display_name': item['display_name']})
     for group in groups.values():
         group['description'] = '사용 가능한 제품: ' + ', '.join(item['display_name'] for item in group['products'])
