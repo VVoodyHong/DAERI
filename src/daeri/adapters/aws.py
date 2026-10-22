@@ -59,7 +59,7 @@ class AwsReadAdapter(ReadAdapter):
     })
     target_template = {"profile": "SET-ME", "region": "SET-ME", "account": "SET-ME"}
     setup_fields = {
-        "profile": {"schema": {"title": "Infra 제공자 프로파일", "description": "DAERI profile과 구분되는 제공자 인증 설정의 프로파일 이름입니다.",
+        "profile": {"schema": {"title": "Infra 제공자 profile", "description": "DAERI profile과 구분되는 제공자 인증 설정의 profile입니다.",
                                "type": "string", "minLength": 1, "maxLength": 128,
                                "pattern": PROFILE_NAME_PATTERN, "examples": ["operations-reader"]},
                     "required": True, "paths": [["target", "profile"], ["connection", "env", "AWS_PROFILE"]]},

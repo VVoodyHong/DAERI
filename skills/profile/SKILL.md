@@ -5,7 +5,7 @@ description: DAERI profile을 선택·전환하거나 profile과 그에 귀속�
 
 # DAERI profile
 
-기본 응답은 한국어이며 사용자가 다른 언어를 지정하면 따른다.
+응답 언어·용어와 현재 단계의 안내는 [사용자 안내](../../docs/spec/hosts/plugins.md#사용자-안내)를 따른다.
 `profile PROFILE`은 이 대화의 이후 새 업무에 사용할 기본 대상을 선택한다.
 `profile delete PROFILE`은 대상과 정리 범위를 확인한 뒤 해당 profile의 로컬 자료를 삭제한다.
 구성과 식별자는 [profile 명세](../../docs/spec/configuration/profiles.md)를 읽는다.
@@ -21,11 +21,11 @@ description: DAERI profile을 선택·전환하거나 profile과 그에 귀속�
 
 1. `profile list`로 실제 등록 목록을 읽는다.
    빈 목록은 setup 안내, 조회 실패는 해당 오류 안내로 처리한다.
-2. 요청의 이름·식별자를 실제 목록에서 확인한다.
+2. 요청의 profile·식별자를 실제 목록에서 확인한다.
    생략·미등록·모호한 대상은 정형 질문 도구로 선택받는다.
 3. `profile show PROFILE`이 성공하면 반환한 `name`·`profile_id`를 현재 대화의 기본 선택으로 확인한다.
    오류·취소·미응답이면 기존 선택을 유지한다.
-4. 선택한 이름·식별자와 이후 새 업무에 적용된다는 사실을 짧게 알린다.
+4. 선택한 profile과 필요한 식별자, 이후 새 업무에 적용된다는 사실을 짧게 알린다.
    선택의 수명·우선순위·재확인은 [선택 계약](../../docs/spec/configuration/profiles.md#선택과-기본값)을 따른다.
 
 진행 중인 업무는 저장된 대상·계획·승인으로 이어가고 새 업무는 [work](../work/SKILL.md)로 요청한다.

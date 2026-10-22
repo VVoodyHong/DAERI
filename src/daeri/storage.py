@@ -296,7 +296,7 @@ class Store:
                 or not isinstance(resources, list)
                 or any(days is not None and (type(days) is not int or days <= 0)
                        for days in (retention_days, long_term_memory_days))):
-            raise StoreError("INVALID_INPUT", "Invalid profile name, context, or retention policy.")
+            raise StoreError("INVALID_INPUT", "Invalid profile, context, or retention policy.")
         if resources:
             from .resources import validate_resource
 
@@ -343,7 +343,7 @@ class Store:
             if not rows:
                 raise StoreError("NOT_FOUND", "Profile was not found.")
             if len(rows) != 1:
-                raise StoreError("CONTEXT_REQUIRED", "The profile name and ID refer to different profiles.")
+                raise StoreError("CONTEXT_REQUIRED", "The profile reference matches multiple profiles.")
             row = rows[0]
             self.assert_profile_available(row['profile_id'])
             profile = self._read(row, "STORE_UNAVAILABLE")

@@ -5,19 +5,18 @@ description: DAERI 설치·실행 환경 준비, profile·리소스 설정 또�
 
 # DAERI setup
 
-기본 응답은 한국어다.
+응답 언어·용어와 현재 단계의 안내는 [사용자 안내](../../docs/spec/hosts/plugins.md#사용자-안내)를 따른다.
 `setup PROFILE`은 해당 profile의 세팅을 시작한다.
 사용자 선택은 호스트 질문 도구, 접속값은 DAERI가 생성한 YAML로 받는다.
 기존 초안은 저장된 선택·편집 내용과 미완료 단계에서 이어간다.
 
 `../../`는 설치된 플러그인 루트다.
-시작 전에 [선택·확인 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문), [최초 준비](../../docs/spec/installation/environment.md#아무-개발-도구가-없는-최초-진입), [YAML 계약](../../docs/spec/configuration/profiles.md#사용자용-setup-yaml)을 읽는다.
+시작 전에 호스트의 파일 읽기로 [선택·확인 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문), [최초 준비](../../docs/spec/installation/environment.md#아무-개발-도구가-없는-최초-진입), [YAML 계약](../../docs/spec/configuration/profiles.md#사용자용-setup-yaml)을 확인한다.
 명령 실행은 [공통 관리 진입](../../docs/development/dependencies.md#관리-입력과-결과)을 따른다.
 
 ## 세팅 순서
 
-1. 새 세팅은 [호스트 계약의 입력 조건·현재 질문·응답 처리](../../docs/spec/hosts/plugins.md#setup의-정형-질문)를 따른다.
-   이름이 없으면 이름 질문에서 응답을 기다리고, 유효한 이름이 있으면 시작 확인을 받는다.
+1. 새 세팅은 호스트 계약의 현재 질문으로 profile과 시작 여부를 확인한다.
    세팅 시작 응답은 환경 준비로, 중단 응답은 현재 설정을 보존하고 종료로 이어간다.
 2. OS·플러그인 루트를 확인하고 최초 준비 절차로 실행 환경을 확인·준비한다.
    준비·교체 뒤 실제 MCP 연결을 확인하고 실행 모드에서 `profile list`로 기존 설정을 읽는다.
@@ -41,7 +40,7 @@ description: DAERI 설치·실행 환경 준비, profile·리소스 설정 또�
 8. `resource diagnose`와 [선택한 기억 검색 준비](../../docs/spec/installation/environment.md#임베딩-선택과-준비)를 진행한다.
    실패는 저장한 설정·제공자 선택을 보존하고 해당 미완료 단계의 다음 조치를 안내한다.
 9. profile 저장·리소스별 연결·기억 검색·현재 MCP 연결을 각각 실제 확인 결과로 보고한다.
-   이름·식별자를 확인한 profile을 [대화의 선택 대상](../profile/SKILL.md)으로 안내하고 업무는 [work](../work/SKILL.md)로 이어간다.
+   실제 등록을 확인한 profile을 [대화의 선택 대상](../profile/SKILL.md)으로 안내하고 업무는 [work](../work/SKILL.md)로 이어간다.
 
 ## 질문과 실행 경계
 

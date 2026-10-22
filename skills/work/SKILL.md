@@ -5,8 +5,7 @@ description: DAERI profile을 대상으로 새 업무를 요청하거나 저장�
 
 # DAERI work
 
-기본 응답은 한국어이며 사용자가 다른 언어를 지정하면 따른다.
-명령·설정 키·제품명은 원래 표기를 유지한다.
+응답 언어·용어와 현재 단계의 안내는 [사용자 안내](../../docs/spec/hosts/plugins.md#사용자-안내)를 따른다.
 DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업무에 적용한다.
 `../../`는 설치된 플러그인 루트다.
 [호스트 행동](../../docs/spec/hosts/plugins.md), [대화 승인](../../docs/spec/hosts/approval.md), [업무 흐름](../../docs/spec/tasks/workflow.md)을 필요한 범위에서 실제 읽는다.
@@ -17,7 +16,7 @@ DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업�
 `work REQUEST`는 새 업무와 저장된 업무의 재개 요청을 받는다.
 준비는 [setup](../setup/SKILL.md), 대화의 기본 대상은 [profile](../profile/SKILL.md), 목록은 [list-profiles](../list-profiles/SKILL.md)에서 관리한다.
 
-새 업무의 대상은 요청의 명확한 등록 이름·식별자 → 현재 대화에서 확인한 기본 선택 순서로 결정한다.
+새 업무의 대상은 요청의 명확한 등록 profile·식별자 → 현재 대화에서 확인한 기본 선택 순서로 결정한다.
 접수 전 [관리 진입](../../docs/development/dependencies.md#관리-입력과-결과)의 `profile show PROFILE`로 현재 등록을 확인한다.
 성공한 조회의 `profile_id`를 `daeri_task_create.context.profile_id`에 전달하고 이번 업무의 대상을 안내한다.
 요청에 지정한 대상은 해당 업무에 적용하고 대화의 기본 선택은 보존한다.

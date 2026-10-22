@@ -12,7 +12,7 @@
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
 | [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
-| `adapters/`의 `setup_fields` | 어댑터별 비밀 없는 설정 입력 스키마·필수값·설정 목적지 |
+| `adapters/`의 `setup_fields` | 어댑터별 접속·공개 인증 입력 스키마·필수값·설정 목적지 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
 
@@ -64,7 +64,12 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 
 ## 관리 입력과 결과
 
+관리 호출 전에 OS 기본 파일 검사로 아래 전용 실행 파일의 존재와 해당 OS에서 확인 가능한 실행 권한을 확인한다.
+파일 부재·실행 권한 부족은 실행 환경 미준비로 분류하고 [사용자 안내](../spec/hosts/plugins.md#사용자-안내)에 따라 setup 진입을 알린 뒤 해당 관리 요청을 종료한다.
+실제 환경 검사·설치·복구는 사용자가 요청한 [setup](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)에서 수행한다.
+
 플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정해 `-I -m daeri.cli`로 관리 작업을 수행한다.
+파일 검사를 통과한 뒤 실제 관리 호출이 실패하면 확인한 원인·영향·다음 조치를 사용자 안내 기준으로 전달한다.
 공통 진입·자식 환경·공개 인수는 [환경 격리](../spec/installation/environment.md#공통-실행-파일과-환경-격리), 비밀 입력은 [인증 경로](../spec/configuration/profiles.md#인증-저장과-전달)를 따른다.
 아래 표의 대문자는 사용자가 선택할 값이며 실제 명령 이름·필수 인수는 `--help`로 확인할 수 있다.
 

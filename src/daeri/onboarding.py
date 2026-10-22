@@ -29,7 +29,7 @@ def selection_catalog():
 
 def _paths(store, name):
     _require(isinstance(name, str) and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', name)),
-             'profile 이름을 확인하세요.')
+             'profile을 확인하세요.')
     directory = store.data_dir / 'setup' / name
     for path in (store.data_dir, directory.parent, directory, directory / 'setup.yaml', directory / 'draft.json'):
         _require(not path.is_symlink(), '설정 파일 경로에 심볼릭 링크를 사용할 수 없습니다.')
@@ -93,7 +93,7 @@ def _read_draft(store, name):
         raise StoreError('INVALID_INPUT', 'UTF-8 YAML 파일을 사용하세요.') from None
     document = parse_yaml(content)
     _no_secrets(document)
-    _require(document.get('profile') == name, '요청한 profile과 파일의 이름이 다릅니다.')
+    _require(document.get('profile') == name, '요청한 profile과 YAML의 profile이 다릅니다.')
     _require(set(document) <= (PROFILE_FIELDS - {'name'}) | {'profile'}, '알 수 없는 설정 항목이 있습니다.')
     _require(isinstance(document.get('resources'), dict), 'resources는 이름별 설정 객체여야 합니다.')
     return path, metadata, meta, document, hashlib.sha256(content).hexdigest()

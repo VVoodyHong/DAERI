@@ -191,11 +191,9 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 | `running`, `verifying` | 현재 계획에서 승인한 `collect`, `verify` |
 | 그 밖의 상태 | `TASK_STATE_INVALID`로 반환 |
 
-상태에 맞지 않는 새 호출은 `TASK_STATE_INVALID`로 거부한다.
 허용 목적도 현재 계획·유효 승인·확인 대상·나머지 실행 검사를 모두 충족해야 한다.
 첫 버전의 자동 실행 상태는 `running`이며 `verifying` 진입은 확장 범위다.
 `change`·`reconcile`과 `reconciling` 상태의 확인 호출은 해당 효과·확인 기능을 등록하는 후속 계약이다.
-새 dispatch에 위 상태 검사를 적용한다.
 이미 보낸 호출의 결과 보존과 같은 호출 상태 재전달은 기존 호출 기록에 연결해 처리한다.
 
 서버는 저장한 `input_bindings`의 허용 source pointer에서 값을 읽어 target pointer에 채운다.
