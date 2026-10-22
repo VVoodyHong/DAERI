@@ -82,6 +82,54 @@ def test_scope_must_cover_every_transmitted_field(registry):
         registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, narrow)
 
 
+def test_connection_only_source_recipe_requires_approved_project_revision_and_path(registry):
+    from daeri.setup import build_setup_resource
+    resource = build_setup_resource(registry.store, 'source-gitlab', 'service', 'source-one',
+                                    {'server': 'https://git.example.test'})
+    assert resource['capabilities'][0]['constraints'] == {}
+    # Use the isolated fixture's executable and tool; retain the recipe's access constraints.
+    resource['connection'].update(command=sys.executable,
+                                  args=config()['connection']['args'], auth_env={})
+    resource['capabilities'][0]['tool_name'] = 'get_repository_file'
+    p = profile(resource)
+    parameters = {'project_id': 'team/service', 'ref': 'main', 'file_path': 'src/main.py'}
+    with pytest.raises(StoreError, match='CONNECTION_NOT_READY'):
+        registry.normalize(p, 'source-one', 'read-file', parameters, scope())
+    registry.diagnose(p, 'source-one')
+    invocation = registry.normalize(p, 'source-one', 'read-file', parameters, scope())
+    assert invocation.prepared_request['arguments'] == parameters
+    assert 'team/service' in registry.execute(invocation)['result']['body']
+    for field, value in [('project_id', 'other/service'), ('ref', 'other'),
+                         ('file_path', 'private/config')]:
+        with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
+            registry.normalize(p, 'source-one', 'read-file', parameters | {field: value}, scope())
+    missing = scope()
+    del missing['equals']['project_id']
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        registry.normalize(p, 'source-one', 'read-file', parameters, missing)
+
+
+@pytest.mark.parametrize('recipe,inputs,allowed,denied,approved', [
+    ('db-postgres', {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'},
+     {'sql': 'SELECT order_id FROM public.orders'}, {'sql': 'SELECT password FROM private.users'},
+     {'tables': ['public.orders'], 'columns': ['order_id'], 'max_rows': 10}),
+    ('document-confluence', {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
+     {'page_id': '123'}, {'page_id': '456'}, {'equals': {'page_id': '123'}}),
+])
+def test_connection_only_db_and_document_recipes_keep_task_read_scope(registry, recipe, inputs, allowed, denied, approved):
+    from daeri.setup import build_setup_resource
+    resource = build_setup_resource(registry.store, recipe, 'service', 'resource-one', inputs)
+    constraints = resource['capabilities'][0]['constraints']
+    actual = copy.deepcopy(allowed)
+    interpret(resource['adapter'], actual, constraints, approved)
+    if recipe == 'db-postgres':
+        assert actual['sql'].endswith('LIMIT 10')
+    with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
+        interpret(resource['adapter'], denied, constraints, approved)
+    with pytest.raises(StoreError):
+        interpret(resource['adapter'], copy.deepcopy(allowed), constraints, {})
+
+
 def test_profile_revision_or_schema_change_requires_new_diagnosis(registry):
     p = profile()
     registry.diagnose(p, "source-one")

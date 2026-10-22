@@ -71,7 +71,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | 입력 | 처리와 반환 |
 |---|---|
 | `setup catalog` | 리소스 범주와 해당 범주의 지원 제품·표시 설명 반환 |
-| `setup draft PROFILE --resource INSTANCE=RECIPE` | 선택한 연결의 YAML 초안과 기준 상태 생성; 옵션 반복으로 복수 인스턴스 지정 |
+| `setup draft PROFILE --resource INSTANCE=RECIPE` | 선택한 연결의 접속·공개 인증 YAML 초안과 기준 상태 생성; 옵션 반복으로 복수 인스턴스 지정 |
 | `setup draft PROFILE --embedding PROVIDER` | 선택한 임베딩 방식의 입력만 초안에 포함; 생략하면 기존 선택 보존 |
 | `setup validate PROFILE` | 파일 전체 검증과 변경 요약·확인값 반환 |
 | `setup apply PROFILE --confirm TOKEN` | 검증한 파일·기준 상태 대조 후 하나의 profile 개정으로 일괄 저장 |
@@ -81,7 +81,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 | `profile delete NAME` | 삭제할 대상·개정·관련 자료 수·확인값을 미리 반환 |
 | `profile delete NAME --confirm TOKEN` | 확인한 대상을 차단하고 귀속 자료를 정리한 뒤 profile을 마지막에 삭제 |
 | `resource catalog/template` | 지원 recipe와 사용자가 채울 대상·정책 설정안 반환 |
-| `resource setup-schema RECIPE` | 선택한 어댑터의 입력 JSON Schema·설정 목적지·인증 메타데이터 반환 |
+| `resource setup-schema RECIPE` | 선택한 어댑터의 접속·공개 인증 JSON Schema·설정 목적지·인증 메타데이터 반환 |
 | `resource validate-setup RECIPE VALUES_JSON` | 값 객체 파일의 부분 검증; 유효성·완성 여부·누락 필드·값 없는 오류 반환 |
 | `resource configure RECIPE --profile NAME --instance ID --values VALUES_JSON --expected-revision N` | 전체 필수 입력과 현재 개정을 검사하고 기존 profile의 선택한 인스턴스만 추가·부분 갱신 |
 | `resource prepare PROFILE INSTANCE --recipe ID` | 선택한 고정 recipe만 격리 환경에 준비·검사 |
@@ -99,6 +99,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 `VALUES_JSON` 인자는 UTF-8 공개 값 객체를 담은 파일의 경로다.
 스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
 기본 setup은 [YAML 초안·검증·일괄 적용](../spec/configuration/profiles.md#사용자용-setup-yaml)을 사용한다.
+테이블·키·저장소·문서 같은 업무별 조회 대상은 승인한 계획으로 전달한다.
 초안·확인값·기준 상태의 연결과 충돌 뒤 명시적 `--refresh`도 이 계약을 따른다.
 Plan의 지원 동작은 파일 읽기·카탈로그·스키마 조회와 배포 스키마·공개 값 파일의 개별 JSON 검증이다.
 YAML의 전체 검증·초안 생성·적용은 profile 저장소를 사용하므로 실행 가능한 모드에서 수행한다.

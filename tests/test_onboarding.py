@@ -15,8 +15,7 @@ def store(tmp_path):
     value.close()
 
 
-DB = {'host': 'db.example.test', 'port': 5432, 'database': 'service',
-      'username': 'reader', 'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
+DB = {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'}
 
 
 def edit(draft, change):
@@ -86,12 +85,10 @@ def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
     draft = create_draft(store, 'production', selections, embedding='keyword_only')
     answers = {
         'db-postgres': DB,
-        'cache-redis': {'host': 'cache.example.test', 'keys': ['service:status']},
+        'cache-redis': {'host': 'cache.example.test'},
         'infra-aws': {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
-        'source-gitlab': {'server': 'https://git.example.test', 'project': 'team/service',
-                          'refs': ['main'], 'path_prefixes': ['src', 'docs']},
-        'document-confluence': {'server': 'https://docs.example.test/wiki', 'space': 'OPS',
-                               'username': 'reader@example.test', 'page_ids': ['123456']},
+        'source-gitlab': {'server': 'https://git.example.test'},
+        'document-confluence': {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
     }
     edit(draft, lambda value: [value['resources'][name]['inputs'].update(fields)
                                for name, fields in answers.items()])

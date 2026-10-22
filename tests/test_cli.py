@@ -44,7 +44,7 @@ def test_setup_yaml_draft_validate_and_apply_across_processes(tmp_path):
     assert invalid.returncode == 1 and json.loads(invalid.stdout)['issues']
     value = read_yaml(path)
     value['resources']['primary']['inputs'].update(host='db.example.test', database='service',
-        username='reader', tables=['*'], columns=['*'])
+        username='reader')
     path.write_text(write_yaml(value), encoding='utf-8')
     validated = run_cli(*prefix, 'validate', 'service')
     assert validated.returncode == 0, validated.stdout

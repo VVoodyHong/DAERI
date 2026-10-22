@@ -22,7 +22,7 @@
 |---|---|---|---|
 | 호스트 | Codex·Claude Code 패키지, 네 Skill, 공통 오프라인 MCP 진입 | [플러그인](../spec/hosts/plugins.md) | [실행 진입](../../tests/test_plugin_launch.py) |
 | 최초 준비 | OS별 검사, 전용 uv·Python·잠긴 환경 준비·실패 복구 | [환경](../spec/installation/environment.md) | [준비·격리](../../tests/test_bootstrap.py) |
-| 사용자 구성 | YAML 검증·일괄 적용, 복수 profile·개정·설정 이동·삭제·인증·진단 | [profile](../spec/configuration/profiles.md) | [YAML](../../tests/test_onboarding.py)·[삭제](../../tests/test_profile_delete.py)·[관리 CLI](../../tests/test_cli.py) |
+| 사용자 구성 | 접속값 YAML 검증·일괄 적용, 복수 profile·개정·설정 이동·삭제·인증·진단 | [profile](../spec/configuration/profiles.md) | [YAML](../../tests/test_onboarding.py)·[삭제](../../tests/test_profile_delete.py)·[관리 CLI](../../tests/test_cli.py) |
 | 업무·승인 | 접수·보완·최근 목록·복구, 불변 계획·대화 응답, 일시중지·재승인·취소 | [업무](../spec/tasks/workflow.md)·[승인](../spec/hosts/approval.md) | [상태·승인](../../tests/test_engine.py)·[계획 검사](../../tests/test_planning.py) |
 | 리소스 | 어댑터 선택, stdio·HTTPS MCP 등록·정규화·읽기 호출·누적 예산 | [연결](../spec/resources/initial-adapters.md)·[계약](../spec/resources/contract.md) | [등록·전송](../../tests/test_resources.py)·[제품별 범위](../../tests/test_adapters.py)·[실행 통합](../../tests/test_execution_flow.py) |
 | 결과 | 완료 근거·부분 결과·파생 표·텍스트/JSON/CSV 파일·보존 자료 조회 | [결과](../spec/mcp/tasks.md#결과-dto) | [보고·표·파일](../../tests/test_results.py)·[현재 제공 정책](../../tests/test_derived_visibility.py) |
@@ -119,11 +119,12 @@ setup Skill은 회사 API·키워드 전용·로컬 선택의 가상 요청으�
 
 기본 setup은 [YAML 입력 계약](../spec/configuration/profiles.md#사용자용-setup-yaml)을 따른다.
 대화는 시작·리소스 선택·적용을 확인하고 접속값은 선택한 제품의 YAML 입력으로 받는다.
+세부 조회 대상은 업무 계획에서 정하고 연결 정보 갱신은 기존 조회 상한·자료 정책을 보존한다.
 모든 리소스 범주의 선택지·파일 항목은 실제 카탈로그·스키마에서 생성한다.
 
 | 순서 | 구현·검증 대상 |
 |---|---|
-| 1 | 카탈로그 범주·제품의 동적 선택과 선택한 인스턴스의 YAML 생성 |
+| 1 | 카탈로그 범주·제품의 동적 선택과 선택한 인스턴스의 접속·공개 인증 YAML 생성 |
 | 2 | 제한된 YAML 읽기·전체 입력 검증·한국어 오류와 기존 편집 보존 |
 | 3 | 파일·기준 개정·변경 요약 연결, 확인 뒤 단일 개정의 일괄 저장 |
 | 4 | 충돌·재시도·인증 및 준비 실패 후 재개, 관리 초안의 profile 삭제 연동 |

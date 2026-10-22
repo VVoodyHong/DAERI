@@ -22,7 +22,7 @@ def completed(store):
     value = read_yaml(draft['path'])
     value['resources']['primary']['inputs'].update({
         'host': 'db.example.test', 'port': 5432, 'database': 'service',
-        'username': 'reader', 'tables': ['*'], 'columns': ['*'], 'max_rows': 100})
+        'username': 'reader'})
     Path(draft['path']).write_text(write_yaml(value), encoding='utf-8')
     return draft
 

@@ -268,8 +268,7 @@ def test_failed_prepare_never_changes_profile_or_publishes_program(store, privat
 @pytest.mark.parametrize('changed', [{'port': 6380}, {'db': 1}, {'tls': False}])
 def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp_path, monkeypatch, changed):
     from daeri.setup import configure_resource, validate_setup
-    values = {'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'tls': True,
-              'keys': ['service:status'], **changed}
+    values = {'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'tls': True, **changed}
     path = config_file(tmp_path, values)
     assert validate_setup('cache-redis', path)['complete'] is True
     store.put_profile('service')

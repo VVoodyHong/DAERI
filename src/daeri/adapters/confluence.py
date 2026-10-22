@@ -18,25 +18,16 @@ class ConfluenceReadAdapter(ReadAdapter):
         'getConfluenceSpaces',
         'getPagesInConfluenceSpace',
     })
-    target_template = {"server": "https://SET-ME.invalid", "space": "SET-ME"}
+    target_template = {"server": "https://SET-ME.invalid"}
     setup_fields = {
         "server": {"schema": {"title": "Document 서버 주소", "description": "인증 정보와 쿼리를 포함하지 않은 HTTPS 서버 주소입니다.",
                               "type": "string", "minLength": 1, "maxLength": 2048,
                               "pattern": r"^https://[^/?#@\s\\\x00-\x1f\x7f]+(?:/[^?#\s\\\x00-\x1f\x7f]*)?$", "examples": ["https://docs.example.test/wiki"]},
                    "required": True, "paths": [["target", "server"], ["connection", "env", "CONFLUENCE_URL"]]},
-        "space": {"schema": {"title": "Document 공간", "description": "조회할 단일 공간의 정확한 키를 지정합니다.",
-                             "type": "string", "minLength": 1, "maxLength": 255,
-                             "pattern": r"^[^,\s\x00-\x1f\x7f]+$", "examples": ["OPS"]},
-                  "required": True, "paths": [["target", "space"], ["connection", "env", "CONFLUENCE_SPACES_FILTER"]]},
         "username": {"schema": {"title": "Document 사용자 이름", "description": "API 토큰과 함께 인증할 계정 이름이며 토큰은 별도 보안 경로로 입력합니다.",
                                 "type": "string", "minLength": 1, "maxLength": 320,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["reader@example.test"]},
                      "required": True, "paths": [["connection", "env", "CONFLUENCE_USERNAME"]]},
-        "page_ids": {"schema": {"title": "Document 페이지", "description": "조회할 페이지의 숫자 식별자를 지정합니다.",
-                                "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True,
-                                "items": {"type": "string", "minLength": 1, "maxLength": 32, "pattern": r"^[0-9]+$"},
-                                "examples": [["123456"]]},
-                     "required": True, "paths": [["capabilities", 0, "constraints", "allowed_values", "page_id"]]},
     }
     environment_prefixes = ("CONFLUENCE_", "OAUTH_")
     control_fields = frozenset({

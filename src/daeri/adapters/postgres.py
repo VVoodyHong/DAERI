@@ -129,26 +129,6 @@ class PostgresReadAdapter(ReadAdapter):
                                 "type": "string", "minLength": 1, "maxLength": 128,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["readonly_user"]},
                      "required": True, "paths": [["target", "username"]]},
-        "tables": {"schema": {"title": "조회할 테이블", "description": "전체 조회는 연결 계정이 읽을 수 있는 모든 스키마와 테이블을 허용합니다. 일부만 허용할 때 스키마.테이블 목록을 지정합니다.",
-                              "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True,
-                              "oneOf": [{"title": "전체 조회", "const": ["*"]},
-                                        {"title": "일부 테이블 지정", "items": {
-                                            "type": "string", "minLength": 3, "maxLength": 256,
-                                            "pattern": r"^[^\x00-\x1f\x7f]+\.[^\x00-\x1f\x7f]+$"}}],
-                              "examples": [["*"], ["public.orders"]]},
-                   "required": True, "paths": [["capabilities", 0, "constraints", "tables"]]},
-        "columns": {"schema": {"title": "조회할 컬럼", "description": "전체 조회는 허용한 테이블의 모든 컬럼을 포함합니다. 일부만 허용할 때 컬럼 목록을 지정하며 빈 목록은 COUNT(*) 등 컬럼을 읽지 않는 집계만 허용합니다.",
-                               "type": "array", "minItems": 0, "maxItems": 1024, "uniqueItems": True,
-                               "oneOf": [{"title": "전체 조회", "const": ["*"]},
-                                         {"title": "일부 컬럼 지정", "items": {
-                                             "type": "string", "minLength": 1, "maxLength": 128,
-                                             "pattern": r"^[^\x00-\x1f\x7f]+$", "not": {"const": "*"}}}],
-                               "examples": [["*"], ["id", "status"]]},
-                    "required": True, "paths": [["capabilities", 0, "constraints", "columns"]]},
-        "max_rows": {"schema": {"title": "최대 조회 행 수", "description": "한 번의 DB 조회에서 허용할 최대 행 수입니다.",
-                                "type": "integer", "minimum": 1, "maximum": 1000000,
-                                "default": 100, "examples": [100]},
-                     "required": True, "paths": [["capabilities", 0, "constraints", "max_rows"]]},
     }
     environment_prefixes = ("PG",)
     control_fields = frozenset({

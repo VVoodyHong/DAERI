@@ -18,15 +18,14 @@ def values_file(tmp_path, values):
 
 
 def source_values():
-    return {'server': 'https://git.example.invalid', 'project': 'team/service',
-            'refs': ['main'], 'path_prefixes': ['src']}
+    return {'server': 'https://git.example.invalid'}
 
 
 def cache_resource(store, instance='cache-one'):
     resource = setup.profile_template(store, 'cache-redis', 'service', instance)['resources'][0]
     resource['target']['host'] = 'cache.example.invalid'
     resource['connection']['env']['REDIS_HOST'] = 'cache.example.invalid'
-    resource['capabilities'][0]['constraints']['allowed_values']['key'] = ['service:status']
+    resource['capabilities'][0]['constraints'] = {'allowed_values': {'key': ['service:status']}}
     return resource
 
 
@@ -54,7 +53,6 @@ def test_schema_and_partial_validation_do_not_create_user_data_or_choose_default
 @pytest.mark.parametrize('values,field', [
     ({'port': True}, 'port'), ({'port': '5432'}, 'port'), ({'port': 5432.0}, 'port'),
     ({'port': 0}, 'port'), ({'port': 65536}, 'port'), ({'host': ''}, 'host'),
-    ({'tables': []}, 'tables'), ({'tables': ['public.users', False]}, 'tables'),
 ])
 def test_partial_validation_identifies_invalid_fields_without_returning_values(tmp_path, values, field):
     result = cli(tmp_path, 'validate-setup', 'db-postgres', str(values_file(tmp_path, values)))
@@ -90,11 +88,9 @@ def test_configure_adds_one_resource_and_preserves_profile_settings(tmp_path):
         assert after['retention_days'] == 17 and after['long_term_memory_days'] == 80
         assert after['memory_policy'] == before['memory_policy']
         resource = after['resources'][0]
-        assert resource['target'] == {'server': 'https://git.example.invalid', 'project': 'team/service'}
+        assert resource['target'] == {'server': 'https://git.example.invalid'}
         assert resource['connection']['env']['GITLAB_URL'] == 'https://git.example.invalid'
-        assert resource['capabilities'][0]['constraints'] == {
-            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
-            'path_prefixes': {'file_path': ['src']}}
+        assert resource['capabilities'][0]['constraints'] == {}
         assert resource['policy'] == {}
         assert resource['connection']['auth_env'] == {
             'GITLAB_TOKEN': 'credential:service.source-one.gitlab_token'}
@@ -108,7 +104,7 @@ def test_repeated_setup_updates_only_supplied_fields_and_preserves_other_resourc
     try:
         source = setup.profile_template(store, 'source-gitlab', 'service', 'source-one')['resources'][0]
         source['adapter'] = 'source_read'
-        source['target'] = {'server': 'https://git.example.invalid', 'project': 'team/service'}
+        source['target'] = {'server': 'https://git.example.invalid'}
         source['connection']['env']['GITLAB_URL'] = 'https://git.example.invalid'
         source['capabilities'][0]['constraints'] = {
             'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['release']},
@@ -117,9 +113,10 @@ def test_repeated_setup_updates_only_supplied_fields_and_preserves_other_resourc
         cache = cache_resource(store)
         before = store.put_profile('service', resources=[source, cache], retention_days=12)
         after = setup.configure_resource(store, 'source-gitlab', 'service', 'source-one',
-                                          values_file(tmp_path, {'refs': ['main']}), expected_revision=1)
+                                          values_file(tmp_path, {'server': 'https://new-git.example.invalid'}), expected_revision=1)
         expected = copy.deepcopy(before['resources'])
-        expected[0]['capabilities'][0]['constraints']['allowed_values']['ref'] = ['main']
+        expected[0]['target']['server'] = 'https://new-git.example.invalid'
+        expected[0]['connection']['env']['GITLAB_URL'] = 'https://new-git.example.invalid'
         assert after['resources'] == expected
         assert after['retention_days'] == 12
     finally:
@@ -132,13 +129,11 @@ def test_resource_builder_creates_complete_resource_without_publishing_a_profile
         values = source_values()
         supplied = copy.deepcopy(values)
         resource = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values)
-        assert resource['target'] == {'server': 'https://git.example.invalid', 'project': 'team/service'}
-        assert resource['capabilities'][0]['constraints'] == {
-            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
-            'path_prefixes': {'file_path': ['src']}}
+        assert resource['target'] == {'server': 'https://git.example.invalid'}
+        assert resource['capabilities'][0]['constraints'] == {}
         assert resource['policy'] == {}
         assert values == supplied
-        resource['capabilities'][0]['constraints']['allowed_values']['ref'].append('release')
+        resource['capabilities'][0]['constraints']['fixed'] = {'project_id': 'team/another'}
         assert values == supplied
         assert store.list_profiles() == []
         assert not (store.data_dir / 'tools').exists()
@@ -151,18 +146,21 @@ def test_resource_builder_merges_partial_values_without_mutating_existing_resour
     try:
         existing = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', source_values())
         existing['policy'] = {'masking': []}
+        existing['capabilities'][0]['constraints'] = {
+            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
+            'path_prefixes': {'file_path': ['src']}}
         before = copy.deepcopy(existing)
-        values = {'refs': ['release']}
+        values = {'server': 'https://new-git.example.invalid'}
         result = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values, existing)
-        assert result['target'] == before['target']
+        assert result['target'] == {'server': 'https://new-git.example.invalid'}
         assert result['capabilities'][0]['constraints'] == {
-            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['release']},
+            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
             'path_prefixes': {'file_path': ['src']}}
         assert result['policy'] == {'masking': []}
         result['policy']['masking'].append({'columns': ['email']})
         result['capabilities'][0]['constraints']['allowed_values']['ref'].append('main')
         assert existing == before
-        assert values == {'refs': ['release']}
+        assert values == {'server': 'https://new-git.example.invalid'}
         assert store.list_profiles() == []
     finally:
         store.close()
@@ -173,14 +171,14 @@ def test_resource_builder_rejects_missing_new_resource_values_before_any_publica
     try:
         with pytest.raises(StoreError, match='INVALID_INPUT'):
             setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one',
-                                       {'server': 'https://git.example.invalid'})
+                                       {})
         assert store.list_profiles() == []
     finally:
         store.close()
 
 
 @pytest.mark.parametrize('values,revision,code', [
-    ({'server': 'https://git.example.invalid'}, 1, 'INVALID_INPUT'),
+    ({}, 1, 'INVALID_INPUT'),
     ({'unexpected': 'value'}, 1, 'INVALID_INPUT'),
     (source_values(), 0, 'REVISION_CONFLICT'),
 ])
@@ -214,7 +212,7 @@ def test_configure_refuses_replacing_another_adapter_at_the_same_instance(tmp_pa
 
 def test_new_cache_setup_does_not_confirm_tls_without_an_answer(tmp_path):
     report = setup.validate_setup('cache-redis', values_file(tmp_path, {
-        'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'keys': ['service:status']}))
+        'host': 'cache.example.invalid', 'port': 6379, 'db': 0}))
     assert report['valid'] is True
     assert report['complete'] is False
     assert 'tls' in report['missing_fields']
@@ -235,27 +233,25 @@ def test_adapter_object_field_cannot_bypass_its_nested_required_values(tmp_path,
 
 @pytest.mark.parametrize('recipe,values,target,environment,constraints', [
     ('db-postgres', {'host': 'db.example.invalid', 'port': 5544, 'database': 'service',
-                     'username': 'reader', 'tables': ['public.health'], 'columns': [], 'max_rows': 25},
+                     'username': 'reader'},
      {'host': 'db.example.invalid', 'port': 5544, 'database': 'service', 'username': 'reader'},
-     {}, {'sql_field': 'sql', 'tables': ['public.health'], 'columns': [], 'max_rows': 25}),
-    ('db-postgres', {'host': 'db.example.invalid', 'port': 5432, 'database': 'service',
-                     'username': 'reader', 'tables': ['*'], 'columns': ['*'], 'max_rows': 25},
-     {'host': 'db.example.invalid', 'port': 5432, 'database': 'service', 'username': 'reader'},
-     {}, {'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 25}),
+     {}, {'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 100}),
     ('cache-redis', {'host': 'cache.example.invalid', 'port': 6380, 'db': 1, 'tls': False,
-                     'username': 'reader', 'keys': ['service:status']},
+                     'username': 'reader'},
      {'host': 'cache.example.invalid', 'port': 6380, 'db': 1},
      {'REDIS_HOST': 'cache.example.invalid', 'REDIS_PORT': '6380', 'REDIS_DB': '1',
-      'REDIS_SSL': 'false', 'REDIS_USERNAME': 'reader'}, {'allowed_values': {'key': ['service:status']}}),
+      'REDIS_SSL': 'false', 'REDIS_USERNAME': 'reader'}, {}),
     ('infra-aws', {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
      {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
      {'AWS_PROFILE': 'operations-reader', 'AWS_REGION': 'ap-northeast-2'},
      {'command_field': 'cli_command', 'region': 'ap-northeast-2'}),
-    ('document-confluence', {'server': 'https://docs.example.invalid/wiki', 'space': 'OPS',
-                             'username': 'reader@example.invalid', 'page_ids': ['123456']},
-     {'server': 'https://docs.example.invalid/wiki', 'space': 'OPS'},
-     {'CONFLUENCE_URL': 'https://docs.example.invalid/wiki', 'CONFLUENCE_SPACES_FILTER': 'OPS',
-      'CONFLUENCE_USERNAME': 'reader@example.invalid'}, {'allowed_values': {'page_id': ['123456']}}),
+    ('source-gitlab', {'server': 'https://git.example.invalid'},
+     {'server': 'https://git.example.invalid'}, {'GITLAB_URL': 'https://git.example.invalid'}, {}),
+    ('document-confluence', {'server': 'https://docs.example.invalid/wiki',
+                             'username': 'reader@example.invalid'},
+     {'server': 'https://docs.example.invalid/wiki'},
+     {'CONFLUENCE_URL': 'https://docs.example.invalid/wiki',
+      'CONFLUENCE_USERNAME': 'reader@example.invalid'}, {}),
 ])
 def test_explicit_setup_values_keep_target_connection_and_scope_in_sync(
         tmp_path, recipe, values, target, environment, constraints):
@@ -268,6 +264,8 @@ def test_explicit_setup_values_keep_target_connection_and_scope_in_sync(
         resource = saved['resources'][0]
         assert resource['target'] == target
         assert environment.items() <= resource['connection']['env'].items()
+        if recipe == 'document-confluence':
+            assert 'CONFLUENCE_SPACES_FILTER' not in resource['connection']['env']
         assert resource['capabilities'][0]['constraints'] == constraints
         assert setup.configure_resource(store, recipe, 'service', 'resource-one', path,
                                         expected_revision=2) == saved
@@ -285,30 +283,58 @@ def test_configure_cli_requires_the_inspected_revision_and_saves_only_valid_answ
     assert cli(tmp_path, *args).returncode == 2
     saved = cli(tmp_path, *args, '--expected-revision', '1')
     assert saved.returncode == 0, saved.stdout + saved.stderr
-    assert json.loads(saved.stdout)['resources'][0]['target']['project'] == 'team/service'
+    assert json.loads(saved.stdout)['resources'][0]['target'] == {'server': 'https://git.example.invalid'}
     stale = cli(tmp_path, *args, '--expected-revision', '1')
     assert stale.returncode == 1
     assert json.loads(stale.stdout)['error']['code'] == 'REVISION_CONFLICT'
 
 
-def test_db_setup_preserves_restrictions_until_whole_access_is_explicit_and_portable(tmp_path):
+@pytest.mark.parametrize('recipe,values,constraints', [
+    ('db-postgres', {'host': 'db.example.invalid', 'port': 5432, 'database': 'service',
+                     'username': 'reader'},
+     {'sql_field': 'sql', 'tables': ['public.health'], 'columns': ['id'], 'max_rows': 25}),
+    ('cache-redis', {'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'tls': True},
+     {'allowed_values': {'key': ['service:status']}}),
+    ('source-gitlab', {'server': 'https://git.example.invalid'},
+     {'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
+      'path_prefixes': {'file_path': ['src']}}),
+    ('document-confluence', {'server': 'https://docs.example.invalid', 'username': 'reader'},
+     {'allowed_values': {'page_id': ['123456']}}),
+])
+def test_connection_setup_preserves_imported_resource_restrictions(tmp_path, recipe, values, constraints):
     store = Store(tmp_path / 'private')
     try:
-        store.put_profile('service')
-        answers = {'host': 'db.example.invalid', 'port': 5432, 'database': 'service',
-                   'username': 'reader', 'tables': ['public.health'], 'columns': ['id'], 'max_rows': 25}
-        setup.configure_resource(store, 'db-postgres', 'service', 'db-one',
-                                 values_file(tmp_path, answers), expected_revision=1)
-        unchanged = setup.configure_resource(store, 'db-postgres', 'service', 'db-one',
-                                            values_file(tmp_path, {'max_rows': 30}), expected_revision=2)
-        assert unchanged['resources'][0]['capabilities'][0]['constraints'] == {
-            'sql_field': 'sql', 'tables': ['public.health'], 'columns': ['id'], 'max_rows': 30}
-        whole = setup.configure_resource(store, 'db-postgres', 'service', 'db-one',
-                                        values_file(tmp_path, {'tables': ['*'], 'columns': ['*']}), expected_revision=3)
+        resource = setup.profile_template(store, recipe, 'service', 'resource-one')['resources'][0]
+        resource['capabilities'][0]['constraints'] = constraints
+        if recipe == 'source-gitlab':
+            resource['target']['project'] = 'team/service'
+        if recipe == 'document-confluence':
+            resource['target']['space'] = 'OPS'
+            resource['connection']['env']['CONFLUENCE_SPACES_FILTER'] = 'OPS'
+        before = store.put_profile('service', resources=[resource])
+        configured = setup.configure_resource(store, recipe, 'service', 'resource-one',
+                                              values_file(tmp_path, values), expected_revision=1)
+        saved = configured['resources'][0]
+        assert saved['capabilities'] == before['resources'][0]['capabilities']
+        for key in ('project', 'space'):
+            if key in resource['target']:
+                assert saved['target'][key] == resource['target'][key]
+        if recipe == 'document-confluence':
+            assert saved['connection']['env']['CONFLUENCE_SPACES_FILTER'] == 'OPS'
         exported = setup.export_profile(store, 'service')
-        assert exported['resources'][0]['capabilities'][0]['constraints'] == {
-            'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 30}
         restored = setup.import_profile(store, values_file(tmp_path, exported))
-        assert restored['resources'] == whole['resources']
+        assert restored['resources'] == configured['resources']
     finally:
         store.close()
+
+
+@pytest.mark.parametrize('recipe,values', [
+    ('db-postgres', {'tables': ['public.orders'], 'columns': ['id'], 'max_rows': 10}),
+    ('cache-redis', {'keys': ['service:status']}),
+    ('source-gitlab', {'project': 'team/service', 'refs': ['main'], 'path_prefixes': ['src']}),
+    ('document-confluence', {'space': 'OPS', 'page_ids': ['123456']}),
+])
+def test_setup_keeps_work_scope_out_of_connection_input(tmp_path, recipe, values):
+    report = setup.validate_setup(recipe, values_file(tmp_path, values))
+    assert report['valid'] is False
+    assert {'field': '', 'code': 'UNKNOWN_FIELD'} in report['issues']

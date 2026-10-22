@@ -89,6 +89,43 @@ def test_actual_lower_mcp_executes_only_after_approval_and_replays_without_spend
     assert engine.call("daeri_capability_execute", args)["error"]["code"] == "CALL_ID_CONFLICT"
 
 
+def test_connection_only_cache_recipe_still_requires_task_approval_and_literal_key_scope(tmp_path):
+    from daeri.setup import build_setup_resource
+    store = Store(tmp_path)
+    try:
+        item = build_setup_resource(store, 'cache-redis', 'service', 'cache-a',
+                                    {'host': 'example.invalid', 'port': 6379, 'db': 0, 'tls': True})
+        assert item['capabilities'][0]['constraints'] == {}
+        fixture = resource()
+        item['connection'].update(command=fixture['connection']['command'],
+                                  args=fixture['connection']['args'], auth_env={})
+        item['capabilities'][0]['capability_id'] = 'get'
+        # Explicit test administrator disclosure; connection setup retains its default policy.
+        item['policy'] = fixture['policy']
+        profile = store.put_profile('service', resources=[item])
+        ResourceRegistry(store).diagnose(profile, 'cache-a')
+    finally:
+        store.close()
+    engine = Engine(tmp_path)
+    try:
+        def one_key(draft):
+            draft['steps'][0]['scope'] = {'equals': {'key': 'orders'}}
+        saved, draft = begin(engine, profile, configure=one_key)
+        args = execution(saved, {'task_revision': saved['task_revision'], 'approval_id': 'invented'}, draft['steps'][0])
+        assert engine.call('daeri_capability_execute', args)['status'] == 'error'
+        assert engine.store.get_task(saved['task_id'])['calls'] == []
+        approved = approve(engine, saved)
+        args = execution(saved, approved, draft['steps'][0], key='another-key')
+        assert engine.call('daeri_capability_execute', args)['error']['code'] == 'SCOPE_VIOLATION'
+        assert engine.store.get_task(saved['task_id'])['calls'] == []
+        args['parameters']['key'] = 'orders'
+        result = engine.call('daeri_capability_execute', args)
+        assert result['status'] == 'ok', result
+        assert result['data']['inline_result']['data']['rows'] == [{'id': 'one', 'amount': '10.00'}]
+    finally:
+        engine.close()
+
+
 def test_scope_budget_and_old_approval_cannot_dispatch(configured):
     engine, profile = configured
     saved, draft = begin(engine, profile, max_calls=1)

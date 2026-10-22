@@ -9,7 +9,7 @@
     "args": ["--access-mode=restricted"],
     "env": {},
     "auth_env": ["DATABASE_URI"],
-    "capabilities": [{"capability_id": "query", "tool_name": "execute_sql", "constraints": {"sql_field": "sql", "tables": [], "columns": [], "max_rows": 100}}],
+    "capabilities": [{"capability_id": "query", "tool_name": "execute_sql", "constraints": {"sql_field": "sql", "tables": ["*"], "columns": ["*"], "max_rows": 100}}],
     "source": "https://github.com/crystaldba/postgres-mcp"
   },
   "cache-redis": {
@@ -22,7 +22,7 @@
     "args": [],
     "env": {"REDIS_HOST": "", "REDIS_PORT": "6379", "REDIS_DB": "0", "REDIS_SSL": "true"},
     "auth_env": ["REDIS_PWD"],
-    "capabilities": [{"capability_id": "read-key", "tool_name": "get", "constraints": {"allowed_values": {"key": []}}}],
+    "capabilities": [{"capability_id": "read-key", "tool_name": "get", "constraints": {}}],
     "source": "https://github.com/redis/mcp-redis"
   },
   "infra-aws": {
@@ -48,7 +48,7 @@
     "args": [],
     "env": {"MCP_READ_ONLY": "true", "GITLAB_URL": "", "GITLAB_SSL_VERIFY": "true"},
     "auth_env": ["GITLAB_TOKEN"],
-    "capabilities": [{"capability_id": "read-file", "tool_name": "gitlab_get_file", "constraints": {"fixed": {"project_id": ""}, "allowed_values": {"ref": []}, "path_prefixes": {"file_path": []}}}],
+    "capabilities": [{"capability_id": "read-file", "tool_name": "gitlab_get_file", "constraints": {}}],
     "source": "https://github.com/vish288/mcp-gitlab"
   },
   "document-confluence": {
@@ -59,9 +59,9 @@
     "version": "0.23.1",
     "executable": "mcp-atlassian",
     "args": [],
-    "env": {"READ_ONLY_MODE": "true", "ENABLED_TOOLS": "confluence_get_page", "CONFLUENCE_URL": "", "CONFLUENCE_USERNAME": "", "CONFLUENCE_SPACES_FILTER": ""},
+    "env": {"READ_ONLY_MODE": "true", "ENABLED_TOOLS": "confluence_get_page", "CONFLUENCE_URL": "", "CONFLUENCE_USERNAME": ""},
     "auth_env": ["CONFLUENCE_API_TOKEN"],
-    "capabilities": [{"capability_id": "read-page", "tool_name": "confluence_get_page", "constraints": {"allowed_values": {"page_id": []}}}],
+    "capabilities": [{"capability_id": "read-page", "tool_name": "confluence_get_page", "constraints": {}}],
     "source": "https://github.com/sooperset/mcp-atlassian"
   }
 }

@@ -48,12 +48,6 @@ class RedisReadAdapter(ReadAdapter):
                                 "type": "string", "minLength": 1, "maxLength": 128,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["readonly_user"]},
                      "required": False, "paths": [["connection", "env", "REDIS_USERNAME"]]},
-        "keys": {"schema": {"title": "조회할 Cache 키", "description": "패턴이 아닌 정확한 키 이름으로 조회 허용 범위를 지정합니다.",
-                            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True,
-                            "items": {"type": "string", "minLength": 1, "maxLength": 1024,
-                                      "pattern": r"^[^*?\[\]\x00-\x1f\x7f]+$"},
-                            "examples": [["service:status"]]},
-                 "required": True, "paths": [["capabilities", 0, "constraints", "allowed_values", "key"]]},
     }
     environment_prefixes = ("REDIS_",)
     control_fields = frozenset({

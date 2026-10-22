@@ -123,7 +123,7 @@ def _resource_block(store, name, instance, recipe, profile):
 
 
 def _render(document):
-    text = '# 접속 정보와 조회 범위를 입력하세요.\n'
+    text = '# 접속 정보와 공개 인증 설정을 입력하세요.\n'
     text += '# 비밀번호·토큰은 DAERI가 안내하는 터미널 숨김 입력 또는 제공자 로그인으로 등록합니다.\n'
     text += '# 빈 필수값을 채운 뒤 DAERI에 검증과 적용을 요청하세요.\n'
     text += write_yaml(document)
@@ -236,7 +236,7 @@ def _configuration(store, name, document, profile, meta):
                 key = issue['field']
                 # Error paths use validated schema field names.
                 path = field + '.inputs' + ('.' + key if key in contract['input_schema']['properties'] else '')
-                issues.append(_issue(path, message='필수값·타입·조회 범위를 확인하세요.'))
+                issues.append(_issue(path, message='접속 필수값·타입·허용 조건을 확인하세요.'))
             continue
         merged = _current_setup_values(existing, contract) if existing else {}
         merged.update(block['inputs'])
