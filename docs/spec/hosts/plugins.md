@@ -207,6 +207,7 @@ setup의 리소스 선택은 [범주별 카탈로그 안내](../resources/initia
 ## setup의 정형 질문
 
 setup은 **profile 확인 → 시작 확인 → 리소스·제품 선택 → YAML 편집 → 적용 확인** 순서다.
+첫 대화 응답은 [DAERI AGENT 시작 로고](../../../skills/setup/SKILL.md#시작-로고)와 현재 단계의 질문·진행 안내로 구성한다.
 profile 문자열은 대화 입력, 선택·확인은 질문 도구, 접속값은 [사용자용 YAML](../configuration/profiles.md#사용자용-setup-yaml)로 받는다.
 각 단계의 사용자 안내는 현재 질문·선택지와 입력에 필요한 예시로 구성한다.
 setup의 사용자 입력은 아래 단계 표로 구성하고 기존 설정의 보존·변경은 [YAML 적용 계약](../configuration/profiles.md#사용자용-setup-yaml)을 따른다.
