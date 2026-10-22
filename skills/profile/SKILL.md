@@ -5,17 +5,18 @@ description: DAERI profile을 선택·전환하거나 profile과 그에 귀속�
 
 # DAERI profile
 
-응답 언어·용어와 현재 단계의 안내는 [사용자 안내](../../docs/spec/hosts/plugins.md#사용자-안내)를 따른다.
+기본 한국어로 확인한 결과·현재 선택·필요한 다음 행동을 간결하게 안내한다.
+운영 대상은 `profile`로 부른다.
 `profile PROFILE`은 이 대화의 이후 새 업무에 사용할 기본 대상을 선택한다.
 `profile delete PROFILE`은 대상과 정리 범위를 확인한 뒤 해당 profile의 로컬 자료를 삭제한다.
-구성과 식별자는 [profile 명세](../../docs/spec/configuration/profiles.md)를 읽는다.
 `../../`는 설치된 플러그인 루트다.
 
 ## 관리 명령 실행
 
-[공통 관리 진입](../../docs/development/dependencies.md#관리-입력과-결과)의 전용 Python·자식 환경·분리된 인자를 사용한다.
-실행 환경이 미준비이면 [setup](../setup/SKILL.md)을 안내한다.
+관리 인수는 macOS에서 `sh "<루트>/scripts/manage.sh"`, Windows에서 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\manage.ps1"` 뒤에 전달한다.
+`setup_required`이면 반환한 메시지와 현재 호스트의 setup 호출을 안내하고 종료한다.
 선택·확인은 [호스트 질문 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문)의 현재 도구와 모드에서 받는다.
+상세 계약은 해당 단계에서 호스트의 파일 읽기 도구로 확인한다.
 
 ## 선택과 전환
 

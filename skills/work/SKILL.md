@@ -5,10 +5,11 @@ description: DAERI profile을 대상으로 새 업무를 요청하거나 저장�
 
 # DAERI work
 
-응답 언어·용어와 현재 단계의 안내는 [사용자 안내](../../docs/spec/hosts/plugins.md#사용자-안내)를 따른다.
+기본 한국어로 현재 업무·계획·확인한 결과와 필요한 사용자 결정을 간결하게 안내한다.
+운영 대상은 `profile`로 부른다.
 DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업무에 적용한다.
 `../../`는 설치된 플러그인 루트다.
-[호스트 행동](../../docs/spec/hosts/plugins.md), [대화 승인](../../docs/spec/hosts/approval.md), [업무 흐름](../../docs/spec/tasks/workflow.md)을 필요한 범위에서 실제 읽는다.
+[호스트 행동](../../docs/spec/hosts/plugins.md), [대화 승인](../../docs/spec/hosts/approval.md), [업무 흐름](../../docs/spec/tasks/workflow.md)은 해당 단계에서 필요한 범위를 호스트의 파일 읽기 도구로 확인한다.
 입력·결과 필드는 제공 도구 스키마와 [MCP 정본](../../docs/spec/mcp/common.md)을 따른다.
 
 ## 업무 대상
@@ -17,7 +18,9 @@ DAERI를 명시한 요청이나 DAERI profile의 리소스를 사용하는 업�
 준비는 [setup](../setup/SKILL.md), 대화의 기본 대상은 [profile](../profile/SKILL.md), 목록은 [list-profiles](../list-profiles/SKILL.md)에서 관리한다.
 
 새 업무의 대상은 요청의 명확한 등록 profile·식별자 → 현재 대화에서 확인한 기본 선택 순서로 결정한다.
-접수 전 [관리 진입](../../docs/development/dependencies.md#관리-입력과-결과)의 `profile show PROFILE`로 현재 등록을 확인한다.
+관리 인수는 macOS에서 `sh "<루트>/scripts/manage.sh"`, Windows에서 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\manage.ps1"` 뒤에 전달한다.
+`setup_required`이면 반환한 메시지와 현재 호스트의 setup 호출을 안내하고 종료한다.
+접수 전 관리 진입의 `profile show PROFILE`로 현재 등록을 확인한다.
 성공한 조회의 `profile_id`를 `daeri_task_create.context.profile_id`에 전달하고 이번 업무의 대상을 안내한다.
 요청에 지정한 대상은 해당 업무에 적용하고 대화의 기본 선택은 보존한다.
 대상 부재·모순·불명확은 실제 `profile list`에서 정형 질문으로 확인한 뒤 접수한다.

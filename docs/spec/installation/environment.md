@@ -74,15 +74,16 @@ profile은 YAML 구성 단계의 입력이며 준비 스크립트의 입력은 �
 JSON의 `ready`는 실행기 기본 검사의 성공 여부다.
 기억 모델·리소스 연결·현재 호스트 MCP 연결은 각 준비·진단 결과로 확인한다.
 
-setup Skill은 검사 전에 `.venv`·`.venv.previous`·`.daeri-setup.lock`의 존재와 링크 여부를 OS 기본 조건문으로 확인한다.
-세 경로와 링크가 모두 부재하면 정상 미준비로 분류하고 확인한 세팅의 준비 단계로 이어간다.
-`.runtime`만 있으면 도구 준비 중간 상태로 분류하고 실행 환경 준비를 이어간다.
-기존 환경·끊어진 링크·중단 흔적이 있으면 엄격한 검사를 수행하고 실제 실패·복구 필요 상태를 구분해 보고한다.
+setup Skill은 [관리 진입](../../development/dependencies.md#관리-입력과-결과)으로 `check`를 호출한다.
+관리 스크립트가 `.venv`·`.venv.previous`·`.venv.prepare.*`·`.daeri-setup.lock`의 상태를 판정한다.
+실행 환경과 중단 흔적이 모두 부재하면 `setup_required`를 반환하고 확인한 세팅의 준비 단계로 이어간다.
+이때 `.runtime`만 있는 상태도 정상 준비 대상으로 분류한다.
+기존 환경의 비정상 경로·실행 권한 부족·끊어진 링크·중단 흔적은 실제 실패·복구 필요 상태로 반환한다.
 기존 `--check`·`-Check`와 일반 MCP 시작의 성공 조건은 준비된 유효 환경이며 미준비·손상은 실패로 반환한다.
 
 macOS의 검사·준비는 플러그인 루트에서 `sh scripts/setup.sh --check`·`--prepare`로 실행한다.
 Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Check`·`-Prepare`를 사용한다.
-기본 검사가 성공하면 전용 Python의 `importlib.metadata.version('daeri-agent')`와 `pyproject.toml`의 프로젝트 버전도 대조한다.
+기본 검사가 성공하면 `check` JSON의 `version`과 `pyproject.toml`의 프로젝트 버전도 대조한다.
 기존 실행기와 배포본의 버전이 다르면 확인한 세팅 범위에서 전용 환경을 교체하고 버전 일치를 재확인한다.
 
 준비는 다음 순서로 진행한다.

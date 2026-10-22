@@ -21,7 +21,7 @@
 | 영역 | 구현한 동작 | 상세 사양 | 대표 자동 검증 |
 |---|---|---|---|
 | 호스트 | Codex·Claude Code 패키지, 네 Skill, 공통 오프라인 MCP 진입 | [플러그인](../spec/hosts/plugins.md) | [실행 진입](../../tests/test_plugin_launch.py) |
-| 최초 준비 | OS별 검사, 전용 uv·Python·잠긴 환경 준비·실패 복구 | [환경](../spec/installation/environment.md) | [준비·격리](../../tests/test_bootstrap.py) |
+| 최초 준비 | OS별 관리 진입·정상 미준비 판정, 전용 uv·Python·잠긴 환경 준비·실패 복구 | [환경](../spec/installation/environment.md) | [관리 진입](../../tests/test_management_entry.py)·[준비·격리](../../tests/test_bootstrap.py) |
 | 사용자 구성 | 접속값 YAML 검증·일괄 적용, 복수 profile·개정·설정 이동·삭제·인증·진단 | [profile](../spec/configuration/profiles.md) | [YAML](../../tests/test_onboarding.py)·[삭제](../../tests/test_profile_delete.py)·[관리 CLI](../../tests/test_cli.py) |
 | 업무·승인 | 접수·보완·최근 목록·복구, 불변 계획·대화 응답, 일시중지·재승인·취소 | [업무](../spec/tasks/workflow.md)·[승인](../spec/hosts/approval.md) | [상태·승인](../../tests/test_engine.py)·[계획 검사](../../tests/test_planning.py) |
 | 리소스 | 어댑터 선택, stdio·HTTPS MCP 등록·정규화·읽기 호출·누적 예산 | [연결](../spec/resources/initial-adapters.md)·[계약](../spec/resources/contract.md) | [등록·전송](../../tests/test_resources.py)·[제품별 범위](../../tests/test_adapters.py)·[실행 통합](../../tests/test_execution_flow.py) |

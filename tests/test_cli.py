@@ -15,11 +15,13 @@ def run_cli(*args):
 
 
 def test_check_reports_real_storage_features_without_creating_user_data(tmp_path):
+    import importlib.metadata
     data_dir = tmp_path / "user-data"
     result = run_cli("--data-dir", str(data_dir), "check")
     assert result.returncode == 0, result.stderr
     report = json.loads(result.stdout)
     assert report["ready"] is True
+    assert report["version"] == importlib.metadata.version('daeri-agent')
     assert report["sqlite_fts5"] is True
     assert not data_dir.exists()
 

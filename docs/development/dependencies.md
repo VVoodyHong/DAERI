@@ -57,19 +57,25 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 별도 후보 환경에 잠긴 패키지를 설치하고 실제 실행 검사를 통과한 환경만 `.venv`로 전환한다.
 설치 출처·해시·관리 Python·환경 정리·실패·중복 준비·전환 복구는 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
 
-`check`는 실행기의 Python 지원 범위·MCP·SQLite와 실제 FTS5 검색을 확인한다.
+`check`는 설치된 실행 패키지의 `version`과 Python 지원 범위·MCP·SQLite·실제 FTS5 검색 결과를 반환한다.
 `ready`는 기본 실행 환경의 검사 결과다.
 리소스 인증·진단·기억 모델은 해당 관리 경로의 결과로 확인한다.
 저장소 개설 전의 실행기 검사와 저장된 profile의 연결 진단은 별도 결과로 제공한다.
 
 ## 관리 입력과 결과
 
-관리 호출 전에 OS 기본 파일 검사로 아래 전용 실행 파일의 존재와 해당 OS에서 확인 가능한 실행 권한을 확인한다.
-파일 부재·실행 권한 부족은 실행 환경 미준비로 분류하고 [사용자 안내](../spec/hosts/plugins.md#사용자-안내)에 따라 setup 진입을 알린 뒤 해당 관리 요청을 종료한다.
+관리 호출은 macOS의 `sh "<플러그인 루트>/scripts/manage.sh"`, Windows의 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<플러그인 루트>\scripts\manage.ps1"`에 아래 인수를 전달한다.
+스크립트가 전용 환경을 검사하고 준비된 `.venv/bin/python.exe`에 `-I -m daeri.cli`와 분리된 관리 인수를 전달한다.
+실행 위치는 플러그인 루트이며 부모의 Python·가상환경 관련 변수는 자식 실행에서 정리한다.
+
+환경과 중단 흔적이 모두 부재하면 `status: setup_required`·짧은 setup 안내와 종료 코드 0을 반환한다.
+이 분기는 저장소 개설·설치에 앞선 정상 준비 상태다.
+비정상 경로·실행 권한 부족·중단 흔적은 `RUNTIME_UNAVAILABLE` 오류와 종료 코드 1로 반환한다.
+실행된 CLI의 결과·오류·종료 코드는 그대로 전달한다.
 실제 환경 검사·설치·복구는 사용자가 요청한 [setup](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)에서 수행한다.
 
-플러그인 루트의 `.venv/bin/python.exe`를 절대 경로로 지정해 `-I -m daeri.cli`로 관리 작업을 수행한다.
-파일 검사를 통과한 뒤 실제 관리 호출이 실패하면 확인한 원인·영향·다음 조치를 사용자 안내 기준으로 전달한다.
+Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안내하고 해당 요청을 종료한다.
+실제 실패는 사용자에게 필요한 영향·다음 조치로 요약하고 기술 정보는 [상세 진단 조건](../spec/hosts/plugins.md#사용자-안내)에 따라 제공한다.
 공통 진입·자식 환경·공개 인수는 [환경 격리](../spec/installation/environment.md#공통-실행-파일과-환경-격리), 비밀 입력은 [인증 경로](../spec/configuration/profiles.md#인증-저장과-전달)를 따른다.
 아래 표의 대문자는 사용자가 선택할 값이며 실제 명령 이름·필수 인수는 `--help`로 확인할 수 있다.
 
@@ -153,7 +159,7 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
 | `onboarding.py`·`setup_yaml.py` | 초안 상태 조회·선택 초안 생성·제한된 YAML 검사·기준 상태 및 확인값 대조·일괄 적용 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
-| `scripts/`·호스트별 플러그인·`skills/` | 최초 준비·검사와 setup·profile·work·list-profiles 지침 전달 |
+| `scripts/`·호스트별 플러그인·`skills/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사와 네 사용자 Skill 전달 |
 
 리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
 어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [첫 연결 사양](../spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)을 따른다.

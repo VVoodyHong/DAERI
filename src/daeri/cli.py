@@ -46,6 +46,7 @@ def check_environment():
         fts5 = db.execute("SELECT count(*) FROM probe WHERE probe MATCH 'daeri'").fetchone()[0] == 1
     return {
         "ready": bool(supported and fts5),
+        "version": importlib.metadata.version("daeri-agent"),
         "python": sys.version.split()[0],
         "requires_python": required,
         "mcp": importlib.metadata.version("mcp"),
