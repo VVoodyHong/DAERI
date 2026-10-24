@@ -13,7 +13,7 @@ from daeri.storage import StoreError
 def api_config(**changes):
     return {"provider": "api", "adapter": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
             "model": "company-deployment", "credential_ref": "env:DAERI_TEST_EMBEDDING_TOKEN",
-            "allow_remote": True, **changes}
+            **changes}
 
 
 def provider():
@@ -25,10 +25,33 @@ def test_absent_embedding_config_preserves_local_mode_without_api_options():
     assert provider().validate_embedding_config({"provider": "keyword_only"}) == {"provider": "keyword_only"}
 
 
-def test_remote_config_normalizes_defaults_and_keeps_explicit_consent():
+def test_selected_api_normalizes_defaults_without_an_additional_transmission_switch():
     config = api_config()
-    config.pop("allow_remote")
-    assert provider().validate_embedding_config(config) == {**config, "allow_remote": False, "timeout_seconds": 15}
+    assert provider().validate_embedding_config(config) == {**config, "timeout_seconds": 15}
+
+
+def test_legacy_transmission_permission_preserves_provider_choice_and_index_identity():
+    selected = provider().validate_embedding_config(api_config(allow_remote=True))
+    assert selected == {**api_config(), "timeout_seconds": 15}
+    assert provider().OpenAICompatibleEmbedder(api_config(allow_remote=True)).model_id == (
+        provider().OpenAICompatibleEmbedder(api_config()).model_id)
+
+
+def test_legacy_transmission_block_keeps_api_choice_without_resolving_credentials():
+    class UnusedCredentials:
+        def get(self, reference):
+            pytest.fail("Constructing an API configuration resolved credentials")
+
+    selected = provider().validate_embedding_config(api_config(allow_remote=False))
+    assert selected == {**api_config(), 'timeout_seconds': 15}
+    embedder = provider().create_api_embedder(api_config(allow_remote=False), credentials=UnusedCredentials())
+    assert embedder.config == selected
+
+
+@pytest.mark.parametrize("legacy_value", [None, 0, 1, "true", [], {}])
+def test_legacy_transmission_setting_requires_a_real_boolean(legacy_value):
+    with pytest.raises(StoreError, match="INVALID_INPUT"):
+        provider().validate_embedding_config(api_config(allow_remote=legacy_value))
 
 
 def test_legacy_provider_uses_the_same_adapter_and_index_identity():
@@ -56,8 +79,8 @@ def test_registered_adapter_owns_its_format_without_openai_fields(monkeypatch):
 
         @staticmethod
         def validate_config(config):
-            assert set(config) <= {'provider', 'adapter', 'allow_remote', 'deployment'}
-            return {**config, 'deployment': config['deployment']}
+            assert set(config) <= {'provider', 'adapter', 'deployment'}
+            return {**config, 'deployment': config['deployment'], 'allow_remote': False}
 
         @staticmethod
         def draft_config(name):
@@ -69,9 +92,14 @@ def test_registered_adapter_owns_its_format_without_openai_fields(monkeypatch):
     monkeypatch.setitem(module.API_ADAPTERS, 'company_format', CompanyFormat)
     config = {'provider': 'api', 'adapter': 'company_format', 'deployment': 'internal'}
     selected = module.validate_embedding_config(config)
-    assert selected == {**config, 'allow_remote': False}
+    assert selected == config
     assert module.create_api_embedder(selected).config == selected
-    assert module.api_embedding_draft('production', 'company_format')['deployment'] is None
+    assert module.validate_embedding_config({**config, 'allow_remote': True}) == config
+    assert module.api_embedding_draft('production', 'company_format') == {
+        'provider': 'api', 'adapter': 'company_format', 'deployment': None}
+    assert module.api_embedding_draft('production', 'openai_compatible') == {
+        'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None, 'model': None,
+        'credential_ref': 'credential:production.embedding'}
     assert module.api_adapter_catalog()[-1]['label'] == '사내 전용 API'
     with pytest.raises(StoreError):
         module.create_api_embedder({**config, 'allow_remote': 'yes'})
@@ -119,17 +147,6 @@ def test_api_uses_exact_endpoint_reference_auth_and_plain_input(monkeypatch):
     assert json.loads(requests[0].content) == {"model": "company-deployment", "input": "검색 질문", "encoding_format": "float", "dimensions": 2}
     assert json.loads(requests[1].content)["input"] == "검증된 기억"
     assert requests[0].extensions["timeout"]["read"] == 15
-
-
-def test_remote_consent_is_required_before_credential_resolution_or_request():
-    def unexpected(request):
-        pytest.fail("Remote transmission must not occur without consent")
-
-    with httpx.Client(transport=httpx.MockTransport(unexpected)) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(allow_remote=False), client=client)
-        with pytest.raises(StoreError) as error:
-            embedder.embed_query("must stay local")
-    assert error.value.code == "ACCESS_DENIED"
 
 
 @pytest.mark.parametrize("text", ["", "   ", None, "x" * (65536 + 1)], ids=["empty", "whitespace", "not-text", "oversized"])

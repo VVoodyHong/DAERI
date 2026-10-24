@@ -8,8 +8,8 @@ description: DAERI 설치·실행 환경 준비, profile·리소스 설정 또�
 기본 한국어로 현재 질문·확인한 결과·사용자가 할 행동을 간결하게 안내한다.
 운영 대상은 `profile`로 부른다.
 `setup PROFILE`은 해당 profile의 세팅을 시작한다.
-profile은 대화 입력, 선택·확인은 호스트 질문 도구, 접속 정보·비밀번호·토큰은 생성한 YAML로 받는다.
-기존 초안은 저장된 선택·편집 내용과 미완료 단계에서 이어간다.
+profile은 대화 입력, 선택·확인은 호스트 질문 도구, 접속 정보·비밀번호·토큰은 profile별 설정 YAML로 받는다.
+최초 setup과 이후 설정 변경은 [같은 사용자 설정 파일](../../docs/spec/configuration/profiles.md#생성과-파일-위치)에서 진행하며 저장된 선택·편집 내용과 미완료 단계에서 이어간다.
 
 `../../`는 설치된 플러그인 루트다.
 macOS는 `DAERI_MANAGE="<루트>/scripts/manage.sh"`로 스크립트 경로를 정하고 `sh "$DAERI_MANAGE" check`처럼 각 관리 인수를 분리해 전달한다.
@@ -65,12 +65,13 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    각 연결은 선택한 `recipe_id`로 `--resource RECIPE`를, 사용자가 역할 이름을 지정했으면 `--resource INSTANCE=RECIPE`를 전달한다.
    연결 이름은 실행기의 [이름 규칙](../../docs/spec/configuration/profiles.md#공통-구조와-어댑터-입력)을 사용한다.
    새 임베딩 선택은 `--embedding`, 회사 API의 확인한 연결 방식은 `--embedding-adapter`로 전달한다.
-   초안 재개는 `setup draft PROFILE`로 경로를 확인한다.
+   기존 설정의 재개는 `setup draft PROFILE`로 경로를 확인하고 이전 위치의 파일은 실행기의 이관 결과를 사용한다.
    제품별 연결 개수와 반환한 파일 위치를 안내하고 접속 정보·인증값을 작성한 뒤 알려 달라고 요청한다.
    파일 내용은 로컬 DAERI의 검증·적용 결과로 확인하고 호스트는 인증 참조·등록 상태를 사용한다.
 6. 작성 완료 응답은 `setup validate PROFILE`로 이어간다.
    오류는 필드 위치와 수정 안내로 전달하며 같은 파일의 재검증을 기다린다.
    유효하면 변경 요약과 “이 설정을 적용할까요?”를 보여 주고 “적용”·“중단”으로 확인한다.
+   회사 API 선택은 endpoint·모델과 허용 기억 본문·검색 질의 전송을 요약한다.
    적용 응답과 해당 검증의 `confirmation_token`이 있으면 `setup apply PROFILE --confirm TOKEN`을 실행한다.
    파일·개정·계약이 바뀌면 차이를 확인하고 새 검증·확인을 받는다.
 7. 적용한 연결을 `resource prepare`로 준비하고 `auth status`로 [YAML에서 등록한 인증](../../docs/spec/configuration/profiles.md#접속-정보와-인증값)의 상태를 확인한다.
@@ -81,7 +82,7 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    실패는 저장한 설정·제공자 선택을 보존하고 해당 미완료 단계의 다음 조치를 안내한다.
    접속 정보·인증값의 오류는 같은 YAML에서 해당 항목만 수정하고 검증·확인·적용한 뒤 재진단한다.
 9. profile 저장·리소스별 연결·기억 검색·현재 MCP 연결을 각각 실제 확인 결과로 보고한다.
-   실제 등록을 확인한 profile을 [대화의 선택 대상](../profile/SKILL.md)으로 안내하고 업무는 [work](../work/SKILL.md)로 이어간다.
+   실제 등록을 확인한 profile을 [대화의 선택 대상](../profile/SKILL.md)으로 안내하고 업무는 [work](../work/SKILL.md)의 계획 승인으로 이어간다.
 
 ## 질문과 실행 경계
 

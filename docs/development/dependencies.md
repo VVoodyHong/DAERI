@@ -45,18 +45,15 @@ uv run --no-sync pytest
 일반 테스트는 사내 인증·운영 리소스·호스트 전역 설정 없이 로컬 계약을 확인한다.
 위 개발 명령은 로컬 추론 회귀를 위해 선택 의존성도 포함한다.
 API·키워드 전용 사용자 환경은 공통 의존성의 기본 설치로 동작한다.
+
 준비한 실제 모델을 쓰는 검사는 `DAERI_TEST_MODEL_CACHE`가 지정된 경우만 수행한다.
 이 검사는 검색 중 DNS를 차단해 모델 로딩·임베딩·한국어 질의와 영어 지식의 검색이 로컬에서 이루어지는지 확인한다.
-검증 결과는 실행한 대상·환경·방법의 범위로 보고한다.
 
 플러그인 사용자는 명시적인 setup으로 실행 환경을 준비한다.
 macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Prepare`를 사용한다.
 기본 `--check`·`-Check`는 기존 실행 환경의 로컬 검사 결과를 반환한다.
 
-준비는 고정한 공식 uv를 플러그인 루트의 `.runtime/uv.exe`에 두고 절대 경로로 실행한다.
-준비의 변경 대상은 전용 도구·후보 환경·관리 캐시이며 기존 시스템·사용자 환경을 보존한다.
-별도 후보 환경에 잠긴 패키지를 설치하고 실제 실행 검사를 통과한 환경만 `.venv`로 전환한다.
-설치 출처·해시·관리 Python·환경 정리·실패·중복 준비·전환 복구는 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
+준비·환경 격리·실패 복구는 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
 
 `check`는 설치된 실행 패키지의 `version`과 Python 지원 범위·MCP·SQLite·실제 FTS5 검색 결과를 반환한다.
 `ready`는 기본 실행 환경의 검사 결과다.
@@ -77,11 +74,9 @@ sh "$DAERI_MANAGE" resource prepare PROFILE INSTANCE --recipe RECIPE
 스크립트가 전용 환경을 검사하고 준비된 `.venv/bin/python.exe`에 `-I -m daeri.cli`와 분리된 관리 인수를 전달한다.
 실행 위치는 플러그인 루트이며 부모의 Python·가상환경 관련 변수는 자식 실행에서 정리한다.
 
-환경과 중단 흔적이 모두 부재하면 `status: setup_required`·짧은 setup 안내와 종료 코드 0을 반환한다.
-이 분기는 저장소 개설·설치에 앞선 정상 준비 상태다.
-비정상 경로·실행 권한 부족·중단 흔적은 `RUNTIME_UNAVAILABLE` 오류와 종료 코드 1로 반환한다.
-실행된 CLI의 결과·오류·종료 코드는 그대로 전달한다.
-실제 환경 검사·설치·복구는 사용자가 요청한 [setup](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)에서 수행한다.
+정상 미준비는 `setup_required`·종료 코드 0, 손상·중단 상태는 `RUNTIME_UNAVAILABLE`·종료 코드 1로 구분한다.
+판정 대상·환경 검사·설치·복구는 [최초 진입 계약](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)을 따른다.
+준비된 실행기의 CLI 결과·오류·종료 코드는 그대로 전달한다.
 
 Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안내하고 해당 요청을 종료한다.
 실제 실패는 사용자에게 필요한 영향·다음 조치로 요약하고 기술 정보는 [상세 진단 조건](../spec/hosts/plugins.md#사용자-안내)에 따라 제공한다.
@@ -112,30 +107,18 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 CLI 예외는 `status: error`·`data: null`·오류 코드·고정된 안전 메시지·`next_action: stop`과 종료 코드 1로 반환한다.
 인수 파싱 실패의 종료 코드는 2다.
 호스트는 오류 코드와 현재 단계로 영향·복구 방법을 안내하며 예외의 원문 메시지는 내부 진단 정보다.
+
 `setup validate`·`resource validate-setup`의 입력 오류는 각 검증 결과의 필드별 `issues`와 종료 코드 1로 구분한다.
-`VALUES_JSON` 인자는 UTF-8 공개 값 객체를 담은 파일의 경로다.
-스키마 조회·부분 검증은 저장소·비밀 조회·설치·네트워크 접속 없이 수행한다.
-`setup status`는 초안 파일 상태만 읽는 명령이며 YAML 내용의 유효성은 초안 재개·전체 검증에서 확인한다.
-기본 setup은 [YAML 초안·검증·일괄 적용](../spec/configuration/profiles.md#사용자용-setup-yaml)을 사용한다.
-테이블·키·저장소·문서 같은 업무별 조회 대상은 승인한 계획으로 전달한다.
-초안·확인값·기준 상태의 연결과 충돌 뒤 명시적 `--refresh`도 이 계약을 따른다.
-Plan의 지원 동작은 공개 문서 읽기·카탈로그·스키마 조회와 배포 스키마·공개 값 파일의 개별 JSON 검증이다.
-YAML의 전체 검증·초안 생성·적용은 profile 저장소를 사용하므로 실행 가능한 모드에서 수행한다.
-`resource configure`는 실행 모드에서 적용 요약을 확인할 때 사용한 profile 개정을 명시해 수행하며 새 profile은 먼저 `profile create`로 만든다.
-입력 스키마·기존값 재사용·검증 결과·동시 변경 거부·보존 경계는 [설정 입력 계약](../spec/configuration/profiles.md#리소스-설정-입력과-검증)을 따른다.
+값 파일·검증·확인값·동시 변경·재시도는 표의 해당 명령 정본에서 정의한다.
+호스트 모드별 질문·파일 읽기·실행 조건은 [setup 질문 계약](../spec/hosts/plugins.md#setup의-정형-질문)을 따른다.
+
 새 profile의 `--retention-days`와 `--long-term-memory-days`는 각각 생략하거나 `unlimited`로 지정하면 무기한이며 양의 정수로 유한 기간을 선택한다.
-기존 profile의 기간 변경은 전체 export 설정에서 해당 `retention_days`·`long_term_memory_days`만 수정해 import하고 다른 설정을 유지한다.
+기존 profile의 기간은 같은 YAML의 `retention_days`·`long_term_memory_days`를 수정해 검증·적용하거나 전체 export를 수정해 import한다.
 변경은 새 업무에 적용하며 기존 기한·만료 상태를 보존한다.
 저장 의미와 기한 승계는 [보존 설정](../spec/configuration/profiles.md#구현한-profile-입력과-공개-설정)을 따른다.
+
 제공자 로그인만 공개 확인 URL·사용자 코드를 `pending` JSON으로 먼저 전달하고 완료 또는 실패를 반환한다.
 모델 준비·로그인·연결 진단의 결과를 확인한 뒤 실제 업무 조회는 해당 계획의 승인을 받아 수행한다.
-
-profile·정책·인증 입력의 필드·실패·지원 경계는 [사용자 구성](../spec/configuration/profiles.md), 기억 준비와 부분 검색은 [기억 사양](../spec/tasks/memory.md)을 따른다.
-입력 완성·자료 정책·인증 준비는 각 검증 결과와 미완료 사유로 안내한다.
-YAML 인증 등록·참조 치환·실패 복구는 [적용 계약](../spec/configuration/profiles.md#확인적용재개)을 따른다.
-profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용한다.
-대상 선택의 저장 범위는 현재 대화이며 선택 우선순위·목록 표시는 [profile 선택 계약](../spec/configuration/profiles.md#선택과-기본값)을 따른다.
-삭제는 같은 profile Skill에서 사용자 확인 후 관리 CLI로 수행하며 귀속 범위·공유 자료 보존·실패 재시도는 [profile 삭제 계약](../spec/configuration/profiles.md#profile-삭제)을 따른다.
 
 ## 실행 진입점과 모듈
 
@@ -147,8 +130,7 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 실행기가 저장 상태·정책과 대조한다.
 실제 리소스 요청은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
-호스트 root가 업무·계획·승인·위임을 관리하고 네이티브 worker는 `daeri_worker`의 토큰 경로로 배정·검색·근거·실행·완료를 처리한다.
-worker의 호출은 root와 같은 실행기·저장소·공유 예산을 사용하며 생성·추론·대기·결과 회수는 호스트가 담당한다.
+총괄·작업자의 판단·조정과 실행 검사의 경계는 [멀티 에이전트 아키텍처](../architecture/overview.md#오케스트레이션과-자율-수행)가 설명한다.
 다음 모듈은 같은 로컬 배포 안에서 이 흐름의 책임을 나눈다.
 
 | 모듈·파일 | 책임과 자료 흐름 |
@@ -162,13 +144,16 @@ worker의 호출은 root와 같은 실행기·저장소·공유 예산을 사용
 | `policy.py`·`security.py` | 필드 제공·마스킹·출처 경로와 알려진 인증 문자열 보조 검사 |
 | `results.py` | 실제 근거·완료 조건·표 계산·허용 파일 생성·보고 검증 |
 | `memory.py`·`knowledge.py` | profile별 지식의 출처·정책·기한·개정·검색·갱신 검사 |
-| `embedding.py` | 임베딩 제공자·API 어댑터 등록·설정 및 호환 입력 검증·선택 구현 생성·공통 전송 허용과 어댑터별 요청·인증·응답 검사 |
+| `automatic_memory.py` | 보고의 후보·검증 절차 기본값, 자동 기억 처리·색인·대기 재시도 |
+| `embedding.py` | 임베딩 제공자·API 어댑터 등록·설정 및 호환 입력 검증·선택 구현 생성·현재 선택과 어댑터별 요청·인증·응답 검사 |
 | `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
 | `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
 | `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
-| `onboarding.py`·`setup_yaml.py` | 초안 생성·제한된 YAML 검사·인증값 분리·확인값 대조·일괄 적용과 참조 치환 |
+| `onboarding.py`·`setup_yaml.py` | 사용자 설정 YAML의 생성·이전 위치 이관·제한된 입력 검사·인증값 분리·확인값 대조·일괄 적용과 참조 치환 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
-| `scripts/`·호스트별 플러그인·`skills/`·`agents/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사·사용자 Skill과 root 조정·worker 지침 전달 |
+| `scripts/`·호스트별 플러그인·`skills/`·`agents/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사·사용자 Skill과 총괄 조정·작업자 지침 전달 |
+
+보고에 연결한 자동 기억의 대표 회귀는 [자동 기억 검사](../../tests/test_automatic_memory.py)다.
 
 리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
 어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [첫 연결 사양](../spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)을 따른다.
@@ -177,7 +162,8 @@ worker의 호출은 root와 같은 실행기·저장소·공유 예산을 사용
 
 CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 `DAERI_DATA_DIR`로 위치를 지정할 수 있고 CLI의 `--data-dir PATH`는 이 값보다 우선한다.
-환경 변수는 절대 경로나 현재 사용자 홈을 뜻하는 `~/` 경로만 받으며 상대 경로는 거부한다.
+환경 변수는 절대 경로나 현재 사용자 홈 기준의 `~`·`~/...` 경로를 받으며 Windows는 `~\...`도 지원한다.
+일반 상대 경로는 검증 오류로 반환한다.
 명시적인 CLI `--data-dir` 인자는 현재 작업 디렉터리 기준의 상대 경로도 받는다.
 기본 위치는 macOS `~/Library/Application Support/DAERI`, Windows `%LOCALAPPDATA%/DAERI`다.
 
@@ -186,7 +172,8 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 | 프로그램 | 플러그인 `.runtime/uv.exe`·`.venv`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
 | 관리 런타임 | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
 | 설정·제어 | `profiles/` 개정별 JSON; SQLite의 활성 설정·업무·승인·호출·참조 |
-| 편집 초안 | `setup/<profile>/setup.yaml`과 관리 정보; 확인한 일괄 적용의 입력, 등록한 인증값은 참조로 치환 |
+| 사용자 설정 | `config/profiles/<profile>.yaml`; 최초 setup·이후 설정 편집, [파일 위치·이관 계약](../spec/configuration/profiles.md#생성과-파일-위치) 적용 |
+| 내부 편집 상태 | `setup/<profile>/draft.json`; 기준 개정·규격 지문 등 검증·적용 상태 |
 | 기억·검색 | SQLite의 선별 지식 정본·FTS5·벡터 색인 |
 | 본문·산출물 | `records/`·`artifacts/`의 허용 파일; SQLite에서 기한·무결성과 참조 관리 |
 | 모델·준비 | `models/`의 로컬 모델; `staging/`의 미공개 파일 |

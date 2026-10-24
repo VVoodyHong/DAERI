@@ -19,7 +19,8 @@ from .credentials import Credentials
 from .memory import MemoryService
 from .resources import ResourceRegistry
 from .planning import evidence_matches_step, validate_plan
-from .policy import as_pointer, disclosure, leaves, pointer_get, pointer_path, pointer_set, project
+from .policy import (as_pointer, disclosure, effective_resource_policy, leaves,
+                     pointer_get, pointer_path, pointer_set, project)
 
 TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
 
@@ -73,6 +74,13 @@ class Engine:
         self.store.close()
 
     def call(self, tool, arguments):
+        result = self._call(tool, arguments)
+        if tool == "daeri_result_submit" and result.get("status") == "ok":
+            from .automatic_memory import finish_report
+            result["data"]["memory"] = finish_report(self, result["data"])
+        return result
+
+    def _call(self, tool, arguments):
         args = None
         try:
             require(tool in INPUT_MODELS, "NOT_FOUND", "지원하지 않는 도구입니다.")
@@ -104,6 +112,9 @@ class Engine:
                     require(task["task_revision"] == args["expected_task_revision"],
                             "REVISION_CONFLICT", "최신 업무 개정으로 다시 요청하세요.")
                 result = getattr(self, "_" + tool.removeprefix("daeri_"))(args, task)
+                if tool == "daeri_plan_get":
+                    for ref in result["data"]["plan"]["draft"]["memory_refs"]:
+                        self.memory.get(task["profile_id"], ref)
                 if key:
                     self.store.request_put(scope, key, fingerprint, self._cache(tool, result))
             if tool == "daeri_memory_update" and args["operation"] == "store":
@@ -375,7 +386,8 @@ class Engine:
 
     def _task_get(self, args, task):
         if task:
-            records = self.store.list_records(task["task_id"])
+            records = [item for item in self.store.list_records(task["task_id"])
+                       if item["record_kind"] not in {"memory_pending", "memory_done"}]
             page, cursor, more = self._page("records", task["task_id"],
                 (task["task_revision"], len(records)), args, lambda offset, limit: records[offset:offset+limit])
             return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
@@ -511,6 +523,8 @@ class Engine:
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], "descriptor": descriptor})
 
     def _memory_search(self, args, task):
+        from .automatic_memory import retry_profile
+        retry_profile(self, self._task(args["task_id"])["profile_id"])
         with self.store.transaction():
             task = self._task(args["task_id"])
             profile = self._current_profile(task)
@@ -597,7 +611,10 @@ class Engine:
             evidence = self._load_evidence(task, ref, mode="export", require_current_plan=False)
             if evidence.get("instance_id"):
                 instances.add(evidence["instance_id"])
-        contracts = validate_plan(self._current_profile(task), draft, self.registry,
+        from .planning import resolve_memory_defaults
+        profile = self._current_profile(task)
+        draft = resolve_memory_defaults(profile, draft)
+        contracts = validate_plan(profile, draft, self.registry,
                                   ResultService(self.store).formats(), instances)
         for limit, amount in (("max_tool_calls", "tool_calls"), ("max_runtime_ms", "runtime_ms"), ("max_external_requests", "external_requests")):
             if draft["budget"][limit] is not None:
@@ -919,7 +936,8 @@ class Engine:
 
     def _completed_body(self, task, plan, step, call, outcome, invocation, output_schema):
         rule = self._resource_rule(plan, step["instance_id"])
-        ceiling = next(item for item in task["profile_snapshot"]["resources"] if item["instance_id"] == step["instance_id"]).get("policy", {})
+        ceiling = effective_resource_policy(next(item for item in task["profile_snapshot"]["resources"]
+                                                 if item["instance_id"] == step["instance_id"]))
         raw = outcome["result"]
         views = {mode: disclosure(raw, rule, ceiling, mode) for mode in ("allowed_model_fields", "export_fields", "retained_fields")}
         visible = set().union(*(paths for _, _, paths in views.values()))
@@ -980,6 +998,7 @@ class Engine:
                     "provided_paths": paths, "allowed_paths": paths}
         record = self.store.read_record(task["task_id"], ref)
         payload, kind = record["payload"], record["record_kind"]
+        require(kind not in {"memory_pending", "memory_done"}, "ACCESS_DENIED", "기억 후처리는 내부 기록입니다.")
         days = (task.get("profile_snapshot") or {}).get("retention_days")
         expiry = record["expires_at"]
         if expiry is None and days is not None:
@@ -1007,7 +1026,7 @@ class Engine:
                 require(ref in active["draft"]["carried_evidence_refs"], "ACCESS_DENIED", "이전 계획의 결과를 명시적으로 승계하세요.")
                 rule = self._resource_rule(active, payload["instance_id"])
             field = "allowed_model_fields" if mode == "model" else "export_fields" if mode == "export" else "retained_fields"
-            result, allowed, visible = disclosure(payload["result"], rule, resource.get("policy", {}), field)
+            result, allowed, visible = disclosure(payload["result"], rule, effective_resource_policy(resource), field)
             prefix = {"allowed_model_fields": "model", "export_fields": "export", "retained_fields": "retained"}[field]
             original_paths = {tuple(path) for path in payload.get(prefix + "_paths", [])}
             allowed &= original_paths
@@ -1133,6 +1152,8 @@ class Engine:
             self._finish(task, data["task_state"])
         for ref in data["artifact_refs"]:
             task.setdefault("artifact_permissions", {})[ref] = {"plan_id": args["plan_id"]}
+        from .automatic_memory import enqueue
+        enqueue(self, task, plan, args, data["report_ref"])
         self._save(task)
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], **data})
 

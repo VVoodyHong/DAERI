@@ -84,7 +84,7 @@ profile 관련 세 필드는 모두 값이 있거나 모두 null이어야 한다
 현재 실행기는 승인 후 `running`에서 조회·확인을 수행하며 `verifying`·`reconciling` 전이는 후속 실행 확장에 사용한다.
 
 `TaskReceipt`는 `task_id`, `task_revision`, `request_ref`, `state`, `context`, `waiting_reason`을 갖는다.
-타입은 TaskSnapshot과 같고 수정으로 답변 기록이 생겼을 때만 선택 필드 `clarification_ref:RecordRef`를 추가한다.
+타입은 TaskSnapshot과 같고 수정으로 질문·답변·맥락 보완 기록을 만들었을 때 선택 필드 `clarification_ref:RecordRef`를 추가한다.
 
 `WorkerSummary`는 `delegation_id:ID`, `state:active|completed|revoked`, `step_ids:ID[]`, `plan_ref:PlanRef`, `expires_at:string`, `assignment_ref:RecordRef`, `result_ref:RecordRef|null`을 갖는다.
 위임 기한은 시간대를 포함한 ISO 8601 값이며 할당·결과 본문은 등록 참조로 조회한다.
@@ -154,7 +154,7 @@ profile이 해소돼 있으면 `planning`, 미해소이면 `awaiting_input`으�
 
 방법·대상·제공 범위를 바꿔야 하면 `planning`에서 수정 계획을 작성한다.
 다음 호출은 현재 승인·권한·입력·예산을 다시 검사한다.
-`data`는 TaskReceipt이며 답변 기록이 있을 때만 `clarification_ref`를 포함한다.
+`data`는 TaskReceipt이며 새 질문·보완 기록의 `clarification_ref`를 포함한다.
 
 ### 일시중지 분기
 
@@ -260,7 +260,8 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 종료 업무는 원격 실행·계획·승인 재개 없이 로컬 기억 갱신·허용 추가 보고만 준비할 수 있다.
 종료 상태와 `resumed=false`를 유지하고, 다른 유효 소유자가 없을 때 기록 확인 후 소유권을 회수한다.
 미확인 호출이 없으면 `status=ok`이며 소유권 변경이 있으면 업무 개정을 증가시킨다.
-본문 만료·제공 권한은 그대로 적용하며 종료 업무의 현재 기억 갱신 상태는 `memory_update` 기록으로 확인한다.
+본문 만료·제공 권한은 그대로 적용한다.
+기억 저장 결과는 `memory_update` 기록으로, 자동 처리의 대기·색인 상태는 원 보고 요청의 동일 재전달에서 확인한다.
 
 `paused`에서의 재개는 보존한 상태·대기 이유·현재 계획을 확인한 뒤에도 `resumed=false`, `status=pending`이다.
 미답변 질문은 `awaiting_input`, 계획 작성·수정이 필요하면 `planning`, 현재 계획을 재확인할 수 있으면 `awaiting_approval`로 연결한다.
@@ -310,7 +311,7 @@ dispatch 전 호출은 `blocked`·`OWNER_CONFLICT`로 보존하고 미사용 호
 하나의 root 업무·현재 계획·실제 사용자 승인·공유 예산 아래 worker의 제한된 수행을 연결하는 게이트웨이다.
 root는 `create|revoke`로 작업을 배정·철회하고 worker는 토큰으로 `get|execute|search|read|complete`를 호출한다.
 worker 생성·추론·대기는 [호스트](../hosts/plugins.md)가 담당하고 이 도구는 DAERI를 통한 위임·자료 제공·실행 조건을 검사한다.
-업무 제어·계획·승인·최종 보고·기억 발행은 기존 root 도구를 사용한다.
+업무 제어·계획·승인·최종 보고·기억 후보 제출은 기존 root 도구를 사용한다.
 
 ### 분기별 입력
 
@@ -525,7 +526,7 @@ API 방식에서 제공 가능한 기억이 0건이면 전송을 생략하고 �
 제공자 연결의 준비 여부는 관리 진단으로 별도 확인한다.
 한쪽 검색 장애·일부 색인 누락은 `status=partial`, `MEMORY_SEARCH_INCOMPLETE`로 검색 제한을 표시한다.
 사용 가능한 쪽만 검색했다면 `keyword_only|vector_only`로 구분한다.
-사용자가 키워드 전용을 선택했거나 API 전송 미허용·인증·응답 오류가 발생해도 실제 검색 방식과 제한을 같은 필드로 표시한다.
+사용자가 키워드 전용을 선택했거나 API 선택 변경·인증·응답 오류가 발생해도 실제 검색 방식과 제한을 같은 필드로 표시한다.
 검색 자체가 실패해도 업무·정책 기록을 신뢰할 수 있으면 `status=error`, `MEMORY_SEARCH_UNAVAILABLE`과 검색 실패 기록을 반환한다.
 이 경우 `items=[]`, `retrieval_state=unavailable`이며 계획은 실패를 명시해야 한다.
 공통 저장소 확인에 실패하면 `STORE_UNAVAILABLE`, `data=null`로 반환한다.
@@ -533,7 +534,7 @@ API 방식에서 제공 가능한 기억이 0건이면 전송을 생략하고 �
 ### daeri_memory_update
 
 실제 근거로 지식을 저장·정정하거나 기존 개정을 무효화한다.
-후보가 있을 때 해당 지식과 실제 근거를 제출한다.
+기본 업무의 저장은 [결과 제출의 자동 기억](#daeri_result_submit)으로 처리하고 이 도구는 정밀한 정정·무효화와 기존 연동에도 사용한다.
 처리 범위는 선별 기억 정본과 검색 색인의 갱신이다.
 
 | 입력 필드 | 타입 | 필수 | 제약 |
@@ -549,6 +550,7 @@ API 방식에서 제공 가능한 기억이 0건이면 전송을 생략하고 �
 
 `MemoryDraft`는 필수 `category:enum`, `statement:string`, `applicability:string`, `instance_ids:ID[]`, `verification_method:string`을 갖는다.
 범주 enum은 MemoryItem과 같고 인스턴스는 하나 이상이며 근거·계획과 일치해야 한다.
+초안의 UTF-8 JSON 크기는 16KiB 이하여야 하며 초과하면 `INVALID_INPUT`이다.
 만료·승인·검증 시각·profile·실제 연결 대상은 실행기가 현재 기록·정책에서 해소한다.
 
 ### 기억의 출처 필드 확정
@@ -856,6 +858,15 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 | `plan_id` | ID 또는 null | 예 | 현재 불변 계획 |
 | `plan_version` | PlanVersion 또는 null | 예 | 저장 버전 일치 |
 | `report` | ReportDraft | 예 | 위 결과 DTO |
+| `memory_candidates` | MemoryCandidate[] | 아니요 | 최대 20개; 생략·[]이면 검증된 수행 메타데이터에서 기본 후보 생성 |
+
+`MemoryCandidate`는 필수 `draft:MemoryDraft`, `source_refs:RecordRef[]`와 선택 `memory_ref:RecordRef`를 갖는다.
+출처는 중복 없는 1~100개이며 `draft`는 위 [기억 초안](#daeri_memory_update)과 같은 타입이다.
+새 지식은 `memory_ref`를 생략하고 기존 지식 정정에는 현재 개정 참조를 연결한다.
+
+후보가 없으면 보고의 `met` 완료 검사에 대응하는 실제 호출 중 완료·오류 없음·전체성 확인 조건을 갖춘 출처를 최대 100개 모아 수행 절차 후보 하나를 구성한다.
+본문은 리소스 범주·기능과 실제 확인한 수행 사실로 구성하고 원문·수치·SQL·전체 보고는 출처 자료로 관리한다.
+생성·저장 모두 현재 승인 계획의 기억 범위와 현재 제한·출처 검사를 통과해야 한다.
 
 새 보고의 계획은 현재 `active_plan_ref`와 일치해야 한다.
 이전 근거는 `carried_evidence_refs`로 현재 계획에 명시 승계해 마감 검사에 사용한다.
@@ -897,12 +908,14 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 
 과거 승인 연결·현재 제공 권한·[보고 보존 원칙](../tasks/workflow.md#이력과-완료-근거)을 검사해 로컬 근거를 처리한다.
 
-실행기는 먼저 표를 검증하고 그 결과로 같은 보고의 표 인용·완료 조건을 대조한 뒤 보고·파일을 검증한다.
-생성한 파일의 전체 크기는 승인 상한 이내여야 한다.
+실행기는 표를 검증하고 그 결과로 같은 보고의 표 인용·완료 조건을 대조한 뒤 보고·파일을 검증한다.
+각 생성 파일의 크기는 해당 산출물의 승인 상한 이내여야 한다.
 셀·결합·완료 근거·파일 크기 중 하나라도 실패하면 새 표·보고·파일의 등록을 함께 취소한다.
-검증 통과 시 표·검증 결과·보고·산출물 참조·업무 상태·요청 기록을 원자적으로 보존하고 개정을 한 번 증가시킨다.
+검증 통과 시 표·검증 결과·보고·산출물 참조·업무 상태·요청 기록과 기억 처리 대기를 원자적으로 보존한다.
+보고 확정 뒤 [자동 기억 처리](../tasks/memory.md#업무-후-갱신과-정정)를 수행하며 업무 개정·종료 상태를 유지하고 별도 기억 상태를 갱신한다.
 보존 실패는 기존 상태를 유지하고 저장소·등록 기록을 확인해 복구한다.
-동일 요청 재전달은 공통 멱등 규칙에 따라 기존 개정·산출물 참조를 반환한다.
+동일 요청 재전달은 기존 보고·산출물 참조를 반환하고 연결된 기억 대기를 재시도한다.
+총괄의 다음 동일 profile `daeri_memory_search`도 대기 처리를 재시도한다.
 
 완료 조건의 단계 참조는 인용한 실제 호출 또는 검증표의 기여 단계와 대응해야 한다.
 직접 호출과 표의 출처 모두 [단계 대응·승계 기준](plans.md#planstep)을 적용한다.
@@ -923,6 +936,14 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 | `task_state` | enum | 실제 `succeeded\|partial\|failed\|cancelled` |
 | `validation` | ReportValidation | 구조·근거·조건 결과 |
 | `delivery_status` | enum | 현재 `not_confirmed`; 전달 확인·실패 갱신은 확장 범위 |
+| `memory` | MemoryProcessing | 자동 기억·색인 처리 상태 |
+
+`MemoryProcessing`은 `state`와 `items`를 갖는다.
+전체 상태는 `ready|pending|partial|skipped`, 각 항목의 상태는 `ready|pending|skipped`다.
+항목은 처리한 `memory_ref` 또는 확인한 `error_code`를 함께 제공할 수 있다.
+대기는 재시도할 항목, 부분 상태는 완료·대기·생략이 섞인 결과, 생략은 실제 저장할 항목이 없는 결과다.
+기억 처리 실패는 보존한 보고의 성공 응답·종료 상태를 유지하고 이 별도 상태로 표시한다.
+내부 후보·대기 기록은 업무 목록·본문 조회의 공개 참조에서 제외하며 직접 조회는 `ACCESS_DENIED`다.
 
 | ReportValidation 필드 | 타입 | 의미 |
 |---|---|---|

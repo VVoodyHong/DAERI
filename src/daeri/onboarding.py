@@ -44,38 +44,84 @@ def selection_catalog():
 def _paths(store, name):
     _require(isinstance(name, str) and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', name)),
              'profile을 확인하세요.')
-    directory = store.data_dir / 'setup' / name
-    for path in (store.data_dir, directory.parent, directory, directory / 'setup.yaml', directory / 'draft.json'):
-        _require(not path.is_symlink(), '설정 파일 경로에 심볼릭 링크를 사용할 수 없습니다.')
-    return directory / 'setup.yaml', directory / 'draft.json'
+    path = store.data_dir / 'config' / 'profiles' / (name + '.yaml')
+    metadata = store.data_dir / 'setup' / name / 'draft.json'
+    legacy = metadata.with_name('setup.yaml')
+    try:
+        for directory in _directories(store, path, metadata):
+            try:
+                mode = directory.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            _require(stat.S_ISDIR(mode), '설정 디렉터리 경로를 확인하세요.')
+        for file in (path, metadata, legacy):
+            try:
+                mode = file.lstat().st_mode
+            except FileNotFoundError:
+                continue
+            _require(stat.S_ISREG(mode), '설정 파일 형식을 확인하세요.')
+    except OSError:
+        raise StoreError('STORE_UNAVAILABLE', '설정 파일 접근 권한과 저장소 상태를 확인하세요.') from None
+    return path, metadata
+
+
+def _directories(store, path, metadata):
+    return (store.data_dir, path.parent.parent, path.parent, metadata.parent.parent, metadata.parent)
+
+
+def _active_paths(store, name):
+    path, metadata = _paths(store, name)
+    legacy = metadata.with_name('setup.yaml')
+    try:
+        present, old, managed = path.exists(), legacy.exists(), metadata.exists()
+    except OSError:
+        raise StoreError('STORE_UNAVAILABLE', '설정 파일 접근 권한과 저장소 상태를 확인하세요.') from None
+    _require(not (present and old), '사용자 설정 YAML을 하나로 복구하세요.')
+    _require((present or old) == managed, '설정 YAML과 초안 관리 정보를 함께 복구하세요.')
+    return (legacy if old else path), metadata, managed
 
 
 def draft_status(store, name):
     """Inspect draft file availability before creation, preserving unfinished edits."""
     result = {'profile': name, 'state': 'new', 'path': None}
     try:
-        path, metadata = _paths(store, name)
-        for directory in (store.data_dir, path.parent.parent, path.parent):
-            try:
-                mode = directory.lstat().st_mode
-            except FileNotFoundError:
-                return result
-            _require(stat.S_ISDIR(mode), '초안 디렉터리 경로를 확인하세요.')
-        present = []
-        for file in (path, metadata):
-            try:
-                mode = file.lstat().st_mode
-            except FileNotFoundError:
-                present.append(False)
-                continue
-            _require(stat.S_ISREG(mode), '초안 파일 형식을 확인하세요.')
-            with file.open('rb') as stream:
-                stream.read(1)
-            present.append(True)
-        _require(present[0] == present[1], '설정 YAML과 초안 관리 정보를 함께 복구하세요.')
+        path, metadata, present = _active_paths(store, name)
+        if present:
+            for file in (path, metadata):
+                with file.open('rb') as stream:
+                    stream.read(1)
     except OSError:
         raise StoreError('STORE_UNAVAILABLE', '초안 파일 접근 권한과 저장소 상태를 확인하세요.') from None
-    return {'profile': name, 'state': 'resume', 'path': str(path)} if all(present) else result
+    return {'profile': name, 'state': 'resume', 'path': str(path)} if present else result
+
+
+def _prepare_directories(store, path, metadata):
+    try:
+        for directory in _directories(store, path, metadata):
+            directory.mkdir(exist_ok=True, mode=0o700)
+            _require(stat.S_ISDIR(directory.lstat().st_mode), '설정 디렉터리 경로를 확인하세요.')
+            if os.name != 'nt':
+                directory.chmod(0o700)
+    except OSError:
+        raise StoreError('STORE_UNAVAILABLE', '설정 디렉터리를 준비하지 못했습니다.') from None
+
+
+def _migrate_legacy(legacy, path):
+    linked = False
+    try:
+        # A no-overwrite hard link keeps the exact edited file during relocation.
+        os.link(legacy, path, follow_symlinks=False)
+        linked = True
+        if os.name != 'nt':
+            path.chmod(0o600)
+        legacy.unlink()
+    except OSError:
+        if linked:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        raise StoreError('STORE_UNAVAILABLE', '설정 YAML 이관 상태를 확인하고 다시 시도하세요.') from None
 
 
 def _write(path, text):
@@ -116,7 +162,7 @@ def _schema_digest(recipe):
 
 
 def _read_draft(store, name):
-    path, metadata = _paths(store, name)
+    path, metadata, _ = _active_paths(store, name)
     meta = read_config(metadata)
     _require(isinstance(meta, dict) and set(meta) == {'profile', 'base', 'schemas'}
              and meta['profile'] == name and isinstance(meta['schemas'], dict),
@@ -299,7 +345,7 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
     requested_embedding = _embedding_draft(name, embedding, embedding_adapter) if embedding is not None else None
     with store.transaction():
         profile = _current(store, name)
-        exists = path.exists() or metadata.exists()
+        active, metadata, exists = _active_paths(store, name)
         if exists:
             _, _, meta, document, _ = _read_draft(store, name)
         else:
@@ -322,9 +368,12 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
                 meta['schemas'][recipe] = _schema_digest(recipe)
         if embedding is not None:
             if 'embedding' not in document:
-                document['embedding'] = (validate_embedding_config(profile['embedding']) if profile and
-                    _embedding_identity(profile['embedding']) == _embedding_identity(requested_embedding)
-                    else requested_embedding)
+                previous = profile['embedding'] if profile else None
+                if _embedding_identity(previous) == _embedding_identity(requested_embedding):
+                    selected = {key: value for key, value in previous.items() if key != 'allow_remote'}
+                    document['embedding'] = validate_embedding_config(selected)
+                else:
+                    document['embedding'] = requested_embedding
                 changed = True
             elif (document['embedding'] == {'provider': 'api', 'adapter': None}
                     and requested_embedding.get('provider') == 'api'
@@ -334,6 +383,9 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
             else:
                 _require(_embedding_identity(document['embedding']) == _embedding_identity(requested_embedding),
                          '기존 초안의 기억 검색 방식은 YAML에서 수정하세요.')
+                if requested_embedding['provider'] == 'api' and 'allow_remote' in document['embedding']:
+                    document['embedding'].pop('allow_remote')
+                    changed = True
         elif not exists and not profile:
             document['embedding'] = _embedding_draft(name, 'local')
         credential_fields, added_credentials = _credential_slots(store, name, document, profile)
@@ -345,11 +397,9 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
                      '리소스별 제품 설정을 확인하세요.')
             meta['schemas'] = {block['adapter']: _schema_digest(block['adapter'])
                                for block in document['resources'].values()}
-        if not path.parent.exists():
-            path.parent.mkdir(parents=True, mode=0o700)
-        if os.name != 'nt':
-            path.parent.parent.chmod(0o700)
-            path.parent.chmod(0o700)
+        _prepare_directories(store, path, metadata)
+        if exists and active != path:
+            _migrate_legacy(active, path)
         if changed:
             _write(path, _render(document, credential_fields))
         _write(metadata, json.dumps(meta, ensure_ascii=False, allow_nan=False))
@@ -412,7 +462,7 @@ def _configuration(store, name, document, profile, meta):
     from .resources import validate_resource
     config = ({key: copy.deepcopy(profile[key]) for key in PROFILE_FIELDS} if profile else
               {'name': name, 'resources': [], 'core_context': [], 'retention_days': None,
-               'long_term_memory_days': None, 'memory_policy': {}, 'embedding': {'provider': 'local'}})
+               'long_term_memory_days': None, 'memory_policy': None, 'embedding': {'provider': 'local'}})
     for key in PROFILE_FIELDS - {'name', 'resources'}:
         if key in document:
             config[key] = copy.deepcopy(document[key])
@@ -467,7 +517,9 @@ def _configuration(store, name, document, profile, meta):
             if 'policy' in block:
                 resource['policy'] = copy.deepcopy(block['policy'])
             validate_resource(resource)
-            validate_resource_policy(resource.get('policy', {}))
+            resource['policy'] = validate_resource_policy(resource.get('policy'))
+            if resource['policy'] is None:
+                sanitized['resources'][instance].pop('policy', None)
         except StoreError:
             issues.append(_issue(field, message='필수값·허용 정책·기존 연결 호환성을 확인하세요.'))
             continue
@@ -492,8 +544,10 @@ def _configuration(store, name, document, profile, meta):
             if key in safe:
                 embedding[spec['config_key']] = safe[key]['ref']
         config['embedding'] = validate_embedding_config(config['embedding'])
-        if safe and 'embedding' in sanitized:
-            sanitized['embedding']['credentials'] = safe
+        if 'embedding' in sanitized:
+            sanitized['embedding'] = copy.deepcopy(config['embedding'])
+            if safe:
+                sanitized['embedding']['credentials'] = safe
     except StoreError:
         embedding = config['embedding']
         if (isinstance(embedding, dict) and embedding.get('provider') == 'api'
@@ -501,9 +555,11 @@ def _configuration(store, name, document, profile, meta):
                      or embedding['adapter'] not in {item['adapter_id'] for item in api_adapter_catalog()})):
             issues.append(_issue('embedding.adapter', message='지원하는 API 연결 방식을 선택해 주세요.'))
         else:
-            issues.append(_issue('embedding', message='선택한 기억 검색 방식의 필수값과 전송 허용을 확인하세요.'))
+            issues.append(_issue('embedding', message='선택한 기억 검색 방식의 접속·인증 필수값을 확인하세요.'))
     try:
         config['memory_policy'] = _profile_memory_policy(config['memory_policy'], config['resources'])
+        if config['memory_policy'] is None:
+            sanitized.pop('memory_policy', None)
     except StoreError:
         issues.append(_issue('memory_policy'))
     return config, issues, sanitized, updates
@@ -524,13 +580,14 @@ def _inspect(store, name):
         for instance, block in preview['resources'].items():
             resource = next(r for r in config['resources'] if r['instance_id'] == instance)
             block['inputs'] = _current_setup_values(resource, setup_schema(block['adapter']))
-            block['policy'] = copy.deepcopy(resource['policy'])
+            block['policy'] = copy.deepcopy(resource.get('policy'))
         preview['embedding'] = copy.deepcopy(config['embedding'])
         if sanitized.get('embedding', {}).get('credentials'):
             preview['embedding']['credentials'] = copy.deepcopy(sanitized['embedding']['credentials'])
         preview['defaults'] = {'retention_days': config['retention_days'],
                                'long_term_memory_days': config['long_term_memory_days']}
         current_resources = {r['instance_id']: r for r in profile['resources']} if profile else {}
+        selected_credentials = _credential_values(sanitized)
         preview['changes'] = {'created': profile is None,
                               'updated_resources': [r['instance_id'] for r in config['resources']
                                                     if r != current_resources.get(r['instance_id'])],
@@ -538,7 +595,7 @@ def _inspect(store, name):
                                            if profile is None or config[key] != profile[key]],
                               'changed': bool(updates) or profile is None or any(config[key] != profile[key] for key in PROFILE_FIELDS),
                               'credentials': [path for path, value in _credential_values(document).items()
-                                              if isinstance(value, str)]}
+                                              if isinstance(value, str) and path in selected_credentials]}
     result = {'valid': not issues, 'complete': not issues, 'issues': issues,
               'preview': preview, 'confirmation_token': token}
     return result, config, profile, path, metadata, meta, sanitized, updates
@@ -552,8 +609,16 @@ def validate_draft(store, name):
             if error.code != 'INVALID_INPUT':
                 raise
             return {'valid': False, 'complete': False,
-                    'issues': [_issue('setup.yaml', message=error.message)],
+                    'issues': [_issue(_validation_filename(store, name), message=error.message)],
                     'preview': None, 'confirmation_token': None}
+
+
+def _validation_filename(store, name):
+    try:
+        return _active_paths(store, name)[0].name
+    except StoreError:
+        return (name + '.yaml' if isinstance(name, str)
+                and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', name) else 'profile')
 
 
 def _confirm(result, confirmation):
@@ -593,8 +658,7 @@ def apply_draft(store, name, confirmation, *, credentials=None):
         originals.update({file: file.read_bytes() for file in (path, metadata)})
         if profile is None or changed_refs or any(config[key] != profile[key] for key in PROFILE_FIELDS):
             profile = store.put_profile(**config, create_only=profile is None)
-        original_values, safe_values = _credential_values(parse_yaml(originals[path])), _credential_values(sanitized)
-        if any(value is not None and value != safe_values.get(key) for key, value in original_values.items()):
+        if parse_yaml(originals[path]) != sanitized:
             fields = {resource['instance_id']: resource_credential_fields(resource) for resource in config['resources']}
             _write(path, _render(sanitized, fields))
         meta['base'] = _base(profile)

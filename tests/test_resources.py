@@ -83,6 +83,42 @@ def test_scope_must_cover_every_transmitted_field(registry):
         registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, narrow)
 
 
+@pytest.mark.parametrize('origin', ['fixed', 'default'])
+@pytest.mark.parametrize('character,count,suffix,accepted', [
+    pytest.param('x', 65509, '', True, id='ascii-limit'),
+    pytest.param('x', 65510, '', False, id='ascii-over'),
+    pytest.param('가', 21836, 'x', True, id='utf8-limit'),
+    pytest.param('가', 21836, 'xx', False, id='utf8-over'),
+])
+def test_normalized_argument_limit_covers_fixed_and_default_values(registry, tmp_path, origin,
+                                                                 character, count, suffix, accepted):
+    padding = character * count + suffix
+    script = tmp_path / 'argument_limit_mcp.py'
+    default = padding if origin == 'default' else ''
+    script.write_text('from mcp.server.fastmcp import FastMCP\n'
+                      'server = FastMCP("argument-limit-fixture")\n'
+                      '@server.tool(name="get")\n'
+                      f'def read(key: str, padding: str = {default!r}) -> dict:\n'
+                      '    return {"padding_bytes": len(padding.encode("utf-8"))}\n'
+                      'server.run()\n', encoding='utf-8')
+    resource = config()
+    resource.update(instance_id='cache', type='Cache', adapter='redis_read',
+                    target={'host': 'cache.example.test', 'port': 6379, 'db': 0})
+    resource['connection'].update(args=['-I', str(script)], env={
+        'REDIS_HOST': 'cache.example.test', 'REDIS_PORT': '6379', 'REDIS_DB': '0'})
+    resource['capabilities'] = [{'capability_id': 'read', 'tool_name': 'get',
+        'constraints': {'fixed': {'padding': padding}} if origin == 'fixed' else {}}]
+    p = profile(resource)
+    registry.diagnose(p, 'cache')
+    approved = {'equals': {'key': 'item', 'padding': padding}}
+    if not accepted:
+        with pytest.raises(StoreError, match='INVALID_INPUT'):
+            registry.normalize(p, 'cache', 'read', {'key': 'item'}, approved)
+        return
+    invocation = registry.normalize(p, 'cache', 'read', {'key': 'item'}, approved)
+    assert registry.execute(invocation)['result'] == {'data': {'padding_bytes': 65509}}
+
+
 def test_connection_only_source_recipe_requires_approved_project_revision_and_path(registry):
     from daeri.setup import build_setup_resource
     resource = build_setup_resource(registry.store, 'source-gitlab', 'service', 'source-one',

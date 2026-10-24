@@ -248,7 +248,7 @@ def test_native_failure_preserves_active_profile_and_user_yaml_for_retry(store):
     original_profile = approve(store, vault)
     edit(draft, lambda value: value['resources']['db']['credentials'].update(password='NEW_PRIVATE'))
     original_yaml = Path(draft['path']).read_bytes()
-    original_meta = Path(draft['path']).with_name('draft.json').read_bytes()
+    original_meta = (store.data_dir / 'setup' / 'production' / 'draft.json').read_bytes()
 
     class Locked(Vault):
         def set_password(self, service, name, value):
@@ -260,7 +260,7 @@ def test_native_failure_preserves_active_profile_and_user_yaml_for_retry(store):
                     credentials=Credentials(backend=locked))
     assert 'NEW_PRIVATE' not in str(raised.value)
     assert Path(draft['path']).read_bytes() == original_yaml
-    assert Path(draft['path']).with_name('draft.json').read_bytes() == original_meta
+    assert (store.data_dir / 'setup' / 'production' / 'draft.json').read_bytes() == original_meta
     assert store.get_profile('production') == original_profile
 
 
@@ -271,7 +271,7 @@ def test_file_failure_restores_native_value_and_preserves_retryable_draft(store,
     original_profile = approve(store, vault)
     edit(draft, lambda value: value['resources']['db']['credentials'].update(password='NEW_PRIVATE'))
     original_yaml = Path(draft['path']).read_bytes()
-    original_meta = Path(draft['path']).with_name('draft.json').read_bytes()
+    original_meta = (store.data_dir / 'setup' / 'production' / 'draft.json').read_bytes()
     original_write = onboarding._write
 
     def unavailable(path, text):
@@ -284,7 +284,7 @@ def test_file_failure_restores_native_value_and_preserves_retryable_draft(store,
         apply_draft(store, 'production', validate_draft(store, 'production')['confirmation_token'],
                     credentials=Credentials(backend=vault))
     assert Path(draft['path']).read_bytes() == original_yaml
-    assert Path(draft['path']).with_name('draft.json').read_bytes() == original_meta
+    assert (store.data_dir / 'setup' / 'production' / 'draft.json').read_bytes() == original_meta
     assert vault.values['production.db.database_password'] == 'OLD_PRIVATE'
     assert store.get_profile('production') == original_profile
 
@@ -297,7 +297,7 @@ def test_commit_failure_restores_yaml_metadata_profile_and_native_value(store, m
     original_profile = approve(store, vault)
     edit(draft, lambda value: value['resources']['db']['credentials'].update(password='NEW_PRIVATE'))
     yaml_before = Path(draft['path']).read_bytes()
-    metadata = Path(draft['path']).with_name('draft.json')
+    metadata = (store.data_dir / 'setup' / 'production' / 'draft.json')
     metadata_before = metadata.read_bytes()
     token = validate_draft(store, 'production')['confirmation_token']
     connection = store._db
@@ -445,7 +445,7 @@ def test_recreated_draft_displays_saved_credential_reference(store):
     vault = Vault()
     approve(store, vault)
     Path(draft['path']).unlink()
-    Path(draft['path']).with_name('draft.json').unlink()
+    (store.data_dir / 'setup' / 'production' / 'draft.json').unlink()
     create_draft(store, 'production', recipes=['db-postgres'])
     assert read_yaml(draft['path'])['resources']['db']['credentials'] == {
         'password': {'ref': 'credential:shared.database'}}

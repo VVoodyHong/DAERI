@@ -7,6 +7,35 @@ import re
 from .storage import StoreError
 
 
+MEMORY_CATEGORIES = ("service_rule", "resource_structure", "procedure", "lesson")
+
+
+def effective_resource_policy(resource):
+    """Resolve optional profile limits; the approved plan still selects every field."""
+    policy = resource.get("policy")
+    if policy is not None and policy != {}:
+        return policy
+    root = {"segments": []}
+    return {"allowed_model_fields": [copy.deepcopy(root)], "export_fields": [copy.deepcopy(root)],
+            "retained_fields": [copy.deepcopy(root)], "masking": [],
+            "memory": {"categories": list(MEMORY_CATEGORIES), "source_fields": [root],
+                       "context_sources": ["request", "clarification"],
+                       "retention": "long_term", "allow_model_recall": True}}
+
+
+def effective_profile_memory_policy(profile):
+    """Bind plan-based memory limits to this profile's current registered targets."""
+    policy = profile.get("memory_policy")
+    if policy is not None and policy != {}:
+        return policy
+    from .storage import _profile_memory_policy
+    resources = profile.get("resources", [])
+    return _profile_memory_policy({"categories": list(MEMORY_CATEGORIES),
+        "instance_ids": [resource["instance_id"] for resource in resources],
+        "model_allowed": True, "retain_allowed": True, "long_term_allowed": True,
+        "exports_allowed": True}, resources)
+
+
 def require(condition, message="The registered field policy cannot be satisfied."):
     if not condition:
         raise StoreError("RESULT_VALIDATION_FAILED", message)
@@ -122,6 +151,8 @@ def within_selectors(requested, ceiling):
 
 
 def validate_resource_policy(policy):
+    if policy is None or policy == {}:
+        return None
     require(isinstance(policy, dict) and not set(policy) - {
         "allowed_model_fields", "export_fields", "retained_fields", "masking", "memory"})
     for key in ("allowed_model_fields", "export_fields", "retained_fields"):
@@ -142,7 +173,7 @@ def validate_resource_policy(policy):
         categories = memory["categories"]
         require(isinstance(categories, list) and all(isinstance(item, str) for item in categories)
                 and len(categories) == len(set(categories)) and
-                set(categories) <= {"service_rule", "resource_structure", "procedure", "lesson"})
+                set(categories) <= set(MEMORY_CATEGORIES))
         require(isinstance(memory["context_sources"], list)
                 and all(isinstance(item, str) for item in memory["context_sources"])
                 and set(memory["context_sources"]) <= {"request", "clarification"})

@@ -97,6 +97,9 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 ### `CapabilityDescriptor`
 
 표와 하위 타입의 모든 필드는 필수이며 미지원도 false·null·빈 배열로 명시한다.
+현재 기본 어댑터는 `collect`·`verify`를 지원하며 `supported_metrics: []`와 `external_requests_enforceable: false`를 반환한다.
+자동 재시도·원격 중복 억제·완료 확인·자동 페이지 연결은 미지원 값으로 제공한다.
+아래의 지원 시 조건은 해당 기능을 추가할 때 적용하는 확장 계약이다.
 
 | 필드 | 타입 | 제약·의미 |
 |---|---|---|
@@ -116,8 +119,8 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 | `continuation` | ContinuationDescriptor | 페이지·후속 참조와 일관성 |
 | `metadata_discovery_allowed` | boolean | 등록된 구조 메타데이터의 사전 노출 허용 여부 |
 
-`metric_id`는 같은 기능 안에서 고유하다.
-등록 시 같은 인스턴스의 동일 metric ID가 같은 단위·측정 의미·집계 범위를 가리키는지 검사한다.
+metric을 지원하는 등록 계약에서 `metric_id`는 같은 기능 안에서 고유해야 한다.
+같은 인스턴스의 동일 metric ID는 같은 단위·측정 의미·집계 범위를 가리켜야 한다.
 서로 다른 지표에는 다른 ID를 부여하며 `unit`·`description`은 비어 있지 않아야 한다.
 `description`에는 측정 대상·집계 범위와 페이지·재시도의 합산 방식을 설명한다.
 
@@ -147,14 +150,15 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 입력 pointer의 기준은 `parameters`, 출력 pointer의 기준은 정규화한 기능 결과 객체다.
 출력의 후속 값을 입력에 연결하는 허용 방식은 [계획 규격](plans.md)의 `input_bindings`에 둔다.
 
-세 스키마는 최상위 객체·허용 속성을 정의하고 서버가 검증한 등록부에서 제공한다.
+세 스키마는 최상위 객체인 JSON Schema이며 서버가 검증한 등록부에서 제공한다.
+`input_schema`는 진단한 하위 도구의 계약이고 `output_schema`는 호스트에 제공할 결과, `scope_schema`는 실행기가 해석하는 승인 조건을 정의한다.
 하위 출력이 객체가 아니거나 스키마가 없어도 검증한 정규화 계약으로 연결할 수 있다.
 참조 해소·정규화·등록 조건은 [리소스 계약](../resources/contract.md#도구-등록)을 따른다.
 
 계획의 강제 한도에는 `enforceable: true`인 metric이 필요하다.
 `budget_support.external_requests_enforceable`은 요청 전 통제 또는 검증한 최대 요청 수의 예약이 가능할 때만 true다.
 지원 여부와 숫자·null의 판정은 [예산 규격](plans.md)을 따른다.
-`supported_purposes`는 실제 `effects`·`verification` 계약과 일치하도록 등록 시 검증한다.
+추가 실행 목적은 실제 `effects`·`verification` 계약의 검사와 함께 등록한다.
 실행 목적은 등록 기능의 허용 목적·효과·현재 계획에 대응해야 한다.
 `metadata_discovery_allowed`는 등록 메타데이터 노출 여부이며 원격 탐색은 별도 승인된 기능 실행으로 처리한다.
 제품별 실제 권한과 변환 후 범위 검사는 [실제 요청 정규화·판정](../resources/contract.md#실제-요청-정규화와-범위-판정)을 따른다.
@@ -175,8 +179,8 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 | `contract_ref` | string | 예 | 저장된 단계와 현재 등록 계약의 참조 |
 | `parameters` | object | 예 | 해당 기능 `input_schema`로 검증 |
 | `bindings` | BindingSelection[] | 아니요 | 승인한 후속 값 연결; `binding_id` 고유 |
-| `reconcile_of_call_id` | string | 조건부 | `purpose=reconcile` 단계의 필수 필드 |
-| `reconcile_task_id` | string | 아니요 | 확인 대상의 원 업무; 생략 시 현재 업무, `purpose=reconcile`에서만 허용 |
+| `reconcile_of_call_id` | string | 확장 시 조건부 | `purpose=reconcile` 단계에서 확인할 원 호출 |
+| `reconcile_task_id` | string | 확장 시 선택 | 원 업무; 생략 시 현재 업무 |
 
 `BindingSelection`은 필수 `binding_id: string`, `source_call_id: string`만 갖는다.
 이 도구의 멱등 키는 `call_id`다.
@@ -193,7 +197,8 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 
 허용 목적도 현재 계획·유효 승인·확인 대상·나머지 실행 검사를 모두 충족해야 한다.
 첫 버전의 자동 실행 상태는 `running`이며 `verifying` 진입은 확장 범위다.
-`change`·`reconcile`과 `reconciling` 상태의 확인 호출은 해당 효과·확인 기능을 등록하는 후속 계약이다.
+현재 `reconcile_of_call_id` 또는 `reconcile_task_id`를 제출한 새 호출은 `UNSUPPORTED_CONSTRAINT`로 반환한다.
+`change`·`reconcile`과 `reconciling` 상태의 확인 호출은 해당 효과·확인 기능을 등록하는 확장 계약이다.
 이미 보낸 호출의 결과 보존과 같은 호출 상태 재전달은 기존 호출 기록에 연결해 처리한다.
 
 서버는 저장한 `input_bindings`의 허용 source pointer에서 값을 읽어 target pointer에 채운다.
@@ -206,41 +211,35 @@ source는 같은 업무의 현재 계획 또는 `carried_evidence_refs`로 승�
 
 `partial`·`pending`에서도 실제 관찰·보존한 확정 필드만 scope 안에서 사용할 수 있다.
 호스트가 같은 target에 다른 값을 제출하면 `BINDING_INVALID`로 거부한다.
-source 결과는 출력 스키마로, 연결한 입력은 입력 스키마와 승인 `scope`로 다시 검사한다.
+출력 계약을 통과한 보존 원본 중 현재 제공이 허용된 필드만 연결하고 입력 스키마와 승인 `scope`로 검사한다.
 기본값·후속 값·하위 MCP 인수 변환을 적용한 실제 요청의 대상·연산도 최종 범위 검사에 포함한다.
 자료 가림·미확인 등으로 경로를 읽을 수 없으면 `BINDING_INVALID`로 반환한다.
 분기 조건은 해소된 실제 값으로 판정한다.
 
 ### 원 호출과 상태 확인의 연결
 
-아래는 `reconcile` 기능을 등록할 때 적용할 확장 계약이다.
-현재 읽기 어댑터의 확인 필요 호출은 미확인 상태를 유지하며 실제 실행 지원은 등록 계약에서 확인한다.
+아래는 `reconcile` 기능을 등록할 때 구현·검증할 확장 계약이다.
+현재 읽기 어댑터의 미확인 호출은 [중단·재개](../tasks/workflow.md#중단재개와-외부-결과-확인)에 따라 유지한다.
 
 `reconcile_of_call_id`는 단계의 승인된 `reconciliation` 대상인 미확인·진행 중 원 호출 하나를 지정한다.
 다른 업무면 `reconcile_task_id`와 계획의 `external_call_refs`에 같은 업무·호출을 지정한다.
 
-확인 기능은 원 인스턴스의 `verification.capability_ids`에 등록돼야 한다.
-보존한 의도·실제 대상·원격 작업 참조·중복 방지 키 등 등록된 확인 방법으로 원 호출과 연결한다.
-호출 성공은 원 기록·대상·확인 방법이 대응하는 확정 근거로 판정한다.
-
-인수는 원 기록에서 채우거나 제출 값과 대조하며 다른 작업·계정·대상은 `BINDING_INVALID`다.
-확인 실행에는 원 기록 열람·연결 근거·등록된 확인 의미의 검증이 필요하다.
-
-서버 보존 원본으로 판단하고 확정 근거·확인 결과·원 호출 상태·외부 효과를 함께 갱신한다.
-근거 부족·보존 실패·미확정 소비의 처리와 상태 복귀는 [중단·복구 명세](../tasks/workflow.md#중단재개와-외부-결과-확인)를 따른다.
+확인 기능은 원 인스턴스의 `verification.capability_ids`에 등록하고 보존한 의도·실제 대상·원격 작업 참조·중복 방지 키로 원 호출과 연결한다.
+인수는 서버의 원 기록에서 채우거나 제출 값과 대조하고 다른 작업·계정·대상이면 `BINDING_INVALID`로 반환한다.
+원 기록의 현재 열람 권한과 등록된 확인 방법을 검사한 뒤 확정 근거·확인 결과·원 호출 상태·외부 효과를 함께 보존한다.
 
 같은 확인 대상에 실행 중 요청이 있으면 그 요청의 상태를 먼저 확인한다.
 원 호출이 이미 해소됐다면 `TASK_STATE_INVALID`·`refresh`로 현재 기록을 안내한다.
 
-모든 미확인 호출이 해소되고 현재 상태가 `reconciling`이며 유효 승인·현재 검사를 충족할 때만 저장한 `running|verifying`으로 돌아간다.
-늦은 확인 결과를 보존할 때 업무의 일시중지·대기·종료 상태를 유지한다.
+모든 미확인 호출이 해소되고 현재 상태가 `reconciling`이며 유효 승인·현재 검사를 충족하면 저장한 `running|verifying`으로 돌아간다.
+근거 부족·보존 실패·미확정 소비와 늦은 결과의 중지·종료 상태 보존은 [중단·복구 명세](../tasks/workflow.md#중단재개와-외부-결과-확인)를 따른다.
 
 다른 업무의 확인은 같은 로컬 저장소의 종료 업무에 한하며 양 업무의 현재 권한을 검사한다.
 profile이 달라도 원 인스턴스·실제 대상·권한 문맥의 바인딩이 일치해야 한다.
 
 확인 호출의 사용량·예약은 새 업무, 원 호출의 사용량·예약은 원 업무에 남기고 과거 종료 상태를 유지한다.
 확인 근거는 양 업무·원 호출·계획·승인에 연결하고 원 호출 갱신·양 업무 개정과 함께 보존한다.
-원 기록은 같은 로컬 저장소의 등록 참조로 읽으며 확정 해소는 관련 기록의 보존이 성공한 뒤 반환한다.
+확정 해소는 관련 기록의 보존이 성공한 뒤 반환한다.
 
 ### 반환 `data`
 

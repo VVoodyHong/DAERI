@@ -15,7 +15,7 @@ from test_memory import (NumericalFixtureEmbedder, candidate, configured_resourc
 def api_config(**changes):
     return {"provider": "api", "adapter": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
             "model": "company-embedding", "credential_ref": "credential:company-embedding",
-            "allow_remote": True, **changes}
+            **changes}
 
 
 def profile(store, name="alpha", **changes):
@@ -142,10 +142,9 @@ def test_api_failure_with_eligible_memory_still_reports_partial_search(tmp_path,
         assert result["limitations"]
 
 
-@pytest.mark.parametrize("embedding", [api_config(allow_remote=False), {"provider": "keyword_only"}])
-def test_disallowed_remote_or_keyword_only_never_calls_api(tmp_path, api, embedding):
+def test_keyword_only_never_calls_api(tmp_path, api):
     with closing(Store(tmp_path)) as store:
-        selected = profile(store, embedding=embedding)
+        selected = profile(store, embedding={"provider": "keyword_only"})
         service = MemoryService(store)
         save(service, selected)
         result = service.search(selected["profile_id"], "E_CONN_001")

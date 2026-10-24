@@ -12,7 +12,8 @@ from .storage import StoreError, process_alive
 def resource_references(profile):
     from .adapters import get_adapter
     from .resources import _hash
-    references = {('directory', 'setup/' + profile['name'])}
+    references = {('directory', 'setup/' + profile['name']),
+                  ('file', 'config/profiles/' + profile['name'] + '.yaml')}
     embedding_ref = profile.get('embedding', {}).get('credential_ref', '')
     if embedding_ref.startswith('credential:'):
         references.add(('credential', embedding_ref))
@@ -126,7 +127,7 @@ def _check_busy(store, identity):
 
 def _managed_path(store, reference, directory=False):
     pattern = (r'resources/processes/[0-9a-f]{64}|setup/[A-Za-z0-9][A-Za-z0-9_-]{0,63}' if directory else
-               r'(?:profiles|records)/[0-9a-f]{32}\.json|artifacts/[0-9a-f]{32}\.[a-z0-9]{1,8}|resources/[0-9a-f]{64}\.json')
+               r'(?:profiles|records)/[0-9a-f]{32}\.json|artifacts/[0-9a-f]{32}\.[a-z0-9]{1,8}|resources/[0-9a-f]{64}\.json|config/profiles/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.yaml')
     if not isinstance(reference, str) or not re.fullmatch(pattern, reference):
         raise StoreError('STORE_UNAVAILABLE', 'The deletion manifest contains an unmanaged path.')
     path = store.data_dir / reference
@@ -147,6 +148,12 @@ def delete(store, name_or_id, confirmation, credentials):
         if (not isinstance(confirmation, str) or not re.fullmatch('[0-9a-f]{64}', confirmation)
                 or not hmac.compare_digest(confirmation, _token(identity, manifest['revision']))):
             raise StoreError('REVISION_CONFLICT', 'Inspect the current profile deletion preview before confirming.')
+        # Existing cleanup jobs can predate the user configuration path.
+        config_reference = ['file', 'config/profiles/' + row['name'] + '.yaml']
+        if job and config_reference not in manifest['references']:
+            manifest['references'].append(config_reference)
+            store._db.execute('UPDATE profile_deletions SET manifest=? WHERE profile_id=?',
+                              (json.dumps(manifest), identity))
         if not job:
             _check_busy(store, identity)
             for kind, reference in manifest['references']:

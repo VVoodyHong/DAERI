@@ -255,6 +255,61 @@ def test_records_are_opaque_private_and_bound_to_their_task(store, tmp_path):
             assert path.stat().st_mode & 0o077 == 0
 
 
+def test_memory_job_updates_preserve_task_revision_deadline_and_cleanup_references(store):
+    task = task_for(store)
+    expiry = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+    original = {'report_ref': 'report-one', 'items': [{'state': 'pending'}]}
+    ref = store.write_record(task['task_id'], 'memory_pending', original, expiry)
+    before = dict(store._db.execute('SELECT * FROM records WHERE record_ref=?', (ref,)).fetchone())
+    pending = {'report_ref': 'report-one', 'items': [{'state': 'pending', 'memory_ref': 'memory-one'}]}
+    store.write_memory_job(task['task_id'], ref, pending)
+    done = {'report_ref': 'report-one', 'items': [{'state': 'ready', 'memory_ref': 'memory-one'}]}
+    store.write_memory_job(task['task_id'], ref, done, done=True)
+    after = dict(store._db.execute('SELECT * FROM records WHERE record_ref=?', (ref,)).fetchone())
+    assert store.read_record(task['task_id'], ref) == {
+        'record_kind': 'memory_done', 'payload': done, 'expires_at': before['expires_at']}
+    assert store.get_task(task['task_id']) == task
+    assert before['path'] != after['path'] and before['expires_at'] == after['expires_at']
+    tracked = {row[0] for row in store._db.execute(
+        "SELECT reference FROM profile_references WHERE profile_id=? AND kind='file'", (task['profile_id'],))}
+    assert {before['path'], after['path']} <= tracked
+    store.write_memory_job(task['task_id'], ref, done, done=True)
+    assert dict(store._db.execute('SELECT * FROM records WHERE record_ref=?', (ref,)).fetchone()) == after
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        store.write_memory_job(task['task_id'], ref, pending)
+
+
+@pytest.mark.parametrize('defect', ['other_kind', 'other_task', 'report_changed', 'expired', 'damaged', 'prepare_failed'])
+def test_memory_job_publication_keeps_original_record_on_invalid_or_unavailable_updates(store, monkeypatch, defect):
+    task = task_for(store)
+    value = {'report_ref': 'report-one', 'items': [{'state': 'pending'}]}
+    ref = store.write_record(task['task_id'], 'request' if defect == 'other_kind' else 'memory_pending', value)
+    before = dict(store._db.execute('SELECT * FROM records WHERE record_ref=?', (ref,)).fetchone())
+    task_id = task['task_id']
+    next_value = {'report_ref': 'report-one', 'items': [{'state': 'ready'}]}
+    code = 'INVALID_INPUT'
+    if defect == 'other_task':
+        task_for(store, 'other-task', 'beta')
+        task_id, code = 'other-task', 'NOT_FOUND'
+    elif defect == 'report_changed':
+        next_value['report_ref'] = 'report-two'
+    elif defect == 'expired':
+        store.set_task_expiry(task['task_id'], (datetime.now(UTC) - timedelta(seconds=1)).isoformat())
+        before = dict(store._db.execute('SELECT * FROM records WHERE record_ref=?', (ref,)).fetchone())
+        code = 'RECORD_EXPIRED'
+    elif defect == 'damaged':
+        (store.data_dir / before['path']).write_text('{}', encoding='utf-8')
+        code = 'RECORD_UNAVAILABLE'
+    elif defect == 'prepare_failed':
+        def unavailable(*args):
+            raise StoreError('STORE_UNAVAILABLE', 'test storage failure')
+        monkeypatch.setattr(store, '_prepare', unavailable)
+        code = 'STORE_UNAVAILABLE'
+    with pytest.raises(StoreError, match=code):
+        store.write_memory_job(task_id, ref, next_value, done=True)
+    assert dict(store._db.execute('SELECT * FROM records WHERE record_ref=?', (ref,)).fetchone()) == before
+
+
 @pytest.mark.parametrize("damage", ["overwrite", "delete"])
 def test_missing_or_corrupt_body_never_returns_success(store, tmp_path, damage):
     task = task_for(store)

@@ -214,8 +214,8 @@ class ResourceOutputRule(InputModel):
     instance_id: NonEmptyString
     allowed_model_fields: Selectors
     export_fields: Selectors
-    retained_fields: Selectors
-    memory: MemoryRule
+    retained_fields: Selectors = Field(default=None)
+    memory: MemoryRule = Field(default=None)
     masking: list[MaskingRule]
 
 
@@ -425,6 +425,20 @@ class CapabilityExecute(CapabilityGet):
     reconcile_task_id: NonEmptyString = Field(default=None)
 
 
+class MemoryDraft(InputModel):
+    category: Literal["service_rule", "resource_structure", "procedure", "lesson"]
+    statement: NonEmptyString
+    applicability: NonEmptyString
+    instance_ids: Annotated[UniqueIDs, Field(min_length=1)]
+    verification_method: NonEmptyString
+
+
+class ReportMemoryCandidate(InputModel):
+    draft: MemoryDraft
+    source_refs: Annotated[UniqueIDs, Field(min_length=1, max_length=100)]
+    memory_ref: NonEmptyString = Field(default=None)
+
+
 class ResultSubmit(InputModel):
     model_config = ConfigDict(json_schema_extra={"oneOf": [
         {"properties": {"plan_id": {"type": "null"}, "plan_version": {"type": "null"}}},
@@ -436,6 +450,7 @@ class ResultSubmit(InputModel):
     plan_id: NonEmptyString | None
     plan_version: PositiveInt | None
     report: JsonObject
+    memory_candidates: Annotated[list[ReportMemoryCandidate], Field(max_length=20)] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def paired_plan(self) -> Self:
@@ -449,14 +464,6 @@ class ResultGet(InputModel):
     record_ref: NonEmptyString
     cursor: NonEmptyString = Field(default=None)
     limit_bytes: Annotated[int, Field(ge=1, le=1048576)] = Field(default=None)
-
-
-class MemoryDraft(InputModel):
-    category: Literal["service_rule", "resource_structure", "procedure", "lesson"]
-    statement: NonEmptyString
-    applicability: NonEmptyString
-    instance_ids: Annotated[UniqueIDs, Field(min_length=1)]
-    verification_method: NonEmptyString
 
 
 class MemoryUpdate(InputModel):

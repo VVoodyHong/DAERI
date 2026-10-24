@@ -172,7 +172,7 @@ def test_whole_yaml_apply_is_atomic_and_idempotent(store):
     assert profile['revision'] == 1 and len(profile['resources']) == 2
     assert profile['core_context'] == [] and profile['retention_days'] is None
     assert profile['embedding']['provider'] == 'keyword_only'
-    assert all(r['policy'] == {} for r in profile['resources'])
+    assert all(r['policy'] is None for r in profile['resources'])
     again = validate_draft(store, 'production')
     assert apply_draft(store, 'production', again['confirmation_token'])['revision'] == 1
 
@@ -196,7 +196,7 @@ def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
     profile = apply_draft(store, 'production', result['confirmation_token'])
     assert profile['revision'] == 1 and len(profile['resources']) == len(selections)
     assert {r['type'] for r in profile['resources']} == {'DB', 'Cache', 'Infra', 'Source', 'Document', 'Issue'}
-    assert all(r['policy'] == {} for r in profile['resources'])
+    assert all(r['policy'] is None for r in profile['resources'])
 
 
 def test_multiple_jira_domains_apply_separate_connection_only_yaml_blocks(store):
@@ -221,7 +221,7 @@ def test_multiple_jira_domains_apply_separate_connection_only_yaml_blocks(store)
     assert first['connection']['auth_env'] == {'JIRA_API_TOKEN': 'credential:production.issue.jira_api_token'}
     assert second['connection']['auth_env'] == {'JIRA_PERSONAL_TOKEN': 'credential:production.issue-2.jira_personal_token'}
     assert first['identity_ref'] != second['identity_ref']
-    assert first['policy'] == second['policy'] == {}
+    assert first['policy'] is None and second['policy'] is None
 
 
 @pytest.mark.parametrize('account,identifier', [
@@ -334,9 +334,9 @@ def test_company_api_template_does_not_require_local_model_or_expose_secrets(sto
     from daeri.setup_yaml import read_yaml
     value = read_yaml(draft['path'])
     assert value['embedding'] == {'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None,
-        'model': None, 'credential_ref': 'credential:production.embedding', 'allow_remote': False,
+        'model': None, 'credential_ref': 'credential:production.embedding',
         'credentials': {'api_key': None}}
-    edit(draft, lambda v: v['embedding'].update(endpoint='https://embedding.example.test/v1/embeddings', model='company-model', allow_remote=True))
+    edit(draft, lambda v: v['embedding'].update(endpoint='https://embedding.example.test/v1/embeddings', model='company-model'))
     result = validate_draft(store, 'production')
     assert result['valid']
     profile = apply_draft(store, 'production', result['confirmation_token'])
@@ -352,7 +352,8 @@ def test_api_adapter_catalog_and_selected_template_share_the_registered_contract
     draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
     embedding = read_yaml(draft['path'])['embedding']
     assert embedding['provider'] == 'api' and embedding['adapter'] == 'openai_compatible'
-    assert {'endpoint', 'model', 'credential_ref', 'allow_remote'} <= embedding.keys()
+    assert {'endpoint', 'model', 'credential_ref'} <= embedding.keys()
+    assert 'allow_remote' not in embedding
 
 
 @pytest.mark.parametrize('provider', ['local', 'keyword_only', 'api'])
@@ -369,12 +370,12 @@ def test_embedding_draft_comments_explain_the_selected_fields_without_changing_v
         {'provider': 'api', 'adapter': None} if provider == 'api' else {'provider': provider})
 
 
-def test_api_embedding_comments_cover_authentication_consent_and_optional_fields(store):
+def test_api_embedding_comments_cover_connection_authentication_and_optional_fields(store):
     from pathlib import Path
     from daeri.setup_yaml import parse_yaml
     config = {'provider': 'api', 'adapter': 'openai_compatible',
         'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
-        'credential_ref': 'env:COMPANY_EMBEDDING_TOKEN', 'allow_remote': False,
+        'credential_ref': 'env:COMPANY_EMBEDDING_TOKEN',
         'dimensions': 1024, 'timeout_seconds': 30}
     store.put_profile('production', embedding=config)
     draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
@@ -384,7 +385,7 @@ def test_api_embedding_comments_cover_authentication_consent_and_optional_fields
         if line.startswith('  ') and not line.startswith('    ') and not line.lstrip().startswith('#'):
             assert lines[index - 1].startswith('  # '), line
     assert 'HTTPS' in text and '모델' in text
-    assert '인증 참조' in text and '기억·검색 질의' in text
+    assert '인증 참조' in text and 'allow_remote' not in text
     assert '1~8192' in text and '1~60' in text
     assert parse_yaml(text.encode())['embedding'] == {
         **config, 'credentials': {'api_key': {'ref': config['credential_ref']}}}
@@ -409,7 +410,8 @@ def test_registered_api_template_uses_its_own_comments_and_nested_fields(store, 
                          embedding='api', embedding_adapter='company_format')
     text = Path(draft['path']).read_text(encoding='utf-8')
     assert '# 사내 API의 접속 방식입니다.\n  transport:' in text
-    assert read_yaml(draft['path'])['embedding'] == CompanyFormat.draft_config('production')
+    assert read_yaml(draft['path'])['embedding'] == {
+        key: value for key, value in CompanyFormat.draft_config('production').items() if key != 'allow_remote'}
     assert 'endpoint:' not in text and 'OpenAI' not in text
 
 
@@ -454,7 +456,8 @@ def test_explicit_adapter_selection_completes_a_pending_api_template(store):
     create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
     embedding = read_yaml(draft['path'])['embedding']
     assert embedding['adapter'] == 'openai_compatible'
-    assert {'endpoint', 'model', 'credential_ref', 'allow_remote'} <= embedding.keys()
+    assert {'endpoint', 'model', 'credential_ref'} <= embedding.keys()
+    assert 'allow_remote' not in embedding
 
 
 def test_pending_api_template_with_user_edits_uses_the_yaml_edit_path(store):
@@ -499,7 +502,7 @@ def test_new_draft_reuses_existing_api_settings_for_the_same_adapter(store):
     from daeri.setup_yaml import read_yaml
     profile = store.put_profile('production', embedding={'provider': 'openai_compatible',
         'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
-        'credential_ref': 'credential:production.embedding', 'allow_remote': False})
+        'credential_ref': 'credential:production.embedding'})
     draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
     assert read_yaml(draft['path'])['embedding'] == {
         **profile['embedding'], 'credentials': {'api_key': {'ref': profile['embedding']['credential_ref']}}}
@@ -547,5 +550,6 @@ def test_profile_deletion_removes_owned_draft_and_keeps_external_copy(store, tmp
     class Credentials:
         def delete_if_present(self, ref): pass
     delete_profile(store, 'production', preview_profile_deletion(store, 'production')['deletion_token'], credentials=Credentials())
-    assert not Path(draft['path']).parent.exists()
+    assert not Path(draft['path']).exists()
+    assert not (store.data_dir / 'setup' / 'production').exists()
     assert outside.exists()

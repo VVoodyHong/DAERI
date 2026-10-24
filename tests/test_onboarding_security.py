@@ -81,18 +81,18 @@ def test_malformed_embedding_selection_returns_a_safe_error(store, embedding):
     assert store.list_profiles() == []
 
 
-@pytest.mark.parametrize('location', ['setup', 'profile'])
+@pytest.mark.parametrize('location', ['config', 'config/profiles', 'setup', 'setup/production'])
 def test_symlinked_setup_parent_cannot_be_read_or_applied(store, tmp_path, location):
     draft = completed(store)
     token = validate_draft(store, 'production')['confirmation_token']
-    managed = Path(draft['path']).parent if location == 'profile' else Path(draft['path']).parent.parent
+    managed = store.data_dir / location
     moved = tmp_path / 'outside'
     managed.rename(moved)
     managed.symlink_to(moved, target_is_directory=True)
     assert not validate_draft(store, 'production')['valid']
     with pytest.raises(StoreError):
         apply_draft(store, 'production', token)
-    assert list(moved.rglob('setup.yaml'))
+    assert list(moved.rglob('*.yaml' if location.startswith('config') else 'draft.json'))
     assert store.list_profiles() == []
 
 
@@ -115,13 +115,12 @@ def test_missing_yaml_is_a_safe_validation_failure(store):
     assert store.list_profiles() == []
 
 
-@pytest.mark.parametrize('location', ['setup', 'profile', 'setup.yaml', 'draft.json'])
+@pytest.mark.parametrize('location', ['config', 'config/profiles', 'config/profiles/production.yaml',
+                                    'setup', 'setup/production', 'setup/production/draft.json'])
 def test_draft_status_rejects_symlinks_and_preserves_their_targets(store, tmp_path, location):
     from daeri.onboarding import draft_status
     draft = completed(store)
-    directory = Path(draft['path']).parent
-    managed = (directory.parent if location == 'setup' else directory if location == 'profile'
-               else directory / location)
+    managed = store.data_dir / location
     outside = tmp_path / 'outside'
     is_directory = managed.is_dir()
     managed.rename(outside)

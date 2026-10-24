@@ -81,11 +81,11 @@ def _task_json(task):
 
 
 def _profile_memory_policy(value, resources):
+    if value is None or value == {}:
+        return None
     flags = {"model_allowed", "retain_allowed", "long_term_allowed", "exports_allowed"}
     if not isinstance(value, dict) or not set(value) <= flags | {"categories", "instance_ids", "target_bindings"}:
         raise StoreError("INVALID_INPUT", "Invalid profile memory policy fields.")
-    if not value:
-        return {}
     for key in flags & value.keys():
         if type(value[key]) is not bool:
             raise StoreError("INVALID_INPUT", "Memory permissions must be explicit booleans.")
@@ -310,6 +310,7 @@ class Store:
                 or not isinstance(core_context, list) or any(not isinstance(item, str) for item in core_context)
                 or not isinstance(resources, list)):
             raise StoreError("INVALID_INPUT", "Invalid profile, context, or retention policy.")
+        resources = copy.deepcopy(resources)
         for days in (retention_days, long_term_memory_days):
             retention_deadline(days)
         if resources:
@@ -319,12 +320,12 @@ class Store:
                 validate_resource(resource)
                 from .policy import validate_resource_policy
                 try:
-                    validate_resource_policy(resource.get("policy", {}))
+                    resource['policy'] = validate_resource_policy(resource.get("policy"))
                 except StoreError:
                     raise StoreError("INVALID_INPUT", "The resource field or memory policy is invalid.") from None
             if len({item["instance_id"] for item in resources}) != len(resources):
                 raise StoreError("INVALID_INPUT", "Resource instance IDs must be unique.")
-        memory_policy = _profile_memory_policy({} if memory_policy is None else memory_policy, resources)
+        memory_policy = _profile_memory_policy(memory_policy, resources)
         with self.transaction():
             current = self._db.execute("SELECT * FROM profiles WHERE name=?", (name,)).fetchone()
             if current:
@@ -366,6 +367,13 @@ class Store:
                 raise StoreError("STORE_UNAVAILABLE", "The active profile revision does not match.")
             for key in ('retention_days', 'long_term_memory_days'):
                 retention_deadline(profile.get(key))
+            # Normalize earlier factory defaults in memory after verifying file integrity.
+            # Immutable revisions and active task snapshots keep their original stored bytes.
+            if profile.get('memory_policy') is None or profile['memory_policy'] == {}:
+                profile['memory_policy'] = None
+            for resource in profile.get('resources', []):
+                if resource.get('policy') is None or resource['policy'] == {}:
+                    resource['policy'] = None
             from .embedding import validate_embedding_config
             profile['embedding'] = validate_embedding_config(profile.get('embedding'))
             return profile
@@ -495,6 +503,30 @@ class Store:
                     self.track_profile_reference(task['profile_id'], 'file', reference)
             self._db.execute("UPDATE records SET path=?,size=?,sha256=? WHERE record_ref=? AND task_id=?",
                              (path, size, digest, record_ref, task_id))
+
+    def write_memory_job(self, task_id, record_ref, payload, *, done=False):
+        """Atomically advance one report's memory job while retaining its original deadline."""
+        if type(done) is not bool or not isinstance(payload, dict):
+            raise StoreError('INVALID_INPUT', 'A memory job payload and completion state are required.')
+        with self.transaction():
+            record = self.read_record(task_id, record_ref)
+            if (record['record_kind'] not in {'memory_pending', 'memory_done'}
+                    or not isinstance(record['payload'], dict)
+                    or not isinstance(payload.get('report_ref'), str)
+                    or payload['report_ref'] != record['payload'].get('report_ref')):
+                raise StoreError('INVALID_INPUT', 'The memory job must retain its original report.')
+            if record['record_kind'] == 'memory_done':
+                if done and payload == record['payload']:
+                    return
+                raise StoreError('INVALID_INPUT', 'A completed memory job retains its final outcome.')
+            task = self.get_task(task_id)
+            previous = self._db.execute('SELECT path FROM records WHERE record_ref=?', (record_ref,)).fetchone()[0]
+            path, size, digest = self._prepare('records', payload)
+            if task.get('profile_id'):
+                for reference in (previous, path):
+                    self.track_profile_reference(task['profile_id'], 'file', reference)
+            self._db.execute('UPDATE records SET path=?,size=?,sha256=?,kind=? WHERE record_ref=? AND task_id=?',
+                (path, size, digest, 'memory_done' if done else 'memory_pending', record_ref, task_id))
 
     def write_artifact(self, task_id, content, format_id, media_type, extension, expires_at=None):
         if (not isinstance(content, bytes) or len(content) > 10 * 1024 * 1024

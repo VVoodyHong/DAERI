@@ -60,12 +60,12 @@ def test_stdio_handshake_lists_the_implemented_tools_and_strict_schemas(tmp_path
             assert not validator.is_valid({"request_id": "schema-check", "request_text": "요청", "extra": True})
             assert not validator.is_valid({"request_text": "요청"})
             assert all(tool.description for tool in tools.values())
-            for name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update", "daeri_worker"}:
+            for name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update", "daeri_result_submit", "daeri_worker"}:
                 assert tools[name].annotations.openWorldHint is True
             worker_schema = Draft202012Validator(tools["daeri_worker"].inputSchema)
             assert worker_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token"})
             assert not worker_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token", "expected_task_revision": 1})
-            for name in {"daeri_memory_search", "daeri_memory_update"}:
+            for name in {"daeri_memory_search", "daeri_memory_update", "daeri_result_submit"}:
                 assert "embedding API" in tools[name].description
             for name in {"daeri_task_update", "daeri_task_cancel", "daeri_task_resume", "daeri_plan_submit", "daeri_approval_request"}:
                 assert tools[name].annotations.readOnlyHint is False

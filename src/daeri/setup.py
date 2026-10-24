@@ -78,19 +78,34 @@ def _no_secrets(value, path=()):
 def import_profile(store, path):
     config = read_config(path)
     _require(isinstance(config, dict) and set(config) <= PROFILE_FIELDS and 'name' in config)
-    _require(all(config[key] is not None for key in ('core_context', 'resources', 'memory_policy', 'embedding')
+    _require(all(config[key] is not None for key in ('core_context', 'resources', 'embedding')
                  if key in config), 'Configuration lists and objects require their declared types.')
     _no_secrets(config)
-    if isinstance(config.get('resources'), list):
-        for resource in config['resources']:
-            _relocate_managed_resource(store, resource)
-    return store.put_profile(**config)
+    with store.transaction():
+        current = None
+        if isinstance(config['name'], str):
+            try:
+                current = store.get_profile(config['name'])
+            except StoreError as error:
+                if error.code != 'NOT_FOUND':
+                    raise
+        if current and 'memory_policy' not in config:
+            config['memory_policy'] = copy.deepcopy(current.get('memory_policy'))
+        previous = {item['instance_id']: item for item in current['resources']} if current else {}
+        if isinstance(config.get('resources'), list):
+            for resource in config['resources']:
+                instance = resource.get('instance_id') if isinstance(resource, dict) else None
+                if isinstance(instance, str) and instance in previous and 'policy' not in resource:
+                    resource['policy'] = copy.deepcopy(previous[instance].get('policy'))
+                _relocate_managed_resource(store, resource)
+        return store.put_profile(**config)
 
 
 def export_profile(store, name):
     profile = store.get_profile(name)
     value = {key: copy.deepcopy(profile[key]) for key in PROFILE_FIELDS}
-    value['memory_policy'].pop('target_bindings', None)
+    if value['memory_policy'] is not None:
+        value['memory_policy'].pop('target_bindings', None)
     _no_secrets(value)
     return value
 
@@ -198,9 +213,9 @@ def profile_template(store, recipe_id, profile_name, instance_id):
                                'args': copy.deepcopy(item['args']), 'env': copy.deepcopy(item['env']),
                                'auth_env': {name: resource_reference(profile_name, instance_id, name)
                                             for name in item['auth_env']}},
-                'capabilities': copy.deepcopy(item['capabilities']), 'policy': {}}
+                'capabilities': copy.deepcopy(item['capabilities']), 'policy': None}
     return {'name': profile_name, 'core_context': [], 'resources': [resource],
-            'retention_days': None, 'long_term_memory_days': None, 'memory_policy': {}}
+            'retention_days': None, 'long_term_memory_days': None, 'memory_policy': None}
 
 
 def setup_schema(recipe_id):

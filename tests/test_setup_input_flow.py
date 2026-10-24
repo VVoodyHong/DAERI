@@ -91,7 +91,7 @@ def test_configure_adds_one_resource_and_preserves_profile_settings(tmp_path):
         assert resource['target'] == {'server': 'https://git.example.invalid'}
         assert resource['connection']['env']['GITLAB_URL'] == 'https://git.example.invalid'
         assert resource['capabilities'][0]['constraints'] == {}
-        assert resource['policy'] == {}
+        assert resource['policy'] is None
         assert resource['connection']['auth_env'] == {
             'GITLAB_TOKEN': 'credential:service.source-one.gitlab_token'}
         assert not (with_store.data_dir / 'tools').exists()
@@ -131,7 +131,7 @@ def test_resource_builder_creates_complete_resource_without_publishing_a_profile
         resource = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values)
         assert resource['target'] == {'server': 'https://git.example.invalid'}
         assert resource['capabilities'][0]['constraints'] == {}
-        assert resource['policy'] == {}
+        assert resource['policy'] is None
         assert values == supplied
         resource['capabilities'][0]['constraints']['fixed'] = {'project_id': 'team/another'}
         assert values == supplied

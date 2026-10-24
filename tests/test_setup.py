@@ -43,7 +43,7 @@ def resource():
                               'constraints': {'fixed': {'project_id': 'team/service'},
                                               'allowed_values': {'ref': ['main']},
                                               'path_prefixes': {'file_path': ['src']}}}],
-            'policy': {}}
+            'policy': None}
 
 
 def config_file(tmp_path, value):
@@ -54,7 +54,7 @@ def config_file(tmp_path, value):
 
 def test_import_and_export_keep_only_portable_configuration(store, tmp_path):
     config = {'name': 'service', 'core_context': ['UTC 운영'], 'resources': [resource()],
-              'retention_days': 15, 'long_term_memory_days': 90, 'memory_policy': {}}
+              'retention_days': 15, 'long_term_memory_days': 90, 'memory_policy': None}
     result = import_profile(store, config_file(tmp_path, config))
     assert result['revision'] == 1
     assert export_profile(store, 'service') == {**config, 'embedding': {'provider': 'local'}}
@@ -120,7 +120,7 @@ def test_import_preserves_explicit_manual_recipe_executables(store, tmp_path, ch
 
 def test_unlimited_memory_retention_round_trips_without_replacing_other_settings(store, tmp_path):
     config = {'name': 'service', 'core_context': ['UTC 운영'], 'resources': [resource()],
-              'retention_days': 15, 'long_term_memory_days': None, 'memory_policy': {}}
+              'retention_days': 15, 'long_term_memory_days': None, 'memory_policy': None}
     profile = import_profile(store, config_file(tmp_path, config))
     assert profile['long_term_memory_days'] is None
     assert export_profile(store, 'service') == {**config, 'embedding': {'provider': 'local'}}
@@ -129,13 +129,13 @@ def test_unlimited_memory_retention_round_trips_without_replacing_other_settings
 
 def test_all_retention_limits_can_be_unlimited_in_profile_import_export(store, tmp_path):
     config = {'name': 'service', 'core_context': ['UTC 운영'], 'resources': [resource()],
-              'retention_days': None, 'long_term_memory_days': None, 'memory_policy': {}}
+              'retention_days': None, 'long_term_memory_days': None, 'memory_policy': None}
     profile = import_profile(store, config_file(tmp_path, config))
     assert profile['retention_days'] is None
     assert export_profile(store, 'service') == {**config, 'embedding': {'provider': 'local'}}
 
 
-@pytest.mark.parametrize('field', ['core_context', 'resources', 'memory_policy', 'embedding'])
+@pytest.mark.parametrize('field', ['core_context', 'resources', 'embedding'])
 def test_profile_import_rejects_null_collections_without_replacing_settings(store, tmp_path, field):
     original = store.put_profile('service', core_context=['UTC 운영'], resources=[resource()],
                                  embedding={'provider': 'keyword_only'})
@@ -170,7 +170,8 @@ def test_target_change_rebinds_internal_hash_without_granting_memory_permissions
     assert changed['memory_policy']['target_bindings'] != original['memory_policy']['target_bindings']
     assert changed['memory_policy']['model_allowed'] is False
     assert 'retain_allowed' not in changed['memory_policy']
-    assert store.put_profile('denied', resources=[configured])['memory_policy'] == {}
+    denied = store.put_profile('denied', resources=[configured], memory_policy={'model_allowed': False})
+    assert denied['memory_policy']['model_allowed'] is False
 
 
 @pytest.mark.parametrize('changes', [
@@ -215,7 +216,7 @@ def test_plaintext_authentication_is_rejected_before_profile_write(store, tmp_pa
     assert store.list_profiles() == []
 
 
-def test_templates_use_only_catalog_pins_and_deny_data_by_default(store):
+def test_templates_use_catalog_pins_and_let_plans_define_data_permissions(store):
     catalog = load_catalog()
     assert len(catalog) == 6
     for recipe_id, item in catalog.items():
@@ -223,7 +224,7 @@ def test_templates_use_only_catalog_pins_and_deny_data_by_default(store):
         assert template['retention_days'] is None
         assert template['long_term_memory_days'] is None
         configured = template['resources'][0]
-        assert configured['policy'] == {}
+        assert configured['policy'] is None
         assert configured['connection']['command'] == str(prepared_executable(store, recipe_id))
         assert configured['connection']['args'] == item['args']
         assert all(value.startswith('credential:') for value in configured['connection']['auth_env'].values())

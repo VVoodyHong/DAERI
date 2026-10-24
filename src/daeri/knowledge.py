@@ -4,7 +4,8 @@ import hashlib
 import json
 from datetime import UTC, datetime
 
-from .policy import as_pointer, pointer_path, selected_paths
+from .policy import (as_pointer, effective_profile_memory_policy, effective_resource_policy,
+                     pointer_path, selected_paths)
 from .security import redact
 from .storage import StoreError, retention_deadline
 
@@ -99,8 +100,9 @@ def source_leaves(engine, task, references):
     return found
 
 
-def update(engine, args, task):
-    engine._own(task)
+def update(engine, args, task, *, automatic=False, validate_only=False):
+    if not automatic:
+        engine._own(task)
     require(task["state"] != "paused", "TASK_STATE_INVALID", "일시중지한 업무에서는 기억을 갱신할 수 없습니다.")
     profile = engine._current_profile(task)
     storing = args["operation"] == "store"
@@ -157,7 +159,7 @@ def update(engine, args, task):
                 if not storing:
                     continue
                 require(instance in candidate_ids and instance in rules, "ACCESS_DENIED", "모든 기여 리소스에 승인한 기억 규칙이 필요합니다.")
-                for policy in (rules[instance], resource.get("policy", {})):
+                for policy in (rules[instance], effective_resource_policy(resource)):
                     memory = policy.get("memory", {})
                     require(draft["category"] in memory.get("categories", []) and memory.get("allow_model_recall") is True
                             and memory.get("retention") in {"source_bound", "long_term"}, "ACCESS_DENIED",
@@ -200,13 +202,17 @@ def update(engine, args, task):
                 "export_allowed": export_allowed})
         if storing:
             require(set(bindings) == candidate_ids, "RESULT_VALIDATION_FAILED", "후보에 표시한 모든 리소스의 실제 기여 근거가 필요합니다.")
-            retain_long_term = bool(retentions) and all(value == "long_term" for value in retentions) and profile.get("memory_policy", {}).get("long_term_allowed") is True
+            retain_long_term = (bool(retentions) and all(value == "long_term" for value in retentions)
+                                and effective_profile_memory_policy(profile).get("long_term_allowed") is True)
             policy = {"categories": [draft["category"]], "instance_ids": sorted(candidate_ids), "target_bindings": bindings,
                 "model_allowed": True, "retain_allowed": True, "long_term_allowed": retain_long_term,
                 "retention": "long_term" if retain_long_term else "source_bound", "expires_at": common_expiry.isoformat() if common_expiry is not None else None,
                 "retention_days": (task.get("profile_snapshot") or {}).get("long_term_memory_days", profile["long_term_memory_days"])}
+            options = {"validate_only": True} if validate_only else {}
             item = engine.memory.save(profile["profile_id"], draft, source_records=resolved, policy=policy,
-                                      memory_ref=args.get("memory_ref"), index=False)
+                                      memory_ref=args.get("memory_ref"), index=False, **options)
+            if validate_only:
+                return item
             data = {"memory_ref": item["memory_ref"], "memory_state": "active", "expires_at": item["expires_at"], "index_state": item["index_state"]}
         else:
             _, current = engine.memory._row(profile["profile_id"], args["memory_ref"], check_policy=False, allow_expired=True)
@@ -218,7 +224,8 @@ def update(engine, args, task):
             data = engine.memory.invalidate(profile["profile_id"], args["memory_ref"], reason=args["reason"], source_records=resolved)
         update_ref = engine.store.write_record(task["task_id"], "memory_update", {"operation": args["operation"],
             **data, "source_refs": args["source_refs"], "reason_hash": hashlib.sha256(args["reason"].encode()).hexdigest()})
-        engine._save(task)
+        if not automatic:
+            engine._save(task)
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], "update_ref": update_ref, **data})
 
 

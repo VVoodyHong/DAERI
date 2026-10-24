@@ -96,13 +96,13 @@ def test_http_model_change_requires_reindexing_without_rewriting_memory(tmp_path
         assert company_api["requests"][-1]["body"]["model"] == "company-replacement"
 
 
-def test_revoking_remote_permission_stops_further_http_and_preserves_keyword_search(tmp_path, company_api):
+def test_switching_to_keyword_search_stops_further_http_and_preserves_memory(tmp_path, company_api):
     with closing(Store(tmp_path)) as store:
         selected = profile(store, embedding=api_config())
         service = MemoryService(store)
         item = save(service, selected)
         company_api["requests"].clear()
-        profile(store, embedding=api_config(allow_remote=False))
+        profile(store, embedding={'provider': 'keyword_only'})
         found = service.search(selected["profile_id"], "E_CONN_001")
         assert found["retrieval_state"] == "keyword_only"
         assert [value["memory_ref"] for value in found["items"]] == [item["memory_ref"]]
@@ -110,7 +110,7 @@ def test_revoking_remote_permission_stops_further_http_and_preserves_keyword_sea
 
 
 @pytest.mark.parametrize("phase", ["index", "search"])
-@pytest.mark.parametrize("revoked", ["remote", "memory"])
+@pytest.mark.parametrize("revoked", ["api_provider", "memory"])
 def test_permission_revoked_during_provider_selection_prevents_http_transmission(tmp_path, company_api, phase, revoked):
     with closing(Store(tmp_path)) as store:
         selected = profile(store, embedding=api_config())
@@ -124,7 +124,8 @@ def test_permission_revoked_during_provider_selection_prevents_http_transmission
             current = store.get_profile(selected["profile_id"])
             store.put_profile("alpha", resources=current["resources"],
                               memory_policy=memory_policy(model_allowed=revoked != "memory"),
-                              embedding={**current["embedding"], "allow_remote": revoked != "remote"})
+                              embedding={'provider': 'keyword_only'} if revoked == 'api_provider'
+                                        else current['embedding'])
 
         company_api["construct_hook"] = revoke
         if phase == "index" and revoked == "memory":
@@ -209,8 +210,7 @@ def test_company_format_uses_registry_and_core_transmission_guard(tmp_path, monk
         monkeypatch.setenv('DAERI_TEST_COMPANY_TOKEN', 'company-test-token')
         with closing(Store(tmp_path)) as store:
             selected = profile(store, embedding={'provider': 'api', 'adapter': 'company_format',
-                'deployment': 'internal-model', 'credential_ref': 'env:DAERI_TEST_COMPANY_TOKEN',
-                'allow_remote': True})
+                'deployment': 'internal-model', 'credential_ref': 'env:DAERI_TEST_COMPANY_TOKEN'})
             service = MemoryService(store)
             item = save(service, selected)
             assert item['index_state'] == 'ready'
@@ -218,7 +218,7 @@ def test_company_format_uses_registry_and_core_transmission_guard(tmp_path, monk
             requests.clear()
             if revoke:
                 def withdraw_consent():
-                    profile(store, embedding={**selected['embedding'], 'allow_remote': False})
+                    profile(store, embedding={'provider': 'keyword_only'})
                 state['hook'] = withdraw_consent
                 service._providers.clear()
             result = service.search(selected['profile_id'], 'semantic-question')

@@ -48,8 +48,9 @@ def test_setup_company_api_adapter_selection_round_trips_through_cli(tmp_path):
     value = read_yaml(path)
     assert value['embedding']['provider'] == 'api'
     assert value['embedding']['adapter'] == 'openai_compatible'
+    assert 'allow_remote' not in value['embedding']
     value['embedding'].update(endpoint='https://embedding.example.test/v1/embeddings',
-                              model='company-model', allow_remote=False)
+                              model='company-model')
     path.write_text(write_yaml(value), encoding='utf-8')
     validated = run_cli(*prefix, 'validate', 'service')
     assert validated.returncode == 0, validated.stdout
@@ -126,11 +127,11 @@ def test_setup_status_resumes_readable_draft_without_changing_its_contents(tmp_p
     created = run_cli(*prefix, 'draft', 'service', '--resource', 'primary=db-postgres')
     path = Path(json.loads(created.stdout)['path'])
     path.write_text('profile: service\nresources: [unfinished', encoding='utf-8')
-    before = {item: item.read_bytes() for item in path.parent.iterdir()}
+    before = {item: item.read_bytes() for item in (tmp_path / 'private').rglob('*') if item.is_file()}
     result = run_cli(*prefix, 'status', 'service')
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {'profile': 'service', 'state': 'resume', 'path': str(path)}
-    assert {item: item.read_bytes() for item in path.parent.iterdir()} == before
+    assert {item: item.read_bytes() for item in (tmp_path / 'private').rglob('*') if item.is_file()} == before
 
 
 @pytest.mark.parametrize('obstruction', ['partial', 'directory_as_file', 'file_as_directory'])
@@ -170,6 +171,9 @@ def test_setup_yaml_draft_validate_and_apply_across_processes(tmp_path):
     draft = run_cli(*prefix, 'draft', 'service', '--resource', 'primary=db-postgres', '--embedding', 'keyword_only')
     assert draft.returncode == 0, draft.stdout
     path = Path(json.loads(draft.stdout)['path'])
+    assert path == tmp_path / 'private' / 'config' / 'profiles' / 'service.yaml'
+    assert (tmp_path / 'private' / 'setup' / 'service' / 'draft.json').is_file()
+    assert not (tmp_path / 'private' / 'setup' / 'service' / 'setup.yaml').exists()
     invalid = run_cli(*prefix, 'validate', 'service')
     assert invalid.returncode == 1 and json.loads(invalid.stdout)['issues']
     value = read_yaml(path)
@@ -183,6 +187,29 @@ def test_setup_yaml_draft_validate_and_apply_across_processes(tmp_path):
     assert applied.returncode == 0, applied.stdout
     assert json.loads(applied.stdout)['revision'] == 1
     assert json.loads(run_cli('--data-dir', str(tmp_path / 'private'), 'profile', 'show', 'service').stdout)['resources']
+
+    value['resources']['primary']['policy'] = {'allowed_model_fields': [{'segments': []}]}
+    value['retention_days'] = 14
+    value['long_term_memory_days'] = 90
+    value['memory_policy'] = {'categories': ['procedure'], 'instance_ids': ['primary'],
+                              'model_allowed': True, 'retain_allowed': True}
+    path.write_text(write_yaml(value), encoding='utf-8')
+    validated = run_cli(*prefix, 'validate', 'service')
+    assert validated.returncode == 0, validated.stdout
+    token = json.loads(validated.stdout)['confirmation_token']
+    updated = run_cli(*prefix, 'apply', 'service', '--confirm', token)
+    assert updated.returncode == 0, updated.stdout
+    profile = json.loads(updated.stdout)
+    assert profile['revision'] == 2
+    assert profile['resources'][0]['policy'] == value['resources']['primary']['policy']
+    assert profile['retention_days'] == 14 and profile['long_term_memory_days'] == 90
+    assert profile['memory_policy']['model_allowed'] is True
+    assert profile['memory_policy']['retain_allowed'] is True
+    before = path.read_bytes()
+    resumed = run_cli(*prefix, 'draft', 'service')
+    assert resumed.returncode == 0, resumed.stdout
+    assert json.loads(resumed.stdout)['path'] == str(path)
+    assert path.read_bytes() == before
 
 
 def test_setup_duplicate_instance_arguments_are_rejected(tmp_path):
@@ -296,7 +323,7 @@ def test_catalog_and_template_are_local_and_do_not_create_user_store(tmp_path):
                        '--profile', 'service', '--instance', 'source-one')
     assert template.returncode == 0, template.stdout + template.stderr
     value = json.loads(template.stdout)
-    assert value['resources'][0]['policy'] == {}
+    assert value['resources'][0]['policy'] is None
     assert not directory.exists()
 
 

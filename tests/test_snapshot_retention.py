@@ -24,7 +24,7 @@ def test_new_task_snapshot_excludes_profile_prose_and_keeps_execution_policy(tmp
         assert 'core_context' not in snapshot
         assert 'description' not in snapshot['resources'][0]['capabilities'][0]
         assert snapshot['retention_days'] == 3 and snapshot['long_term_memory_days'] == 7
-        expected = copy.deepcopy(registered)
+        expected = copy.deepcopy(profile['resources'][0])
         expected['capabilities'][0].pop('description')
         assert snapshot['resources'] == [expected]
         assert engine.store.get_profile('alpha') == profile

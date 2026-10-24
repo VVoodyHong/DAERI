@@ -1,18 +1,75 @@
 """Validate plans against registered capabilities, rather than model assurances."""
 
+import copy
 import json
+from itertools import zip_longest
 
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from .contracts import PlanDraft
-from .policy import pointer_tokens, validate_resource_policy, within_selectors
+from .policy import (MEMORY_CATEGORIES, effective_profile_memory_policy, effective_resource_policy,
+                     pointer_tokens, validate_resource_policy, within_selectors)
 from .storage import StoreError
 
 
 def check(condition, message):
     if not condition:
         raise StoreError("PLAN_INVALID", message)
+
+
+def _intersect_fields(*groups):
+    result = [{'segments': []}]
+    for group in groups:
+        common = {}
+        for left in result:
+            for right in group:
+                segments = []
+                for a, b in zip_longest(left['segments'], right['segments']):
+                    if a is None or b is None or a == b:
+                        segments.append(a if b is None else b)
+                    elif a == {'each': True} and 'index' in b:
+                        segments.append(b)
+                    elif b == {'each': True} and 'index' in a:
+                        segments.append(a)
+                    else:
+                        break
+                else:
+                    common[json.dumps(segments, sort_keys=True)] = {'segments': segments}
+        result = list(common.values())
+    return copy.deepcopy(result)
+
+
+def resolve_memory_defaults(profile, draft):
+    """Include automatic memory in the immutable plan before requesting approval."""
+    draft = copy.deepcopy(draft)
+    resources = {resource['instance_id']: resource for resource in profile.get('resources', [])}
+    for rule in draft['output']['resource_rules']:
+        resource = resources.get(rule['instance_id'])
+        ceiling = effective_resource_policy(resource) if resource else {}
+        if 'retained_fields' not in rule:
+            rule['retained_fields'] = _intersect_fields(rule['allowed_model_fields'], ceiling.get('retained_fields', []))
+        if 'memory' in rule:
+            continue
+        upper = ceiling.get('memory', {})
+        profile_memory = effective_profile_memory_policy(profile)
+        enabled = (rule['instance_id'] in profile_memory.get('instance_ids', [])
+                   and profile_memory.get('model_allowed') is True and profile_memory.get('retain_allowed') is True
+                   and upper.get('allow_model_recall') is True and upper.get('retention', 'none') != 'none')
+        categories = [category for category in MEMORY_CATEGORIES
+                      if category in upper.get('categories', []) and category in profile_memory.get('categories', [])]
+        fields = _intersect_fields(rule['allowed_model_fields'], rule['retained_fields'],
+                                   upper.get('source_fields', [])) if enabled else []
+        contexts = copy.deepcopy(upper.get('context_sources', [])) if enabled else []
+        if enabled and categories and (fields or contexts):
+            rule['memory'] = {'categories': categories, 'source_fields': fields, 'context_sources': contexts,
+                'retention': 'long_term' if upper['retention'] == 'long_term'
+                             and profile_memory.get('long_term_allowed') is True else 'source_bound',
+                'allow_model_recall': True}
+        else:
+            rule['memory'] = {'categories': [], 'source_fields': [], 'context_sources': [],
+                              'retention': 'none', 'allow_model_recall': False}
+    return draft
 
 
 def evidence_matches_step(record, step):
@@ -28,7 +85,7 @@ def evidence_matches_step(record, step):
 def validate_plan(profile, draft, registry, formats, evidence_instances=()):
     # The MCP boundary normally performs this check; keep direct callers safe too.
     try:
-        draft = PlanDraft.model_validate(draft).model_dump(exclude_unset=True)
+        draft = resolve_memory_defaults(profile, PlanDraft.model_validate(draft).model_dump(exclude_unset=True))
     except ValidationError:
         raise StoreError("PLAN_INVALID", "계획의 중첩 필드·자료형·필수값을 확인하세요.") from None
     steps, contracts, descriptors = {}, [], {}
@@ -105,7 +162,7 @@ def validate_plan(profile, draft, registry, formats, evidence_instances=()):
             validate_resource_policy({key: value for key, value in rule.items() if key != "instance_id"})
         except StoreError:
             raise StoreError("PLAN_INVALID", "리소스의 제공·마스킹·기억 규칙이 올바르지 않습니다.") from None
-        ceiling = resources[rule["instance_id"]].get("policy", {})
+        ceiling = effective_resource_policy(resources[rule["instance_id"]])
         for field in ("allowed_model_fields", "export_fields", "retained_fields"):
             check(within_selectors(rule[field], ceiling.get(field, [])), "profile의 자료 제공·보관 상한을 초과했습니다.")
         memory = rule["memory"]

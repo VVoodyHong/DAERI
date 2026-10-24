@@ -77,7 +77,8 @@ def test_actual_tasks_report_memory_update_retrieval_and_new_plan_still_requires
     task = new_task(engine, profile)
     search = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "Cache 비교"})
     assert search["status"] == "partial", search
-    assert [entry["memory_ref"] for entry in search["data"]["items"]] == [item["memory_ref"]]
+    automatic = {entry['memory_ref'] for entry in report['memory']['items'] if entry.get('memory_ref')}
+    assert {entry['memory_ref'] for entry in search['data']['items']} == automatic | {item['memory_ref']}
     planned = copy.deepcopy(draft)
     planned.update(memory_search_refs=[search["data"]["memory_search_ref"]], memory_refs=[item["memory_ref"]], memory_limitations=[])
     next_plan = engine.call("daeri_plan_submit", {"request_id": "plan-next", "task_id": task["task_id"], "expected_task_revision": task["task_revision"], "draft": planned})

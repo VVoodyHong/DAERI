@@ -1,7 +1,7 @@
 {
   "name": "daeri",
-  "version": "0.1.21",
-  "description": "DAERI local operations agent with profile-scoped resources, conversation approval, reports and memory.",
+  "version": "0.1.22",
+  "description": "DAERI operations plugin with host-native agents, shared approvals, profile-scoped resources and automatic memory.",
   "author": {
     "name": "DAERI"
   },

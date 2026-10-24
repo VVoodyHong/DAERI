@@ -11,7 +11,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from .security import redact
-from .policy import selector_covers, within_selectors
+from .policy import (effective_profile_memory_policy, effective_resource_policy,
+                     selector_covers, within_selectors)
 from .storage import StoreError, retention_deadline
 from .embedding import create_api_embedder, validate_embedding_config
 
@@ -176,8 +177,6 @@ class MemoryService:
         if config["provider"] == "keyword_only":
             return None
         if config["provider"] == "api":
-            if not config["allow_remote"]:
-                return None
             key = _json(config)
             if key not in self._providers:
                 self._providers[key] = create_api_embedder(config, credentials=self._credentials)
@@ -215,7 +214,6 @@ class MemoryService:
         embedder = self._selected_embedder(profile or {"embedding": config})
         return {"profile_id": profile["profile_id"] if profile else None,
                 "provider": config["provider"], "adapter": config.get('adapter'),
-                "allow_remote": config.get("allow_remote", False),
                 "model_prepared": config["provider"] == "local" and embedder is not None,
                 "vector_ready": embedder is not None and self.vector_ready,
                 "model_id": embedder.model_id if embedder is not None else None,
@@ -226,7 +224,7 @@ class MemoryService:
         config = validate_embedding_config(profile.get("embedding"))
         _require(config["provider"] != "keyword_only", "MEMORY_SEARCH_INCOMPLETE", "키워드 검색만 선택한 profile입니다.")
         embedder = self._selected_embedder(profile)
-        _require(embedder is not None, "MEMORY_SEARCH_INCOMPLETE", "선택한 임베딩의 전송 허용과 준비 상태를 확인하세요.")
+        _require(embedder is not None, "MEMORY_SEARCH_INCOMPLETE", "선택한 임베딩의 연결과 준비 상태를 확인하세요.")
         self._check_embedding_context(profile)
         self._vector(embedder.embed_query("DAERI embedding readiness"), embedder)
         _require(self.store.get_profile(profile_id)["embedding"] == profile["embedding"],
@@ -283,7 +281,7 @@ class MemoryService:
 
     def _policy(self, profile_id):
         profile = self.store.get_profile(profile_id)
-        return profile, profile.get("memory_policy", {})
+        return profile, effective_profile_memory_policy(profile)
 
     def _sources(self, profile_id, records, *, require_retention=True):
         _require(isinstance(records, list) and 0 < len(records) <= 100,
@@ -321,7 +319,7 @@ class MemoryService:
                 resource = resources.get(instance)
                 if resource is None or _digest(resource["target"]) != source["target_bindings"].get(instance):
                     return False
-                ceiling = resource.get("policy", {})
+                ceiling = effective_resource_policy(resource)
                 memory = ceiling.get("memory", {})
                 if (memory.get("allow_model_recall") is not True or item["category"] not in memory.get("categories", [])
                         or memory.get("retention") not in {"source_bound", "long_term"}
@@ -429,7 +427,7 @@ class MemoryService:
                 raise
             return False
 
-    def save(self, profile_id, candidate, *, source_records, policy, memory_ref=None, index=True):
+    def save(self, profile_id, candidate, *, source_records, policy, memory_ref=None, index=True, validate_only=False):
         required = {"category", "statement", "applicability", "instance_ids", "verification_method"}
         _require(isinstance(candidate, dict) and set(candidate) == required
                  and candidate["category"] in CATEGORIES
@@ -508,6 +506,8 @@ class MemoryService:
             version = previous["version"] + 1 if previous else 1
             item.update(memory_ref=reference, verified_at=max(source["verified_at"] for source in sources),
                         expires_at=expiry.isoformat() if expiry is not None else None)
+            if validate_only:
+                return {**self._public(item), 'index_state': 'pending'}
             self.store._db.execute("""INSERT INTO memory_heads(memory_id,profile_id,current_ref) VALUES(?,?,?)
                 ON CONFLICT(memory_id) DO UPDATE SET current_ref=excluded.current_ref,invalidated=0""",
                 (identity, profile_id, reference))

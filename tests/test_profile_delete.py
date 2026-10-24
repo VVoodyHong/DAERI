@@ -252,3 +252,103 @@ def test_a_managed_symlink_cannot_delete_an_external_file(store, tmp_path):
     with pytest.raises(StoreError, match='PROFILE_DELETE_PENDING'):
         setup.delete_profile(store, 'alpha', preview['deletion_token'], credentials=FakeCredentials())
     assert outside.read_text() == 'keep outside'
+
+
+@pytest.mark.parametrize('layout', ['legacy', 'migrated', 'both'])
+def test_delete_removes_profile_yaml_and_setup_metadata_preserving_other_profiles(store, layout):
+    store.put_profile('alpha')
+    other = store.put_profile('beta')
+    config_dir = store.data_dir / 'config' / 'profiles'
+    config_dir.mkdir(parents=True)
+    (config_dir / 'beta.yaml').write_text('profile: beta\n')
+    metadata = store.data_dir / 'setup' / 'alpha'
+    metadata.mkdir(parents=True)
+    (metadata / 'draft.json').write_text('{}')
+    if layout in {'legacy', 'both'}:
+        (metadata / 'setup.yaml').write_text('profile: alpha\n')
+    if layout in {'migrated', 'both'}:
+        (config_dir / 'alpha.yaml').write_text('profile: alpha\n')
+    preview = setup.preview_profile_deletion(store, 'alpha')
+    assert setup.delete_profile(store, 'alpha', preview['deletion_token'], credentials=FakeCredentials())['deleted']
+    assert not (config_dir / 'alpha.yaml').exists()
+    assert not metadata.exists()
+    assert (config_dir / 'beta.yaml').read_text() == 'profile: beta\n'
+    assert store.get_profile('beta') == other
+
+
+@pytest.mark.parametrize('link', ['config', 'profiles', 'alpha.yaml'])
+def test_profile_yaml_symlinks_keep_external_targets_and_allow_deletion_retry(store, tmp_path, link):
+    store.put_profile('alpha')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'keep.txt').write_text('keep outside')
+    config = store.data_dir / 'config'
+    if link == 'config':
+        (outside / 'profiles').mkdir()
+        (outside / 'profiles' / 'alpha.yaml').write_text('keep yaml')
+        linked = config
+        target = outside
+    elif link == 'profiles':
+        config.mkdir()
+        (outside / 'alpha.yaml').write_text('keep yaml')
+        linked = config / 'profiles'
+        target = outside
+    else:
+        (config / 'profiles').mkdir(parents=True)
+        (outside / 'alpha.yaml').write_text('keep yaml')
+        linked = config / 'profiles' / 'alpha.yaml'
+        target = outside / 'alpha.yaml'
+    linked.symlink_to(target, target_is_directory=link != 'alpha.yaml')
+    before = {path.relative_to(outside): path.read_bytes() for path in outside.rglob('*') if path.is_file()}
+    preview = setup.preview_profile_deletion(store, 'alpha')
+    with pytest.raises(StoreError, match='PROFILE_DELETE_PENDING'):
+        setup.delete_profile(store, 'alpha', preview['deletion_token'], credentials=FakeCredentials())
+    assert setup.preview_profile_deletion(store, 'alpha')['state'] == 'deleting'
+    assert {path.relative_to(outside): path.read_bytes() for path in outside.rglob('*') if path.is_file()} == before
+    with pytest.raises(StoreError, match='PROFILE_DELETING'):
+        store.get_profile('alpha')
+    linked.unlink()
+    assert setup.delete_profile(store, 'alpha', preview['deletion_token'], credentials=FakeCredentials())['deleted']
+    assert {path.relative_to(outside): path.read_bytes() for path in outside.rglob('*') if path.is_file()} == before
+
+
+def test_legacy_pending_deletion_includes_canonical_yaml_without_rereading_profile_body(store):
+    profile = store.put_profile('alpha')
+    config = store.data_dir / 'config' / 'profiles' / 'alpha.yaml'
+    config.parent.mkdir(parents=True)
+    config.write_text('profile: alpha\n')
+    preview = setup.preview_profile_deletion(store, 'alpha')
+    from daeri.profile_deletion import _manifest
+    with store.transaction():
+        row = store._db.execute('SELECT * FROM profiles WHERE profile_id=?', (profile['profile_id'],)).fetchone()
+        manifest = _manifest(store, row)
+        manifest['references'] = [ref for ref in manifest['references'] if ref != ['file', 'config/profiles/alpha.yaml']]
+        store._db.execute("INSERT INTO profile_deletions VALUES(?,'deleting',?)",
+                          (profile['profile_id'], json.dumps(manifest)))
+        (store.data_dir / row['path']).unlink()
+    result = setup.delete_profile(store, 'alpha', preview['deletion_token'], credentials=FakeCredentials())
+    assert result['deleted'] is True and result['counts'] == preview['counts']
+    assert not config.exists()
+
+
+@pytest.mark.parametrize('reference', [
+    'config/profiles/../keep.yaml', 'config/profiles/nested/alpha.yaml',
+    'config/profiles/alpha.yml', 'config/profiles/.alpha.yaml',
+])
+def test_pending_deletion_accepts_only_exact_managed_profile_yaml_paths(store, reference):
+    profile = store.put_profile('alpha')
+    outside_scope = store.data_dir / 'config' / 'keep.yaml'
+    outside_scope.parent.mkdir()
+    outside_scope.write_text('keep configuration')
+    preview = setup.preview_profile_deletion(store, 'alpha')
+    from daeri.profile_deletion import _manifest
+    with store.transaction():
+        row = store._db.execute('SELECT * FROM profiles WHERE profile_id=?', (profile['profile_id'],)).fetchone()
+        manifest = _manifest(store, row)
+        manifest['references'].append(['file', reference])
+        store._db.execute("INSERT INTO profile_deletions VALUES(?,'deleting',?)",
+                          (profile['profile_id'], json.dumps(manifest)))
+    with pytest.raises(StoreError, match='PROFILE_DELETE_PENDING'):
+        setup.delete_profile(store, 'alpha', preview['deletion_token'], credentials=FakeCredentials())
+    assert outside_scope.read_text() == 'keep configuration'
+    assert setup.preview_profile_deletion(store, 'alpha')['state'] == 'deleting'

@@ -191,7 +191,7 @@ def validate_resource(config):
         _fail()
     adapter.validate_connection(config)
     # The policy module validates the resource's separate model/export/retention policy.
-    if "policy" in config and not isinstance(config["policy"], dict):
+    if config.get("policy") is not None and not isinstance(config["policy"], dict):
         _fail()
     serialized = _json(config)
     if len(serialized.encode()) > 262144 or redact(config) != config:
@@ -292,7 +292,16 @@ class ResourceRegistry:
             raise StoreError("CONNECTION_NOT_READY", "Run explicit resource diagnosis before using this connection.") from None
         except (OSError, ValueError):
             raise StoreError("STORE_UNAVAILABLE", "The resource registration is unavailable.") from None
-        if registration.get("profile_revision") != profile["revision"] or registration.get("config_hash") != _hash(config):
+        hashes = {_hash(config)}
+        if config.get('policy') is None or config.get('policy') == {}:
+            # Earlier registrations hashed the same default as either absent, {} or null.
+            equivalent = copy.deepcopy(config)
+            equivalent.pop('policy', None)
+            hashes.add(_hash(equivalent))
+            for value in (None, {}):
+                equivalent['policy'] = value
+                hashes.add(_hash(equivalent))
+        if registration.get("profile_revision") != profile["revision"] or registration.get("config_hash") not in hashes:
             raise StoreError("CONTEXT_CHANGED", "The profile or resource registration changed; run diagnosis again.")
         return config, registration
 
@@ -456,6 +465,8 @@ class ResourceRegistry:
         _validate(arguments, descriptor["input_schema"])
         access = adapter.normalize(arguments, capability["constraints"], scope)
         _validate(arguments, descriptor["input_schema"])
+        if len(_json(arguments).encode()) > 65536:
+            _fail("The normalized resource arguments exceed the size limit.")
         prepared = {"tool_name": capability["tool_name"], "arguments": arguments}
         return NormalizedInvocation("invocation_" + uuid4().hex, instance_id, capability_id, descriptor["contract_ref"],
             copy.deepcopy(config["target"]), config["identity_ref"], capability["tool_name"], descriptor["effects"], access,

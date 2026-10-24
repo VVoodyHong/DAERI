@@ -20,7 +20,7 @@
 | 루트 | [README](../../README.md): 사용자 설치·온보딩. [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
 | `docs/assets/` | 사용자 안내와 상세 문서에서 사용하는 이미지 |
 | `docs/rules/` | [문서 작성·변경·Git](../rules/documentation.md), [기획](../rules/planning.md), [개발](../rules/development.md), [검토](../rules/review.md) |
-| `docs/architecture/` | [구조·책임·권한 경계](../architecture/overview.md) |
+| `docs/architecture/` | [멀티 에이전트 구성·오케스트레이션·실행기·공유 기억](../architecture/overview.md) |
 | `docs/spec/` | [제품 요구사항](../spec/product.md) |
 | `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md), [profile별 기억·검색·보존](../spec/tasks/memory.md) |
 | `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·기억·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
@@ -42,6 +42,7 @@
 |---|---|
 | 요구·구현 범위 | 기획·개발 → 제품·구조 → 구현 계획·관련 명세 |
 | 승인·실행 | 업무 승인·흐름 → 호스트 승인 → MCP 계획·리소스 |
+| 멀티 에이전트·위임 | 구조 → 호스트 작업자 연결 → 업무의 병렬 실행·승인 범위 → MCP worker → 구현 모듈·검증 |
 | 기억·검색·보존 | 기억 명세 → profile·업무 보존 → MCP 기억·계획 → 호스트 Skill |
 | 로컬 저장·삭제·복구 | profile의 저장 구조 → 업무·기억 보존 → MCP 조회·멱등 규격 → 환경 이관·구현 계획 |
 | 리소스·MCP | 리소스 계약·범주별 연결 → 공통 MCP·해당 도구 |
@@ -55,7 +56,7 @@ Codex는 [AGENTS 지침 체인](https://learn.chatgpt.com/docs/agent-configurati
 상위·전역 설정도 영향을 주며 Markdown 링크는 필요한 본문을 찾는 읽기 경로다.
 재개·압축 후의 읽기는 [AGENTS](../../AGENTS.md#시작과-작업-재개)를 따른다.
 개인 메모리·대화 요약은 탐색을 돕고 기준은 최신 정본과 실제 승인·실행 기록에서 복구한다.
-새 세션·압축 후 실제 호스트 검증은 미수행이며 제품 [Skill](../spec/hosts/plugins.md#skill-지침)과 개발 지침은 구분한다.
+제품 [Skill](../spec/hosts/plugins.md#skill-지침)은 사용자 업무의 실행 경로이며 이 문서의 개발 지침과 적용 대상을 구분한다.
 
 ## 파일을 나누는 기준
 
