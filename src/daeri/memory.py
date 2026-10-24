@@ -403,14 +403,27 @@ class MemoryService:
                      "ACCESS_DENIED", "기억의 실제 대상이 요청한 범위를 초과합니다.")
             return self._public(item)
 
-    def can_export(self, profile_id, memory_ref):
+    def can_export(self, profile_id, memory_ref, *, resource_rules=None):
         try:
             with self.store.transaction():
                 profile, policy = self._policy(profile_id)
                 _, item = self._row(profile_id, memory_ref)
                 if policy.get("exports_allowed") is not True:
                     return False
-                return self._resource_allowed(item, profile, export=True)
+                if not self._resource_allowed(item, profile, export=True):
+                    return False
+                if resource_rules is None:
+                    return True
+                rules = {rule["instance_id"]: rule for rule in resource_rules}
+                for source in item["_sources"]:
+                    for instance in source["instance_ids"]:
+                        rule = rules.get(instance)
+                        if rule is None or not within_selectors(source["fields"], rule.get("export_fields", [])):
+                            return False
+                        if any(selector_covers(mask["field"], field) or selector_covers(field, mask["field"])
+                               for mask in rule.get("masking", []) for field in source["fields"]):
+                            return False
+                return True
         except StoreError as error:
             if error.code == "STORE_UNAVAILABLE":
                 raise
@@ -621,7 +634,8 @@ class MemoryService:
                         limitations.append("현재 모델의 벡터 색인 갱신이 대기 중인 기억이 있습니다.")
                 except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
                     limitations.append(VECTOR_LIMITATION)
-            elif profile["embedding"]["provider"] != "keyword_only":
+            elif profile["embedding"]["provider"] == "local" or (eligible and profile["embedding"]["provider"] == "api"):
+                # An empty remote candidate set requires no provider request.
                 limitations.append(VECTOR_LIMITATION)
             scores = {}
             for ranking in ranked:

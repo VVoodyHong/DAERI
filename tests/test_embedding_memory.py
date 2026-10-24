@@ -107,6 +107,41 @@ def test_engine_returns_complete_empty_keyword_search(tmp_path):
         assert result['data']['limitations'] == []
 
 
+@pytest.mark.parametrize("hide_existing", [False, True])
+def test_api_empty_eligible_search_is_complete_without_a_provider_request(tmp_path, api, hide_existing):
+    from daeri.engine import Engine
+    with closing(Engine(tmp_path)) as engine:
+        selected = profile(engine.store, embedding=api_config())
+        if hide_existing:
+            save(engine.memory, selected)
+            engine.store.put_profile("alpha", resources=selected["resources"],
+                memory_policy=memory_policy(model_allowed=False))
+        api.calls.clear()
+        task = engine.call("daeri_task_create", {"request_id": "empty-api", "request_text": "운영 경험 조회",
+            "context": {"profile_id": selected["profile_id"]}})["data"]
+        result = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "운영 경험"})
+        assert result["status"] == "ok", result
+        assert result["error"] is None
+        assert result["data"]["items"] == []
+        assert result["data"]["retrieval_state"] == "keyword_only"
+        assert result["data"]["limitations"] == []
+        assert api.calls == []
+
+
+def test_api_failure_with_eligible_memory_still_reports_partial_search(tmp_path, api, monkeypatch):
+    with closing(Store(tmp_path)) as store:
+        selected = profile(store, embedding=api_config())
+        service = MemoryService(store)
+        save(service, selected)
+        def failed_query(self, text):
+            raise StoreError("EMBEDDING_API_UNAVAILABLE", "test provider is unavailable")
+        monkeypatch.setattr(api, "embed_query", failed_query)
+        result = service.search(selected["profile_id"], "E_CONN_001")
+        assert result["items"]
+        assert result["retrieval_state"] == "keyword_only"
+        assert result["limitations"]
+
+
 @pytest.mark.parametrize("embedding", [api_config(allow_remote=False), {"provider": "keyword_only"}])
 def test_disallowed_remote_or_keyword_only_never_calls_api(tmp_path, api, embedding):
     with closing(Store(tmp_path)) as store:

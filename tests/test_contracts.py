@@ -214,6 +214,7 @@ def test_revisions_budgets_and_page_sizes_are_strict_bounded_integers(model_name
 
 @pytest.mark.parametrize("model_name,payload", [
     ("MemorySearch", {"task_id": "t", "query": "자료", "instance_ids": ["db", "db"]}),
+    ("MemorySearch", {"task_id": "t", "query": "자료", "instance_ids": []}),
     ("ResourceList", {"task_id": "t", "types": ["DB", "DB"]}),
     ("ResourceList", {"task_id": "t", "types": []}),
     ("PlanDraft", {**plan(), "memory_search_refs": ["search-1", "search-1"]}),

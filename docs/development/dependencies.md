@@ -92,7 +92,7 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 |---|---|
 | `setup catalog/status/draft/validate/apply` | 카탈로그·초안 상태 조회, 선택별 YAML 생성·검증·인증 등록·일괄 적용; 인수·확인값·복수 연결은 [YAML 관리 계약](../spec/configuration/profiles.md#관리-명령과-재시도) 참조 |
 | `profile create/list/show` | 이름·기본 맥락·기간 생성, 등록 profile 목록을 이름순으로 조회·지정 구성 확인 |
-| `profile import CONFIG_JSON` | 크기·JSON·비밀·구성 검증 뒤 새 profile 개정 저장 |
+| `profile import CONFIG_JSON` | 공개 구성 검증·현재 잠금의 관리형 실행 경로 이관 뒤 새 개정 저장; 수동 경로는 입력 유지 |
 | `profile export NAME` | 이동 가능한 공개 구성 필드 반환 |
 | `profile delete NAME` | 삭제할 대상·개정·관련 자료 수·확인값을 미리 반환 |
 | `profile delete NAME --confirm TOKEN` | 확인한 대상을 차단하고 귀속 자료를 정리한 뒤 profile을 마지막에 삭제 |
@@ -102,7 +102,7 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 | `resource configure RECIPE --profile NAME --instance ID --values VALUES_JSON --expected-revision N` | 전체 필수 입력과 현재 개정을 검사하고 기존 profile의 선택한 인스턴스만 추가·부분 갱신 |
 | `resource prepare PROFILE INSTANCE --recipe ID` | 선택한 고정 recipe만 격리 환경에 준비·검사 |
 | `resource login PROFILE INSTANCE` | 지원되는 제공자 로그인 시작·공개 확인 URL 표시·결과 반환 |
-| `resource diagnose PROFILE INSTANCE` | 인증·대상과 MCP 도구 목록을 확인해 기능 계약 등록 |
+| `resource diagnose PROFILE INSTANCE` | 어댑터의 인증·실제 대상 검사와 MCP 도구 목록 확인 후 등록; 미지원 검증 조건은 거부 |
 | `auth set/status/delete REFERENCE` | 사용자 터미널의 숨김 입력·지정 참조 상태·삭제; 터미널 부재는 `input_required`·종료 코드 0 |
 | `memory configure PROFILE --config CONFIG_JSON --expected-revision N` | 임베딩 객체만 검증·개정 대조 후 선택 적용; 다른 profile 설정 보존 |
 | `memory status/diagnose/prepare/reindex` | 선택한 제공자의 상태·시험 진단·로컬 준비·허용 정본 재색인; 인수·실패는 [준비 계약](../spec/installation/environment.md#임베딩-선택과-준비) 참조 |
@@ -147,12 +147,15 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 실행기가 저장 상태·정책과 대조한다.
 실제 리소스 요청은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
+호스트 root가 업무·계획·승인·위임을 관리하고 네이티브 worker는 `daeri_worker`의 토큰 경로로 배정·검색·근거·실행·완료를 처리한다.
+worker의 호출은 root와 같은 실행기·저장소·공유 예산을 사용하며 생성·추론·대기·결과 회수는 호스트가 담당한다.
 다음 모듈은 같은 로컬 배포 안에서 이 흐름의 책임을 나눈다.
 
 | 모듈·파일 | 책임과 자료 흐름 |
 |---|---|
-| `server.py`·`contracts.py` | 15개 MCP 도구의 입력·응답을 검사하고 공통 실행기에 전달 |
+| `server.py`·`contracts.py` | [공개 MCP 도구](../spec/mcp/common.md#초기-도구-목록)의 입력·응답과 worker 게이트웨이를 검사하고 공통 실행기에 전달 |
 | `engine.py`·`planning.py` | 업무 상태·소유권·멱등 처리, 계획·승인·실행·예산과 근거 연결 |
+| `workers.py` | root 계획·승인에 연결한 위임 발급·토큰·기한·철회, worker의 배정·검색·근거 읽기·실행·완료와 공유 실행기 연결 |
 | `resources.py` | 공통 기능 등록·계약 지문·인증 참조 해소·하위 MCP 세션·스키마 및 전송 검사 |
 | `adapters/__init__.py`·`adapters/base.py` | 신뢰하는 어댑터 등록·식별자 조회와 공통 읽기 검사·결과 처리 계약 |
 | `adapters/`의 제품별 모듈 | 제품별 설정 입력 스키마·대상 설정안·실행 시 인증 변환·로그인·요청 의미·접속 대상·범위·결과 검사 |
@@ -165,7 +168,7 @@ profile의 선택·list-profiles Skill은 기존 목록·구성 조회를 사용
 | `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
 | `onboarding.py`·`setup_yaml.py` | 초안 생성·제한된 YAML 검사·인증값 분리·확인값 대조·일괄 적용과 참조 치환 |
 | `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
-| `scripts/`·호스트별 플러그인·`skills/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사와 네 사용자 Skill 전달 |
+| `scripts/`·호스트별 플러그인·`skills/`·`agents/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사·사용자 Skill과 root 조정·worker 지침 전달 |
 
 리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
 어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [첫 연결 사양](../spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)을 따른다.
@@ -197,6 +200,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 ## 검증의 해석
 
 로컬 자동 테스트는 허용·거부·부분 결과·충돌·복구와 실제 stdio 전달을 확인한다.
+worker 게이트웨이·공유 예산·동시 호출의 로컬 검증과 실제 호스트의 worker 생성·MCP 전달·완료 회수는 각각의 근거로 확인한다.
 하위 프로그램의 잠긴 설치·import·도구 메타데이터 확인과 모의 리소스의 전체 실행은 서로 다른 검증이다.
-실제 호스트 설치·대화 의미 해석·회사 리소스·제공자 로그인·Windows 실행은 별도의 근거가 필요하다.
+실제 호스트 설치·대화 의미 해석·worker 생성과 도구 권한·회사 리소스·제공자 로그인·Windows 실행은 별도의 근거가 필요하다.
 현재 검증·남은 범위·실행 결과는 [최초 구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)에서 관리한다.

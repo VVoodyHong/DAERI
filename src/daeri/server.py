@@ -34,6 +34,7 @@ DESCRIPTIONS = {
     "daeri_result_submit": "Validate evidence, completion checks, derived tables and approved file formats before storing a report.",
     "daeri_result_get": "Read a locally registered record or managed artifact after current permission, masking, integrity and expiry checks.",
     "daeri_memory_update": "Store or invalidate selected, evidenced profile knowledge within the approved memory policy and source-field provenance. Indexing may send permitted knowledge to an explicitly selected company embedding API.",
+    "daeri_worker": "Create or revoke bounded host-worker delegations under the current approved task. Workers use their scoped token to inspect assignments, search shared profile memory, execute assigned steps, read permitted evidence and submit findings. The coordinator owns approval, final reporting and memory publication; all calls share the root budget.",
 }
 
 OUTPUT_SCHEMA = {
@@ -63,7 +64,7 @@ def tool_result(result):
 
 def create_server(engine):
     server = Server(
-        "daeri", version=version("daeri-agent"),
+        "operations", version=version("daeri-agent"),
         instructions="Use the fixed DAERI profile. Search memory and inspect registered contracts before planning. Obtain the user's actual reply in the current conversation before resource execution. Choose calls and parameters within the approved method, scope, dependencies, field policy and cumulative budget. Environment preparation and authentication use the explicit setup management path.",
     )
 
@@ -77,7 +78,7 @@ def create_server(engine):
                 outputSchema=OUTPUT_SCHEMA,
                 annotations=types.ToolAnnotations(
                     readOnlyHint=name in {"daeri_task_get", "daeri_plan_get", "daeri_resource_list", "daeri_capability_get", "daeri_result_get"},
-                    openWorldHint=name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update"},
+                    openWorldHint=name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update", "daeri_worker"},
                 ),
             )
             for name, model in INPUT_MODELS.items()

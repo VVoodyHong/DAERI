@@ -158,7 +158,7 @@ def _auth(args):
     if args.auth_command == 'set':
         credentials._name(args.reference)
         if args.stdin:
-            value = sys.stdin.read(16385)
+            value = sys.stdin.read(16387)  # Credential, optional CRLF, and one excess character.
             if value.endswith('\n'): value = value[:-1]
             if value.endswith('\r'): value = value[:-1]
         else:

@@ -1,4 +1,5 @@
 import copy
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -58,6 +59,63 @@ def test_import_and_export_keep_only_portable_configuration(store, tmp_path):
     assert result['revision'] == 1
     assert export_profile(store, 'service') == {**config, 'embedding': {'provider': 'local'}}
     assert import_profile(store, config_file(tmp_path, config))['revision'] == 2
+
+
+@pytest.mark.parametrize('origin', ['posix', 'windows'])
+def test_import_relocates_managed_recipe_commands_without_changing_configuration(store, tmp_path, origin):
+    from pathlib import PureWindowsPath
+    from daeri.setup import build_setup_resource
+    answers = {
+        'db-postgres': {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'},
+        'cache-redis': {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True},
+        'infra-aws': {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
+        'source-gitlab': {'server': 'https://git.example.test'},
+        'document-confluence': {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
+        'issue-jira': {'server': 'https://issues.example.test', 'auth_type': 'personal_token'},
+    }
+    resources = [build_setup_resource(store, recipe, 'service', recipe, values)
+                 for recipe, values in answers.items()]
+    source = next(value for value in resources if value['instance_id'] == 'source-gitlab')
+    source['adapter'] = 'source_read'
+    source['identity_ref'] = 'identity:shared-source'
+    source['target']['project'] = 'team/service'
+    source['connection']['auth_env']['GITLAB_TOKEN'] = 'credential:shared.source'
+    source['capabilities'][0]['constraints'] = {'fixed': {'project_id': 'team/service'}}
+    source['policy'] = {'allowed_model_fields': [{'segments': [{'key': 'body'}]}], 'export_fields': []}
+    manual = resource()
+    manual['instance_id'] = 'manual'
+    store.put_profile('service', resources=[*resources, manual], core_context=['UTC 운영'],
+                      retention_days=15, long_term_memory_days=90,
+                      memory_policy={'categories': ['lesson'], 'instance_ids': ['source-gitlab'],
+                                     'model_allowed': True, 'retain_allowed': False},
+                      embedding={'provider': 'keyword_only'})
+    exported = export_profile(store, 'service')
+    expected = copy.deepcopy(exported)
+    with closing(Store(tmp_path / 'new-pc')) as destination:
+        for supplied, relocated in zip(exported['resources'][:-1], expected['resources'][:-1]):
+            relative = Path(supplied['connection']['command']).relative_to(store.data_dir)
+            relocated['connection']['command'] = str(destination.data_dir / relative)
+            if origin == 'windows':
+                parts = list(relative.parts)
+                parts[-2:] = ['Scripts', parts[-1] + '.exe']
+                supplied['connection']['command'] = str(PureWindowsPath('C:/Users/old/DAERI', *parts))
+        imported = import_profile(destination, config_file(tmp_path, exported))
+        assert export_profile(destination, 'service') == expected
+        assert imported['memory_policy'] == store.get_profile('service')['memory_policy']
+        assert not (destination.data_dir / 'tools').exists()
+
+
+@pytest.mark.parametrize('change', ['outside-tools', 'unknown-pin'])
+def test_import_preserves_explicit_manual_recipe_executables(store, tmp_path, change):
+    configured = profile_template(store, 'source-gitlab', 'service', 'source-one')['resources'][0]
+    command = Path(configured['connection']['command'])
+    if change == 'outside-tools':
+        command = tmp_path / 'custom' / command.name
+    else:
+        command = command.parents[2].with_name('0.0.0-' + '0' * 16) / '.venv' / command.parent.name / command.name
+    configured['connection']['command'] = str(command)
+    imported = import_profile(store, config_file(tmp_path, {'name': 'service', 'resources': [configured]}))
+    assert imported['resources'] == [configured]
 
 
 def test_unlimited_memory_retention_round_trips_without_replacing_other_settings(store, tmp_path):
@@ -220,6 +278,65 @@ def prepared_resource(store):
                                               'path_prefixes': {'file_path': ['src']}}
     store.put_profile('service', resources=[value])
     return value
+
+
+def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store, tmp_path, private_uv, monkeypatch):
+    from contextlib import asynccontextmanager
+    from mcp.types import ListToolsResult, Tool
+    from daeri.resources import ResourceRegistry
+
+    prepared_resource(store)
+    exported = config_file(tmp_path, export_profile(store, 'service'))
+    with closing(Store(tmp_path / 'new-pc')) as destination:
+        imported = import_profile(destination, exported)
+        command = Path(imported['resources'][0]['connection']['command'])
+        assert command.is_relative_to(destination.data_dir)
+
+        def run(args, **kwargs):
+            if args[1] == 'venv':
+                Path(args[-1]).mkdir(parents=True)
+            elif args[1] == 'sync':
+                environment = Path(kwargs['env']['UV_PROJECT_ENVIRONMENT'])
+                (environment / 'bin').mkdir()
+                (environment / 'bin/python').touch()
+                (environment / 'bin/mcp-gitlab').touch()
+            elif args[1:3] == ['-I', '-c']:
+                return subprocess.CompletedProcess(args, 0, stdout='0.21.0\n', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+
+        monkeypatch.setattr('daeri.setup.subprocess.run', run)
+        ready = prepare_resource(destination, 'service', 'source-one', 'source-gitlab')
+        assert ready['ready'] is True and ready['reused'] is False
+        assert ready['command'] == str(command) and command.is_file()
+
+        @asynccontextmanager
+        async def transport(parameters, **kwargs):
+            assert parameters.command == str(command)
+            assert parameters.env['GITLAB_URL'] == 'https://git.example.test'
+            assert parameters.env['GITLAB_TOKEN'] == 'local-private'
+            yield None, None
+
+        class Session:
+            def __init__(self, *args): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            async def initialize(self): pass
+            async def list_tools(self, cursor=None):
+                return ListToolsResult(tools=[Tool(name='gitlab_get_file', inputSchema={
+                    'type': 'object', 'properties': {'project_id': {'type': 'string'},
+                                                    'ref': {'type': 'string'}, 'file_path': {'type': 'string'}},
+                    'required': ['project_id', 'ref', 'file_path'], 'additionalProperties': False})])
+
+        monkeypatch.setattr('daeri.resources.stdio_client', transport)
+        monkeypatch.setattr('daeri.resources.ClientSession', Session)
+        registry = ResourceRegistry(destination, lambda ref: 'local-private')
+        diagnosed = registry.diagnose(imported, 'source-one')
+        assert diagnosed['ready'] is True and diagnosed['capability_count'] == 1
+        descriptor = registry.get(imported, 'source-one', 'read-file')
+        assert descriptor['scope_schema']['x-daeri-access-constraints'] == {
+            'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
+            'path_prefixes': {'file_path': ['src']}}
+        assert destination.get_profile('service') == imported
 
 
 @pytest.mark.parametrize('adapter_id', ['source_read', 'gitlab_read'])

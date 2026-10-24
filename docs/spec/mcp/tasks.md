@@ -1,11 +1,11 @@
-# 업무·기억·결과 MCP 도구
+# 업무·worker·기억·결과 MCP 도구
 
-상태: 업무·기억·결과 도구 구현; 로컬 계약·MCP 통합 검증
+상태: 업무·worker·기억·결과 도구 구현; 로컬 계약·MCP 통합 검증
 
-이 문서는 접수·보완·일시중지·조회·재개·취소와 보고 제출·조회 도구의 필드·DTO를 정의한다.
+이 문서는 접수·보완·일시중지·조회·재개·취소, worker 위임과 보고 제출·조회 도구의 필드·DTO를 정의한다.
 기억 검색·갱신도 이 문서에서 정의하며 동작·보존 기준은 [기억 명세](../tasks/memory.md)를 따른다.
 공통 타입·응답·오류·멱등 처리는 [공통 규격](common.md), 제품 동작은 [업무 흐름](../tasks/workflow.md)을 따른다.
-주체·소유권은 입력 ID 대신 검증한 호출 문맥에서 확인한다.
+root의 주체·소유권은 검증한 호출 문맥에서, worker의 제한된 호출 자격은 위임 토큰에서 확인한다.
 아래 DTO는 별도 표시가 없으면 모든 필드가 필수다.
 
 ## 공통 업무 DTO
@@ -76,6 +76,7 @@ profile 관련 세 필드는 모두 값이 있거나 모두 null이어야 한다
 | `active_calls` | CallSummary[] | 진행 중·확인 필요 호출 |
 | `uncertain_effects` | ID[] | 효과 미확인 call ID |
 | `execution_owner_status` | enum | `self\|other\|unassigned\|recovery_required` |
+| `workers` | WorkerSummary[] | 같은 업무의 위임 메타데이터; 없으면 [] |
 
 `TaskState`는 `planning|awaiting_input|awaiting_approval|paused|running|reconciling|verifying|succeeded|partial|failed|cancelled`다.
 상태 전이는 업무 흐름 정본을 따른다.
@@ -84,6 +85,10 @@ profile 관련 세 필드는 모두 값이 있거나 모두 null이어야 한다
 
 `TaskReceipt`는 `task_id`, `task_revision`, `request_ref`, `state`, `context`, `waiting_reason`을 갖는다.
 타입은 TaskSnapshot과 같고 수정으로 답변 기록이 생겼을 때만 선택 필드 `clarification_ref:RecordRef`를 추가한다.
+
+`WorkerSummary`는 `delegation_id:ID`, `state:active|completed|revoked`, `step_ids:ID[]`, `plan_ref:PlanRef`, `expires_at:string`, `assignment_ref:RecordRef`, `result_ref:RecordRef|null`을 갖는다.
+위임 기한은 시간대를 포함한 ISO 8601 값이며 할당·결과 본문은 등록 참조로 조회한다.
+위임 상태와 기한의 실행 의미는 [worker 수명](#멱등재전달과-수명)을 따른다.
 
 ## daeri_task_create
 
@@ -187,7 +192,7 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 | `has_more` | boolean |
 
 `RecordSummary`의 필수 필드는 `record_ref:RecordRef`, `record_kind:enum`, `summary:string`이다.
-`record_kind`는 `request|clarification|local_check|memory_search|memory_update|plan|approval|call_result|report|table|artifact`다.
+`record_kind`는 `request|clarification|local_check|memory_search|memory_update|worker_assignment|worker_result|plan|approval|call_result|report|table|artifact`다.
 요약에는 허용 메타데이터만 담고 원문은 해당 계획·결과 조회 도구로 읽는다.
 
 `local_check`는 실행기가 해당 업무에서 실제 수행한 준비·입력·계획 검사의 기록이다.
@@ -269,6 +274,13 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 확인된 프로세스 종료 뒤의 dispatch·예약 처리와 향후 reconcile 확장은 [복구 원칙](../tasks/workflow.md#중단재개와-외부-결과-확인)을 따른다.
 현재 읽기 어댑터의 실행 목적은 `collect`·`verify`다.
 
+worker 호출은 실제 실행을 담당한 MCP 프로세스의 내부 소유자도 기록한다.
+root 소유권이 유지돼 있어도 재개 검사가 해당 실행 프로세스의 종료를 확인하면 연결된 활성 위임을 `revoked`로 바꾼다.
+이미 dispatch한 호출은 `unknown`·`EXTERNAL_OUTCOME_UNKNOWN`과 미정산 예약을 유지한다.
+dispatch 전 호출은 `blocked`·`OWNER_CONFLICT`로 보존하고 미사용 호출·시간 예약을 해제한다.
+이는 로컬 MCP 프로세스의 생존 검사이며 호스트 모델 worker의 추론 상태는 호스트 도구로 확인한다.
+종료 업무에도 이 복구를 적용해 호출·예약·위임의 변경을 영속 저장하고 원 종료 상태와 `resumed=false`를 유지한다.
+
 ## daeri_task_cancel
 
 권한이 있는 업무의 새 실행을 멈추고 취소를 보존한다.
@@ -292,6 +304,159 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 정상 보존은 `status=ok`이며 일시중지 업무도 취소할 수 있다.
 이미 취소된 업무는 현재 기록을 반환하며 다른 종료 상태에는 `TASK_STATE_INVALID`를 반환한다.
 신규 호출 차단·결과 보존·후속 확인은 [업무 취소 원칙](../tasks/workflow.md#중단재개와-외부-결과-확인)을 따른다.
+
+## daeri_worker
+
+하나의 root 업무·현재 계획·실제 사용자 승인·공유 예산 아래 worker의 제한된 수행을 연결하는 게이트웨이다.
+root는 `create|revoke`로 작업을 배정·철회하고 worker는 토큰으로 `get|execute|search|read|complete`를 호출한다.
+worker 생성·추론·대기는 [호스트](../hosts/plugins.md)가 담당하고 이 도구는 DAERI를 통한 위임·자료 제공·실행 조건을 검사한다.
+업무 제어·계획·승인·최종 보고·기억 발행은 기존 root 도구를 사용한다.
+
+### 분기별 입력
+
+모든 분기의 필수 필드는 `task_id:ID`와 `operation`이다.
+`operation`은 아래 일곱 값 중 하나이며 해당 행의 필수·선택 필드만 함께 지정한다.
+추가 필드·다른 분기의 필드·필수값 누락·명시적 null·잘못된 타입은 `INVALID_INPUT`이다.
+입력 자료형은 필드에 선언한 타입과 엄격히 비교한다.
+
+| `operation` | 추가 필수 필드 | 선택 필드·기본값 |
+|---|---|---|
+| `create` | `request_id`, `expected_task_revision`, `assignment` | `ttl_seconds=1800` |
+| `get` | `delegation_token` | 없음 |
+| `execute` | `delegation_token`, `call` | `timeout_ms=10000` |
+| `search` | `delegation_token`, `query` | `instance_ids`: 배정 단계의 전체 인스턴스; `limit=10` |
+| `read` | `delegation_token`, `record_ref` | `cursor`, `limit_bytes=65536` |
+| `complete` | `request_id`, `delegation_token`, `result` | 없음 |
+| `revoke` | `request_id`, `expected_task_revision`, `delegation_id` | 없음 |
+
+| 입력 필드 | 타입·범위 | 의미 |
+|---|---|---|
+| `request_id` | ID | 생성·완료·철회의 멱등 키 |
+| `expected_task_revision` | TaskRevision | 생성·철회 시 root가 확인한 현재 개정 |
+| `assignment` | WorkerAssignment | 하위 목표·단계·완료 조건·명시적으로 제공할 출처 |
+| `ttl_seconds` | 1~86,400 integer | 발급 시각부터 위임 기한까지의 초 |
+| `delegation_id` | ID | 철회할 업무 내 위임 |
+| `delegation_token` | 비어 있지 않은 string | 해당 업무의 위임을 사용할 bearer 토큰 |
+| `call` | WorkerCall | 배정 단계의 한 기능 호출 |
+| `timeout_ms` | 1~60,000 integer | 실행기의 호출 시간 예약 상한; 남은 업무 시간과 작은 값 적용 |
+| `query` | 비어 있지 않은 string | [기억 검색](#daeri_memory_search)의 질의 크기·비밀 제거 조건 적용 |
+| `instance_ids` | 중복 없는 ID[] | 배정 단계의 인스턴스 부분집합; 지정하면 하나 이상 |
+| `limit` | 1~50 integer | 검색 결과 건수 |
+| `record_ref` | RecordRef | 배정한 출처 또는 자기 호출의 보존 결과 |
+| `cursor` | Cursor | 같은 기록의 연속 읽기 |
+| `limit_bytes` | 1~1,048,576 integer | 보존 결과 읽기의 직렬화 바이트 상한 |
+| `result` | WorkerResult | worker의 요약·실제 근거·제한 |
+
+`WorkerAssignment`는 아래 필드를 갖는다.
+
+| 필드 | 타입 | 필수 | 조건 |
+|---|---|---|---|
+| `label`, `objective` | 각각 비어 있지 않은 string | 예 | 작업 표시명과 해결할 목표 |
+| `step_ids` | 중복 없는 ID[] | 예 | 현재 계획의 단계 1~100개 |
+| `completion_criteria` | 비어 있지 않은 string[] | 예 | 하위 작업의 확인 조건 1~20개 |
+| `source_refs` | 중복 없는 RecordRef[] | 아니요 | 기본 []; root가 명시적으로 제공할 현재 허용 근거 |
+
+`WorkerCall`의 필수 필드는 `step_id:ID`, `call_id:ID`, `parameters:JsonObject`다.
+선택 필드 `bindings:BindingSelection[]`의 기본값은 []이며 [바인딩 계약](plans.md#결과-바인딩과-조건)을 따른다.
+실행기는 배정한 단계에서 인스턴스·기능·계약·계획·승인을 해소하고 실제 인수·범위·의존 관계·허용 분기·공유 예산을 검사한다.
+명시적 바인딩의 원 호출 결과도 배정한 `source_refs` 또는 해당 위임의 호출 결과여야 한다.
+
+`WorkerResult`의 필수 필드는 `summary:string`, `evidence_refs:RecordRef[]`, `limitations:string[]`다.
+`summary`와 각 제한 문장은 비어 있지 않아야 하며 `evidence_refs`는 중복 없이 지정한다.
+근거·제한이 없으면 각각 []를 전달한다.
+완료 기록의 `evidence_refs`는 명시적으로 배정한 `source_refs`와 해당 위임의 호출 결과만 인용할 수 있다.
+검색으로 새로 찾은 기억은 판단 자료이며 완료 근거로 인용하려면 현재 계획에 선택되어 root가 제공한 출처여야 한다.
+
+### 생성과 호출 허용 조건
+
+`create`는 현재 root 소유자가 유효한 승인을 가진 `running|verifying` 업무에서 처리한다.
+배정 단계는 현재 계획에 존재하며 각 단계는 기한이 남은 활성 위임 하나에 배정한다.
+해당 단계에 `pending|unknown` 호출이 있으면 `WORKER_CONFLICT`다.
+제공할 출처는 현재 계획에서 모델 제공이 허용된 `call_result` 또는 선택된 기억이며 명시적으로 승계한 조회 근거도 사용할 수 있다.
+각 출처의 현재 계획·제공 정책·기한을 검사한다.
+명시적으로 전달한 다른 리소스의 근거는 읽고 활용할 수 있으며 새 조회·기억 검색의 대상은 배정 단계의 인스턴스로 정한다.
+
+토큰 호출은 해당 업무의 위임·기한·root 소유권과 프로세스 생존·현재 계획·승인·업무 상태·profile 바인딩을 확인한다.
+토큰에 대응하는 위임이 없으면 `ACCESS_DENIED`, 위임 상태·기한·소유권·계획·승인·업무 상태 검사가 실패하면 `WORKER_UNAVAILABLE`이다.
+profile·기능 계약·기록 본문의 검사 실패는 해당 공통 오류로 반환한다.
+토큰의 소지는 해당 범위의 호출 자격이며 실제 호스트 worker의 신원·수신자 관리는 호스트의 전달 경계를 따른다.
+호스트의 도구 권한과 토큰 전달은 [호스트 신뢰 경계](../../architecture/overview.md#권한과-데이터의-경계)를 따른다.
+
+활성 위임의 새 호출은 `execute`에서만 접수하며 root의 같은 단계 직접 호출은 `WORKER_CONFLICT`다.
+worker 실행은 위임·현재 업무 조건을 기준으로 같은 업무 기록의 의도·예약·dispatch·소비·결과를 원자적으로 갱신한다.
+한 단계의 `pending` 호출과 중복되는 새 호출은 `WORKER_CONFLICT`다.
+배정·진행·미확인 호출의 검사와 함께 모든 worker가 업무 전체의 누적 한도를 공유한다.
+
+`search`는 배정 단계의 인스턴스와 현재 profile 기억 정책을 적용한다.
+profile에 해당 기억의 제공 허용이 없으면 `ACCESS_DENIED`로 반환한다.
+기억의 임베딩 전송에는 기존 전송 정책을 적용하고 검색 반환 전에 위임·현재 업무·계획·기억을 재검사한다.
+검색 기록은 같은 업무에 남긴다.
+`read`는 허용한 출처 또는 자기 호출 결과의 현재 제공·기한을 검사하고 [결과 조회](#daeri_result_get)의 페이지 계약을 사용한다.
+기억 본문은 `search`로 제공한다.
+
+`complete`는 해당 위임의 `pending|unknown` 호출이 없고 모든 인용 근거의 현재 제공 검사를 통과할 때 요약·근거·제한을 보존한다.
+위임 상태를 `completed`로 바꾸고 root 업무 개정을 증가시키며 업무 전체의 완료 조건과 종료 상태는 유지한다.
+`worker_result`는 root의 판단·추적을 위한 요약이며 root가 실제 호출 근거를 대조해 원 참조로 최종 보고와 기억 후보를 제출한다.
+
+### 반환 `data`
+
+`create|get|complete`는 아래 `WorkerView`를 반환한다.
+`create`와 그 유효한 재전달에서만 추가 필드 `delegation_token:string`을 반환한다.
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `task_id`, `task_revision` | ID, TaskRevision | root 업무와 조회 당시 개정 |
+| `delegation_id` | ID | 위임 식별자 |
+| `state` | enum | `active\|completed\|revoked` |
+| `expires_at` | string | 시간대를 포함한 ISO 8601 위임 기한 |
+| `plan_ref` | PlanRef | 발급 당시 root의 불변 계획 |
+| `assignment` | WorkerAssignment | 저장한 하위 목표·단계·완료 조건·출처 |
+| `steps` | PlanStep[] | 배정된 현재 계획의 단계 |
+| `contracts` | CapabilityDescriptor[] | 배정 단계의 현재 기능 계약 |
+| `calls` | WorkerCallSummary[] | 해당 위임의 호출만 포함 |
+| `result_ref` | RecordRef 또는 null | 보존 완료 결과; 완료 전 null |
+| `result` | WorkerResult | 보존 결과가 있을 때만 반환 |
+
+`PlanStep`은 [계획 단계](plans.md), `CapabilityDescriptor`는 [기능 계약](resources.md#capabilitydescriptor)을 따른다.
+`WorkerCallSummary`의 필수 필드는 `call_id:ID`, `step_id:ID`, `call_state:enum`, `result_ref:RecordRef|null`, `error_code:string|null`이다.
+호출 상태는 공통 `CallSummary`와 같다.
+
+`execute`는 [기능 실행](resources.md#반환-data)의 `CallResult`와 동일한 `data`·상태·오류를 반환한다.
+`search`는 [기억 검색](#daeri_memory_search)의 반환 필드·검색 상태·오류를 사용하며 별도 `memory_search_ref`를 발급한다.
+`read`는 [결과 조회](#daeri_result_get)의 반환 필드·페이지 상태·오류를 사용한다.
+할당 본문은 현재 보존기한을 검사한다.
+완료 결과는 본문과 모든 인용 출처의 현재 보존·제공 조건을 함께 검사한다.
+완료 저장 당시 각 출처의 허용 필드 경로를 내부 증명으로 남기고 현재 허용 범위가 그 경로를 모두 포함할 때 요약을 제공한다.
+원 필드가 제거·마스킹되거나 증명을 확인할 수 없으면 `ACCESS_DENIED`이며 내부 증명은 공개 `WorkerResult`에서 제외한다.
+`revoke`는 `task_id`, `task_revision`, `delegation_id`, `state`, `expires_at`, `plan_ref`, `result_ref`만 반환한다.
+철회는 저장된 위임 제어 정보·현재 root 소유권·개정으로 처리한다.
+
+### 멱등·재전달과 수명
+
+`create|complete|revoke`의 키는 같은 업무의 `request_id`이며 정규화한 전체 입력으로 비교한다.
+동일 키·입력은 현재 허용한 기존 처리 결과와 사용량을 유지하며 다른 입력은 `REQUEST_ID_CONFLICT`다.
+`create|revoke`의 비교 입력에는 최초 `expected_task_revision`도 포함한다.
+`execute`의 `call_id`는 root와 다른 worker의 호출을 포함해 같은 업무에서 고유하며 동일 입력 재전달은 원 호출 상태를 반환한다.
+기능·인수·바인딩이 달라지면 새 `call_id`가 필요하며 충돌은 `CALL_ID_CONFLICT`다.
+
+`get|read`는 `active|completed` 위임, `execute|search`와 새로운 `complete`는 `active` 위임에서 허용한다.
+완료 요청의 동일 재전달은 `completed`도 허용하며 모든 토큰 호출에는 남은 기한과 현재 root 실행 조건을 적용한다.
+생성 응답의 재전달도 현재 유효한 활성 위임을 확인한 뒤 같은 토큰을 반환한다.
+일반 조회·업무 요약의 공개 필드는 `WorkerView`·`TaskSnapshot`을 따른다.
+제어 정보에는 토큰의 해시를 저장하고 생성 응답 재전달용 원값은 같은 OS 사용자의 SQLite 요청 기록에 보존한다.
+이 내부 기록의 접근 경계는 사용자 로컬 저장소이며 root가 해당 생성 요청으로만 토큰을 복구한다.
+
+root의 일시중지·취소·종료·계획 교체·소유권 이전과 승인 무효화 처리는 연결된 활성 위임을 `revoked`로 기록한다.
+기억 정정·만료 등으로 승인 전제가 깨진 경우도 현재 승인 검사에서 새 호출을 차단하고 재계획·재개 절차로 연결한다.
+위임 기한의 경과는 새 enum 전이 없이 호출 시각의 기한 검사로 차단한다.
+`revoke`는 root가 개별 위임을 철회하는 처리이며 기한·profile 연결이 바뀐 뒤에도 현재 root 소유권·개정으로 수행할 수 있다.
+진행 중에 철회한 호출의 늦은 결과는 원 호출에 보존하고 root의 현재 중지·종료 상태를 유지한다.
+새 계획·승인·재개 후 실행에는 현재 조건의 새 위임을 발급한다.
+
+위임 제어 정보는 SQLite의 업무 메타데이터에서 관리한다.
+할당 본문과 결과 본문은 각각 `worker_assignment`·`worker_result` 기록으로 분리해 기존 업무·기여 출처의 보존 조건을 적용한다.
+본문이 만료되면 조회 오류를 반환한다.
+호스트 worker 프로세스의 종료와 실행 중 호출 복구는 [업무 재개](#daeri_task_resume)의 `unknown|blocked` 처리를 따른다.
 
 ## 기억 MCP 도구
 
@@ -356,6 +521,8 @@ profile의 최근 업무 목록 또는 한 업무의 저장 상태·계획·호�
 추가 검색 결과를 합쳐 쓰려면 각 검색 참조를 `PlanDraft.memory_search_refs`에 함께 연결한다.
 
 완전한 혼합 검색과 사용자가 선택한 키워드 전용 경로의 완전한 검색은 `status=ok`이며 0건도 정상이다.
+API 방식에서 제공 가능한 기억이 0건이면 전송을 생략하고 키워드 조회가 정상 완료된 `items=[]`, `retrieval_state=keyword_only`, `limitations=[]`를 `ok`로 반환한다.
+제공자 연결의 준비 여부는 관리 진단으로 별도 확인한다.
 한쪽 검색 장애·일부 색인 누락은 `status=partial`, `MEMORY_SEARCH_INCOMPLETE`로 검색 제한을 표시한다.
 사용 가능한 쪽만 검색했다면 `keyword_only|vector_only`로 구분한다.
 사용자가 키워드 전용을 선택했거나 API 전송 미허용·인증·응답 오류가 발생해도 실제 검색 방식과 제한을 같은 필드로 표시한다.
@@ -771,7 +938,7 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 
 ## daeri_result_get
 
-보존 요청·답변·승인 응답·호출 결과·보고·표·산출물에서 현재 허용 자료를 읽는다.
+보존 요청·답변·승인 응답·worker 할당·완료 결과·호출 결과·보고·표·산출물에서 현재 허용 자료를 읽는다.
 입력 참조는 해당 업무에 등록한 로컬 기록과 대조한다.
 
 | 입력 필드 | 타입 | 필수 | 제약 |
@@ -795,7 +962,7 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 | data 필드 | 타입 | 의미 |
 |---|---|---|
 | `task_id`, `task_revision` | ID, TaskRevision | 조회 업무·개정 |
-| `record_kind` | enum | `request\|clarification\|local_check\|memory_search\|memory_update\|approval\|call_result\|report\|table\|artifact` |
+| `record_kind` | enum | `request\|clarification\|local_check\|memory_search\|memory_update\|worker_assignment\|worker_result\|approval\|call_result\|report\|table\|artifact` |
 | `payload` | JsonValue | 허용 JSON·텍스트·표; 없으면 null |
 | `next_cursor` | Cursor 또는 null | 후속 조회 참조 |
 | `has_more` | boolean | 허용 보존 자료의 후속 조각 |
@@ -841,4 +1008,5 @@ CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](http
 호스트 전달 증거의 한계와 재전달은 [결과 전달 원칙](../tasks/workflow.md#결과-제공과-전달)을 따른다.
 저장별 역할·공개·정리는 [로컬 저장 구조](../configuration/profiles.md#로컬-저장-구조)를 따른다.
 로컬 업무·저장·입력 검사와 하위 MCP 프로세스를 통한 승인·조회·보고·파일·기억 갱신의 검증 범위는 [최초 구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
+별도 MCP worker 프로세스의 실행·완료와 root의 보고·파일 통합은 실제 호스트가 네이티브 worker를 생성·연결하는 검증과 구분한다.
 실제 호스트 대화·사용자 의도 해석과 사내 리소스의 권한·네트워크는 별도 사용자 환경에서 검증한다.

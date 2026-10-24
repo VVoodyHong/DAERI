@@ -422,6 +422,32 @@ def unbounded_profile(service, profile):
         memory_policy=memory_policy(exports_allowed=True), long_term_memory_days=None)
 
 
+@pytest.mark.parametrize("export_fields,mask,permitted", [
+    ([{"segments": []}], None, True),
+    ([{"segments": [{"key": "text"}]}], None, False),
+    ([], None, False),
+    ([{"segments": []}], {"segments": []}, False),
+    ([{"segments": []}], {"segments": [{"key": "text"}]}, False),
+    ([{"segments": []}], {"segments": [{"key": "text"}, {"key": "nested"}]}, False),
+    ([{"segments": []}], {"segments": [{"key": "unrelated"}]}, True),
+])
+def test_plan_memory_export_checks_every_contributing_field_and_mask_intersection(memory, export_fields, mask, permitted):
+    service, profile = memory
+    profile = unbounded_profile(service, profile)
+    first = source(service, profile, export_allowed=True)
+    second = {**first, "fields": [{"segments": [{"key": "more"}]}],
+        "record_ref": service.store.write_record(first["task_id"], "request", {"more": "추가 확인 자료"}, first["expires_at"])}
+    item = save(service, profile, sources=[first, second], policy={"retention": "long_term", "retention_days": None})
+    rule = {"instance_id": "primary-db", "export_fields": export_fields,
+            "masking": [{"field": mask, "action": "redact"}] if mask is not None else []}
+    assert service.can_export(profile["profile_id"], item["memory_ref"], resource_rules=[rule]) is permitted
+    assert service.can_export(profile["profile_id"], item["memory_ref"], resource_rules=[]) is False
+    service.store.set_task_expiry(first["task_id"], timestamp(-1))
+    service.store.cleanup()
+    assert service.get(profile["profile_id"], item["memory_ref"])["sources"] == []
+    assert service.can_export(profile["profile_id"], item["memory_ref"], resource_rules=[rule]) is permitted
+
+
 def test_unbounded_long_term_memory_survives_original_expiry_and_rebuilds_indexes(memory):
     original, profile = memory
     profile = unbounded_profile(original, profile)

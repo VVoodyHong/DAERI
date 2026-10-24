@@ -62,3 +62,8 @@ class ConfluenceReadAdapter(ReadAdapter):
         if "page_id" in parameters and (not isinstance(parameters["page_id"], str) or not parameters["page_id"].isdigit()):
             denied("Use an explicit numeric page ID instead of an indirect URL or tiny link.")
         return result
+
+    def provider_error(self, value):
+        data = value.get("data", value)
+        if isinstance(data, dict) and "error" in data:
+            raise StoreError("EXTERNAL_EXECUTION_FAILED", "The lower Document MCP reported a failed read operation; its untrusted error body is withheld.")

@@ -36,11 +36,11 @@ def response(data, status="ok", code=None, message=None):
     action = "fix_input"
     if code in {"REQUEST_ID_CONFLICT", "CALL_ID_CONFLICT", "ACCESS_DENIED", "STORE_UNAVAILABLE", "APPROVAL_UNAVAILABLE",
                 "CONTEXT_CHANGED", "CONNECTION_NOT_READY", "AUTHENTICATION_REQUIRED", "UNSUPPORTED_CONSTRAINT",
-                "RECORD_EXPIRED", "RECORD_UNAVAILABLE", "PROFILE_DELETING", "PROFILE_DELETED"}:
+                "RECORD_EXPIRED", "RECORD_UNAVAILABLE", "PROFILE_DELETING", "PROFILE_DELETED", "WORKER_UNAVAILABLE"}:
         action = "stop"
     elif code in {"NOT_FOUND", "REVISION_CONFLICT", "OWNER_CONFLICT", "CURSOR_INVALID", "TASK_STATE_INVALID",
                   "CONTRACT_CHANGED", "RESULT_TRUNCATED", "MEMORY_SEARCH_INCOMPLETE", "MEMORY_SEARCH_UNAVAILABLE",
-                  "MEMORY_INDEX_INCOMPLETE", "MEMORY_CONFLICT"}:
+                  "MEMORY_INDEX_INCOMPLETE", "MEMORY_CONFLICT", "WORKER_CONFLICT"}:
         action = "refresh"
     elif code in {"APPROVAL_REQUIRED", "APPROVAL_EXPIRED", "APPROVAL_REVOKED", "SCOPE_VIOLATION", "BUDGET_EXCEEDED"}:
         action = "request_approval"
@@ -67,6 +67,7 @@ class Engine:
         self.owner = f"{os.getpid()}:{uuid4().hex}"
         self.cursors = {}
         self._needs_cleanup = False
+        self._stopped_calls = {}
 
     def close(self):
         self.store.close()
@@ -79,6 +80,10 @@ class Engine:
             encoded = json.dumps(arguments, ensure_ascii=False, allow_nan=False)
             require(len(encoded.encode()) <= (2097152 if tool == "daeri_result_submit" else 65536), "INVALID_INPUT", "입력이 허용 크기를 초과했습니다.")
             args = INPUT_MODELS[tool].model_validate(arguments).model_dump(exclude_unset=True)
+            self._flush_stopped_calls(args.get("task_id"))
+            if tool == "daeri_worker":
+                from .workers import run
+                return run(self, args)
             if tool == "daeri_capability_execute":
                 return self._execute(args)
             if tool == "daeri_memory_search":
@@ -110,7 +115,7 @@ class Engine:
         except ValidationError:
             return response(None, "error", "INVALID_INPUT", "도구의 필드·자료형·필수값을 확인하세요.")
         except StoreError as error:
-            if args and error.code == "PLAN_INVALID" and args.get("request_id") and args.get("task_id"):
+            if tool != "daeri_worker" and args and error.code == "PLAN_INVALID" and args.get("request_id") and args.get("task_id"):
                 return self._plan_failure(tool, args, scope, fingerprint, error)
             return response(None, "error", error.code, error.message)
         except (ValueError, TypeError, RecursionError, UnicodeError):
@@ -148,6 +153,33 @@ class Engine:
         if task["profile_id"]:
             self.store.get_profile(task["profile_id"])
         return task
+
+    def _flush_stopped_calls(self, task_id):
+        failures = {key: value for key, value in self._stopped_calls.copy().items() if key[0] == task_id}
+        if not failures:
+            return
+        with self.store.transaction():
+            task = self.store.get_task(task_id)
+            changed = False
+            for (_, call_id), (elapsed, observed_at) in failures.items():
+                call = next(item for item in task["calls"] if item["call_id"] == call_id)
+                if (call["call_state"] in {"pending", "unknown"} and not call.get("result_ref")
+                        and call.get("error_code") != "RESULT_PERSIST_FAILED"):
+                    if elapsed is None:
+                        if call["dispatched"]:
+                            continue
+                        task["reserved"]["tool_calls"] -= 1
+                    else:
+                        task["usage"]["runtime_ms"] += elapsed - call["runtime_ms"]
+                    task["reserved"]["runtime_ms"] = max(0, task["reserved"]["runtime_ms"] - call["reserved_runtime_ms"])
+                    call.update(call_state="blocked" if elapsed is None else "unknown",
+                        error_code="STORE_UNAVAILABLE" if elapsed is None else "RESULT_PERSIST_FAILED", runtime_ms=elapsed or 0,
+                        observed_at=observed_at, reserved_runtime_ms=0)
+                    changed = True
+            if changed:
+                self._save(task)
+        for key in failures:
+            self._stopped_calls.pop(key, None)
 
     def _bind(self, selection):
         require(not selection.get("department_id") and not selection.get("environment_id"),
@@ -197,7 +229,9 @@ class Engine:
         return {**self._receipt(task), "active_plan_ref": task["active_plan_ref"],
                 "last_report_ref": task.get("last_report_ref"), "active_calls": self._active_calls(task),
                 "uncertain_effects": self._uncertain(task),
-                "execution_owner_status": self._owner_status(task)}
+                "execution_owner_status": self._owner_status(task),
+                "workers": [{key: item.get(key) for key in ("delegation_id", "state", "step_ids", "plan_ref",
+                    "expires_at", "assignment_ref", "result_ref")} for item in task.get("delegations", [])]}
 
     def _active_calls(self, task):
         keys = ("call_id", "plan_id", "plan_version", "step_id", "call_state", "external_effect")
@@ -207,6 +241,8 @@ class Engine:
         return [item["call_id"] for item in task.get("calls", []) if item["external_effect"] == "unknown"]
 
     def _invalidate(self, task):
+        from .workers import invalidate
+        invalidate(task)
         for approval in task["approvals"]:
             if approval["state"] in {"awaiting_response", "approved"}:
                 approval["state"] = "invalidated"
@@ -365,10 +401,21 @@ class Engine:
     def _task_resume(self, args, task):
         owner_status = self._owner_status(task)
         require(owner_status != "other", "OWNER_CONFLICT", "다른 실행 소유자가 업무를 처리하고 있습니다.")
-        if owner_status == "recovery_required":
-            for call in task.get("calls", []):
-                if call["call_state"] != "pending":
-                    continue
+        recovered_calls = False
+        for call in task.get("calls", []):
+            if call["call_state"] != "pending":
+                continue
+            executor_lost = False
+            if call.get("execution_owner_id"):
+                try:
+                    executor_lost = not process_alive(int(call["execution_owner_id"].split(":", 1)[0]))
+                except (ValueError, OverflowError, OSError):
+                    pass
+            if owner_status == "recovery_required" or executor_lost:
+                recovered_calls = True
+                for grant in task.get("delegations", []):
+                    if grant["delegation_id"] == call.get("delegation_id") and grant["state"] == "active":
+                        grant["state"] = "revoked"
                 if call["dispatched"]:
                     # A dead process cannot prove whether its dispatched read completed.
                     # Retain its unsettled runtime reservation instead of assuming zero.
@@ -408,9 +455,12 @@ class Engine:
                         task["state"], task["waiting_reason"] = "awaiting_approval", {"kind": "approval", "message": "계획을 다시 확인하고 승인하세요."}
             else:
                 task["state"], task["waiting_reason"] = "planning", None
-            if paused or changed_owner or task["state"] != previous_state:
+            if paused or changed_owner or task["state"] != previous_state or recovered_calls:
+                if changed_owner:
+                    from .workers import invalidate
+                    invalidate(task)
                 self._save(task)
-        elif task.get("owner_id") != self.owner:
+        elif task.get("owner_id") != self.owner or recovered_calls:
             task["owner_id"] = self.owner
             self._save(task)
         return self._resume_reply(task)
@@ -478,9 +528,7 @@ class Engine:
                        "memory_refs": [item["memory_ref"] for item in found["items"]],
                        "limitations": found["limitations"], "retrieval_state": found["retrieval_state"]}
             ref = self.store.write_record(task["task_id"], "memory_search", payload)
-            complete = not found["limitations"] and (
-                found["retrieval_state"] == "hybrid" or
-                (profile["embedding"]["provider"] == "keyword_only" and found["retrieval_state"] == "keyword_only"))
+            complete = not found["limitations"] and found["retrieval_state"] != "unavailable"
             status = "ok" if complete else "error" if found["retrieval_state"] == "unavailable" else "partial"
             code = None if status == "ok" else "MEMORY_SEARCH_UNAVAILABLE" if status == "error" else "MEMORY_SEARCH_INCOMPLETE"
             return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
@@ -726,8 +774,18 @@ class Engine:
         return parameters
 
     def _execution_allowed(self, task, plan, args):
-        self._own(task)
+        from .workers import check_execution
+        if args.get("_delegation_id"):
+            check_execution(self, task, args)
+        else:
+            self._own(task)
+            require(not any(item["state"] == "active" and item["plan_ref"] == task["active_plan_ref"]
+                and datetime.fromisoformat(item["expires_at"]) > datetime.now(UTC)
+                and args["step_id"] in item["step_ids"] for item in task.get("delegations", [])),
+                "WORKER_CONFLICT", "이 단계는 활성 작업자에게 위임되어 있습니다.")
         require(task["state"] in {"running", "verifying"}, "TASK_STATE_INVALID", "현재 업무 상태에서는 새 호출을 시작할 수 없습니다.")
+        require(not any(call.get("error_code") == "RESULT_PERSIST_FAILED" and call["call_state"] == "unknown"
+            for call in task["calls"]), "RESULT_PERSIST_FAILED", "보존에 실패한 원 호출을 확인하고 업무 결과를 정리하세요.")
         require({"plan_id": args["plan_id"], "plan_version": args["plan_version"]} == task["active_plan_ref"],
                 "APPROVAL_REQUIRED", "현재 계획과 호출 대상이 일치하지 않습니다.")
         require(any(approval.get("approval_id") == args["approval_id"] and self._approval_valid(task, approval)
@@ -744,12 +802,18 @@ class Engine:
         scope, key = "call:" + args["task_id"], args["call_id"]
         with self.store.transaction():
             task = self._task(args["task_id"])
+            if args.get("_delegation_id"):
+                from .workers import check_execution
+                check_execution(self, task, args)
             cached = self.store.request_get(scope, key)
             if cached:
                 require(cached["fingerprint"] == fingerprint, "CALL_ID_CONFLICT", "같은 호출 ID에 다른 입력이 전달됐습니다.")
                 call = next(item for item in task["calls"] if item["call_id"] == key)
                 return self._call_reply(task, call)
-            require(task["task_revision"] == args["expected_task_revision"], "REVISION_CONFLICT", "업무를 다시 읽고 현재 개정으로 요청하세요.")
+            if not args.get("_delegation_id"):
+                require(task["task_revision"] == args["expected_task_revision"], "REVISION_CONFLICT", "업무를 다시 읽고 현재 개정으로 요청하세요.")
+            require(not any(item["step_id"] == args["step_id"] and item["call_state"] in {"pending", "unknown"}
+                for item in task["calls"]), "WORKER_CONFLICT", "같은 단계의 진행 중 호출을 먼저 확인하세요.")
             plan = self._current_plan(task)
             step = self._execution_allowed(task, plan, args)
             parameters = self._bindings(task, plan, step, args)
@@ -761,11 +825,14 @@ class Engine:
             require(budget["remaining_tool_calls"] is not None and budget["remaining_tool_calls"] >= 1 and
                     budget["remaining_runtime_ms"] is not None and budget["remaining_runtime_ms"] > 0,
                     "BUDGET_EXCEEDED", "업무의 누적 호출·시간 한도가 소진됐습니다.")
-            timeout_ms = min(budget["remaining_runtime_ms"], 60000)
+            timeout_ms = min(budget["remaining_runtime_ms"], args.get("_timeout_ms", 60000))
             call = {key: args[key] for key in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref")}
             call.update(call_state="pending", external_effect="none", result_ref=None, error_code=None,
                         dispatched=False, runtime_ms=0, reserved_runtime_ms=timeout_ms,
                         query_fingerprint=invocation.fingerprint, observed_at=now())
+            if args.get("_delegation_id"):
+                call["delegation_id"] = args["_delegation_id"]
+                call["execution_owner_id"] = self.owner
             call["intent_ref"] = self.store.write_record(task["task_id"], "call_result", {
                 "call_id": key, "intent": redact(invocation.prepared_request), "result": None})
             task["calls"].append(call)
@@ -774,22 +841,31 @@ class Engine:
             self.store.request_put(scope, key, fingerprint, {"call_id": key})
             self._save(task)
         # The durable intent commits before dispatch. Pause/cancel remain available during I/O.
-        with self.store.transaction():
-            task = self._task(args["task_id"])
-            call = next(item for item in task["calls"] if item["call_id"] == key)
-            try:
-                self._execution_allowed(task, self._current_plan(task), args)
-            except StoreError as error:
-                call.update(call_state="blocked", error_code=error.code)
+        try:
+            with self.store.transaction():
+                task = self._task(args["task_id"])
+                call = next(item for item in task["calls"] if item["call_id"] == key)
+                try:
+                    self._execution_allowed(task, self._current_plan(task), args)
+                except StoreError as error:
+                    call.update(call_state="blocked", error_code=error.code)
+                    task["reserved"]["tool_calls"] -= 1
+                    task["reserved"]["runtime_ms"] -= timeout_ms
+                    self._save(task)
+                    return self._call_reply(task, call)
+                call["dispatched"] = True
                 task["reserved"]["tool_calls"] -= 1
-                task["reserved"]["runtime_ms"] -= timeout_ms
+                task["usage"]["tool_calls"] += 1
+                task["usage"]["external_requests"] = None
                 self._save(task)
-                return self._call_reply(task, call)
-            call["dispatched"] = True
-            task["reserved"]["tool_calls"] -= 1
-            task["usage"]["tool_calls"] += 1
-            task["usage"]["external_requests"] = None
-            self._save(task)
+        except (StoreError, OSError, sqlite3.Error):
+            # This executor stopped before I/O; the committed intent must not stay in flight.
+            self._stopped_calls[(args["task_id"], key)] = (None, now())
+            try:
+                self._flush_stopped_calls(args["task_id"])
+            except (StoreError, OSError, sqlite3.Error):
+                pass
+            raise
         started = monotonic()
         outcome, failure = None, None
         try:
@@ -799,37 +875,47 @@ class Engine:
         except Exception:
             failure = StoreError("EXTERNAL_OUTCOME_UNKNOWN", "호출 결과를 확인할 수 없습니다.")
         elapsed = max(0, int((monotonic() - started) * 1000))
-        with self.store.transaction():
-            task = self._task(args["task_id"])
-            call = next(item for item in task["calls"] if item["call_id"] == key)
-            task["reserved"]["runtime_ms"] = max(0, task["reserved"]["runtime_ms"] - timeout_ms)
-            task["usage"]["runtime_ms"] += elapsed
-            call.update(runtime_ms=elapsed, observed_at=now(), reserved_runtime_ms=0)
-            if outcome is not None:
-                try:
-                    self._current_profile(task)
-                except StoreError as error:
-                    failure = error
-            if failure:
-                call["error_code"] = failure.code
-                call["call_state"] = "unknown" if failure.code == "EXTERNAL_OUTCOME_UNKNOWN" else "completed" if outcome is not None or failure.code == "RESULT_VALIDATION_FAILED" else "blocked" if failure.code in {"CONTEXT_CHANGED", "AUTHENTICATION_REQUIRED", "CONNECTION_NOT_READY"} else "failed"
-                call["result_ref"] = self.store.write_record(task["task_id"], "call_result", {
-                    "call_id": key, "result": None, "error_code": failure.code, "source_complete": False,
-                    **{field: call[field] for field in ("plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}})
-            else:
-                try:
-                    body = self._completed_body(task, plan, step, call, outcome, invocation, output_schema)
-                except (StoreError, ValueError, TypeError):
-                    call["error_code"] = "RESULT_VALIDATION_FAILED"
-                    body = {"result": None, "source_complete": False, "warnings": ["원격 읽기는 완료했지만 출력 제공 검사를 통과하지 못했습니다."],
-                        **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}}
-                call["result_ref"] = self.store.write_record(task["task_id"], "call_result", body)
-                call["call_state"] = "completed"
-            if task.get("finished_at"):
-                self._reduce_call(task, call)
-            # A late result records facts but never releases a pause, cancellation or new plan.
-            self._save(task)
-            return self._call_reply(task, call)
+        try:
+            with self.store.transaction():
+                task = self._task(args["task_id"])
+                call = next(item for item in task["calls"] if item["call_id"] == key)
+                task["reserved"]["runtime_ms"] = max(0, task["reserved"]["runtime_ms"] - timeout_ms)
+                task["usage"]["runtime_ms"] += elapsed
+                call.update(runtime_ms=elapsed, observed_at=now(), reserved_runtime_ms=0)
+                if outcome is not None:
+                    try:
+                        self._current_profile(task)
+                    except StoreError as error:
+                        failure = error
+                if failure:
+                    call["error_code"] = failure.code
+                    call["call_state"] = "unknown" if failure.code == "EXTERNAL_OUTCOME_UNKNOWN" else "completed" if outcome is not None or failure.code == "RESULT_VALIDATION_FAILED" else "blocked" if failure.code in {"CONTEXT_CHANGED", "AUTHENTICATION_REQUIRED", "CONNECTION_NOT_READY"} else "failed"
+                    call["result_ref"] = self.store.write_record(task["task_id"], "call_result", {
+                        "call_id": key, "result": None, "error_code": failure.code, "source_complete": False,
+                        **{field: call[field] for field in ("plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}})
+                else:
+                    try:
+                        body = self._completed_body(task, plan, step, call, outcome, invocation, output_schema)
+                    except (StoreError, ValueError, TypeError):
+                        call["error_code"] = "RESULT_VALIDATION_FAILED"
+                        body = {"result": None, "source_complete": False, "warnings": ["원격 읽기는 완료했지만 출력 제공 검사를 통과하지 못했습니다."],
+                            **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}}
+                    call["result_ref"] = self.store.write_record(task["task_id"], "call_result", body)
+                    call["call_state"] = "completed"
+                if task.get("finished_at"):
+                    self._reduce_call(task, call)
+                # A late result records facts but never releases a pause, cancellation or new plan.
+                self._save(task)
+        except (StoreError, OSError, sqlite3.Error):
+            # Keep only confirmed timing metadata until the store can record the stopped call.
+            self._stopped_calls[(args["task_id"], key)] = (elapsed, now())
+            try:
+                self._flush_stopped_calls(args["task_id"])
+                task = self._task(args["task_id"])
+                call = next(item for item in task["calls"] if item["call_id"] == key)
+            except (StoreError, OSError, sqlite3.Error):
+                return response(None, "error", "RESULT_PERSIST_FAILED", "조회 후 결과를 보존하지 못했습니다. 저장소 복구 뒤 원 호출을 다시 확인하세요.")
+        return self._call_reply(task, call)
 
     def _completed_body(self, task, plan, step, call, outcome, invocation, output_schema):
         rule = self._resource_rule(plan, step["instance_id"])
@@ -885,7 +971,8 @@ class Engine:
             plan = self._current_plan(task)
             require(ref in plan["draft"]["memory_refs"], "ACCESS_DENIED", "현재 계획에 선택한 기억만 인용할 수 있습니다.")
             item = self.memory.get(task["profile_id"], ref)
-            require(mode == "model" or self.memory.can_export(task["profile_id"], ref),
+            require(mode == "model" or self.memory.can_export(task["profile_id"], ref,
+                    resource_rules=plan["draft"]["output"]["resource_rules"]),
                     "ACCESS_DENIED", "이 기억의 내보내기를 허용하지 않았습니다.")
             paths = [as_pointer(path) for path in leaves(item)]
             return {"record_kind": "memory", "payload": item, "expires_at": item["expires_at"],
@@ -952,6 +1039,19 @@ class Engine:
             metadata.update(source_complete=True, allowed_paths=[as_pointer(path) for path in leaves(payload)],
                             provided_paths=[as_pointer(path) for path in leaves(payload)],
                             retained_paths=[as_pointer(path) for path in leaves(payload)])
+        elif kind == "worker_result":
+            self._current_profile(task)
+            refs = set(payload["evidence_refs"])
+            proof = payload.get("_source_paths", {})
+            require(set(proof) == refs, "ACCESS_DENIED", "작업자 결과의 출처 제공 범위를 확인할 수 없습니다.")
+            for source_ref in sorted(refs):
+                source = self._load_evidence(task, source_ref, mode=mode,
+                    require_current_plan=require_current_plan, _lineage=(*_lineage, ref), _checked=checked)
+                require(set(proof[source_ref]) <= set(source["allowed_paths"]),
+                    "ACCESS_DENIED", "작업자 결과에 사용한 원문 필드의 현재 제공 범위를 확인하세요.")
+                checked.add(source_ref)
+            metadata["payload"].pop("_source_paths", None)
+            metadata.update(evidence_refs=sorted(refs), source_complete=None)
         elif kind in {"report", "table", "artifact"}:
             # Deny archived derived data after any profile reconfiguration until reviewed.
             self._current_profile(task)
@@ -982,6 +1082,8 @@ class Engine:
     def _finish(self, task, state):
         if task.get("finished_at"):
             return
+        from .workers import invalidate
+        invalidate(task)
         task["state"], task["waiting_reason"], task["finished_at"] = state, None, now()
         days = (task.get("profile_snapshot") or {}).get("retention_days")
         deadline = retention_deadline(days, datetime.fromisoformat(task["finished_at"]))

@@ -4,7 +4,7 @@ import copy
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import subprocess
@@ -81,6 +81,9 @@ def import_profile(store, path):
     _require(all(config[key] is not None for key in ('core_context', 'resources', 'memory_policy', 'embedding')
                  if key in config), 'Configuration lists and objects require their declared types.')
     _no_secrets(config)
+    if isinstance(config.get('resources'), list):
+        for resource in config['resources']:
+            _relocate_managed_resource(store, resource)
     return store.put_profile(**config)
 
 
@@ -156,6 +159,29 @@ def _program(environment, executable):
 
 def prepared_executable(store, recipe_id):
     return _program(_tool_directory(store, recipe_id) / '.venv', load_catalog()[recipe_id]['executable']).resolve()
+
+
+def _relocate_managed_resource(store, resource):
+    if not isinstance(resource, dict) or not isinstance(resource.get('connection'), dict):
+        return
+    connection = resource['connection']
+    if connection.get('transport') != 'stdio' or not isinstance(connection.get('command'), str):
+        return
+    catalog = load_catalog()
+    for path_type, directory, extension in ((PurePosixPath, 'bin', ''), (PureWindowsPath, 'Scripts', '.exe')):
+        path = path_type(connection['command'])
+        if not path.is_absolute() or '..' in path.parts or len(path.parts) < 7:
+            continue
+        tools, recipe, pin, environment, programs, executable = path.parts[-6:]
+        if tools != 'tools' or recipe not in catalog or environment != '.venv' or programs != directory:
+            continue
+        item = catalog[recipe]
+        if (executable == item['executable'] + extension and pin == _tool_directory(store, recipe).name
+                and resource.get('type') == item['type']
+                and get_adapter(resource.get('adapter')).adapter_id == get_adapter(item['adapter']).adapter_id
+                and connection.get('args', []) == item['args']):
+            connection['command'] = str(prepared_executable(store, recipe))
+            return
 
 
 def profile_template(store, recipe_id, profile_name, instance_id):

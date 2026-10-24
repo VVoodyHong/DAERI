@@ -346,6 +346,34 @@ def test_auth_standard_input_is_stored_without_returning_value(monkeypatch):
     assert 'AUTH_PRIVATE_SENTINEL' not in json.dumps(result)
 
 
+@pytest.mark.parametrize("ending", ["\n", "\r\n"])
+def test_auth_stdin_rejects_trailing_input_after_maximum_length_credential(monkeypatch, ending):
+    from daeri.cli import _auth
+    from daeri.storage import StoreError
+    from types import SimpleNamespace
+    from io import StringIO
+    stored = []
+    monkeypatch.setattr("daeri.credentials.Credentials.set", lambda self, ref, value: stored.append(value))
+    monkeypatch.setattr("sys.stdin", StringIO("x" * 16384 + ending + "SECOND_LINE"))
+    with pytest.raises(StoreError) as caught:
+        _auth(SimpleNamespace(auth_command="set", stdin=True, reference="credential:test"))
+    assert caught.value.code == "INVALID_INPUT"
+    assert stored == []
+
+
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n"])
+def test_auth_stdin_accepts_maximum_single_line_with_optional_line_ending(monkeypatch, ending):
+    from daeri.cli import _auth
+    from types import SimpleNamespace
+    from io import StringIO
+    stored = []
+    monkeypatch.setattr("daeri.credentials.Credentials.set", lambda self, ref, value: stored.append(value))
+    monkeypatch.setattr("sys.stdin", StringIO("x" * 16384 + ending))
+    result = _auth(SimpleNamespace(auth_command="set", stdin=True, reference="credential:test"))
+    assert result["stored"] is True
+    assert stored == ["x" * 16384]
+
+
 def test_auth_prompt_never_falls_back_to_echoed_input(monkeypatch):
     from daeri.cli import _auth
     from daeri.storage import StoreError

@@ -1,15 +1,16 @@
 # 호스트 플러그인과 로컬 실행
 
-상태: 공통 오프라인 진입·YAML setup 구현; 실제 호스트 설치·질문 UI·대화 연동 미검증
+상태: 공통 오프라인 진입·YAML setup·root/worker 지침 구현; Claude Code 플러그인 정적 검사 완료, 실제 호스트 설치·worker 전달·대화 UI 미검증
 
 Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 흐름을 정의한다.
 환경 준비는 [설치·배포](../installation/environment.md), setup 입력은 [사용자용 YAML](../configuration/profiles.md#사용자용-setup-yaml), 업무 확인은 [대화 승인](approval.md)이 정본이다.
 
 ## 공통 구성
 
-호스트가 요청을 해석하고 필요한 자료·수행 방법·다음 행동을 판단한다.
-플러그인은 setup·profile·work·list-profiles Skill과 로컬 DAERI MCP 실행기를 연결한다.
-실행기는 profile·승인·범위·이력·기억을 관리하고 필요한 리소스의 연결을 사용한다.
+호스트의 주도 에이전트(root)가 요청·계획·실제 사용자 승인 응답 연결·최종 보고·공유 기억 갱신을 담당한다.
+root는 독립적인 하위 작업을 호스트 네이티브 작업자(worker)에 배정하고 각 worker는 받은 목표·단계 안에서 자료·방법·다음 행동을 판단한다.
+플러그인은 setup·profile·work·list-profiles Skill과 worker 지침·로컬 DAERI MCP 실행기를 연결한다.
+실행기는 하나의 root 업무에 연결된 profile·승인·위임·공유 예산·이력·기억을 관리하고 필요한 리소스의 연결을 사용한다.
 
 | 구성 | 역할 |
 |---|---|
@@ -17,13 +18,14 @@ Codex·Claude Code에 DAERI를 배포하고 사용자의 PC에서 실행하는 �
 | setup Skill | 환경 준비·profile·리소스 연결 관리 진입 |
 | profile Skill | 현재 대화에서 새 업무의 기본 대상 선택·전환과 확인한 profile 삭제 |
 | work Skill | 계획 전 기억 조회·계획·승인·실행·보고·기억 갱신 지침 |
+| worker 지침·호스트 진입 | 배정받은 목표·단계의 수행 루프와 근거 반환, 호스트별 네이티브 worker 연결 |
 | list-profiles Skill | 저장한 profile 목록 요약 |
 | 공통 참조 문서 | 업무·승인·리소스 계약을 필요할 때 읽는 자료 |
 | 로컬 실행 진입점 | 필요한 환경을 준비하고 설치된 DAERI MCP 실행 |
 
 공통 Skill·참조는 같은 제품 명세를 따르고 호스트별 차이만 플러그인 구성에서 처리한다.
 개발 지침은 DAERI 저장소에, 사용자용 Skill·제품 참조는 설치한 플러그인에 둔다.
-판단은 현재 호스트 모델이 담당하고 실행기·저장소는 사용자 PC에서 동작한다.
+root와 worker의 생성·추론·대기·결과 회수는 호스트가 담당하고 실행기·저장소는 사용자 PC에서 동작한다.
 호스트가 기억의 필요성과 갱신 후보를 판단하며 선택한 임베딩 제공자는 검색용 벡터를 만든다.
 플러그인·현재 호스트 모델·로컬 실행기로 기본 구성을 완성한다.
 
@@ -72,14 +74,20 @@ setup은 시작 확인 → 전용 환경 준비 → 종류·제품·개수 선�
 |---|---|---|
 | 마켓플레이스 | `.agents/plugins/marketplace.json` | `.claude-plugin/marketplace.json` |
 | 플러그인 정의 | `.codex-plugin/plugin.json` 호환 형식 | `.claude-plugin/plugin.json` |
-| MCP 구성 | 플러그인 정의 안의 `mcpServers.daeri` | 루트 `.mcp.json`의 `mcpServers.daeri` |
+| MCP 구성 | 플러그인 정의 안의 `mcpServers.operations` | 루트 `.mcp.json`의 `mcpServers.operations` |
 | 공유 Skill | `skills/<Skill명>/SKILL.md`의 setup·profile·work·list-profiles | 같은 네 Skill |
+| worker 진입 | 호스트가 제공하는 기본 서브에이전트에 공통 지침의 설치된 절대 경로 전달 | 루트 `agents/worker.md`를 기본 탐색해 `daeri:worker`로 사용 |
+| 공통 worker 지침 | `skills/work/references/worker.md` | 같은 지침을 `${CLAUDE_PLUGIN_ROOT}`에서 읽음 |
 | 사용자 진입 | `$daeri:setup`, `$daeri:profile`, `$daeri:work`, `$daeri:list-profiles` 또는 Skill 선택 화면 | `/daeri:setup`, `/daeri:profile`, `/daeri:work`, `/daeri:list-profiles` |
 | 준비 동작 | 선택한 Skill이 설치된 플러그인 루트에서 OS별 준비 실행 | 같은 방식 |
 
 두 카탈로그의 이름은 `daeri-marketplace`, 플러그인 이름은 `daeri`다.
 각 카탈로그는 저장소 루트의 플러그인을 가리키며 호스트는 설치한 사본에서 Skill과 프로그램을 읽는다.
 마켓플레이스를 추가할 때는 두 호스트의 카탈로그를 포함한 저장소 전체를 제공한다.
+
+DAERI 업무 실행기의 MCP 등록명과 초기화 응답의 `serverInfo.name`은 `operations`다.
+Claude Code는 [서버 이름 규칙](https://code.claude.com/docs/en/plugins/components#server-names-tool-names-and-reloads)에 따라 `plugin:daeri:operations`로 표시한다.
+공개 도구 이름은 [MCP 규격](../mcp/common.md)의 `daeri_*` 형식을 따른다.
 
 첫 설치 명령과 사용자 호출은 [사용자 안내](../../../README.md#설치)가 정본이다.
 호스트를 종료한 상태에서 OS 터미널로 설치하고 성공 뒤 호스트를 시작한다.
@@ -287,6 +295,50 @@ work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 | 기억 조회·갱신 | [기억 명세](../tasks/memory.md); 계획 전 검색, 결과별 제한과 업무 후 선별 지식 갱신 |
 | 도구 입력·출력 | [MCP 규격](../mcp/common.md); 공개 DTO·상태·오류·멱등 계약 |
 
+### root와 worker의 호스트 연결
+
+[work Skill](../../../skills/work/SKILL.md#주도-에이전트와-작업자)은 root의 작업 분해·위임 발급·worker 생성·진행 확인·결과 통합을 연결한다.
+독립적인 조사·분석이나 별도 문맥의 검증으로 시간·문맥 이득이 있을 때 필요한 수만 생성하고 바로 앞 결과가 필요한 순차 판단은 root가 이어간다.
+사용자는 하나의 업무 계획을 승인하며 분해·배정·병렬 수행도 같은 [승인 범위](../tasks/approval.md#worker-위임과-승인-범위)와 업무 전체 예산을 사용한다.
+
+root는 `daeri_worker`의 `create`로 승인된 단계·하위 목표·완료 조건·허용 출처를 배정하고 발급된 위임 토큰을 해당 호스트 worker의 작업 지시에 전달한다.
+작업 지시에는 공통 지침의 설치된 절대 경로와 업무·위임·할당·계획 참조·필요한 근거 요약·기대 반환 형식도 포함한다.
+실제 worker 생성·모델 추론·대기는 호스트가 수행하고 DAERI 도구는 위임과 실행을 관리한다.
+
+| 호스트 | 현재 패키지의 연결 방식 |
+|---|---|
+| Claude Code | 루트 [worker 정의](../../../agents/worker.md)를 기본 `agents/` 탐색으로 제공하고 네이티브 Agent 도구에서 `daeri:worker`를 선택 |
+| Codex | 네이티브 서브에이전트 생성 도구의 기본 작업자를 사용하고 공통 지침의 설치된 절대 경로를 지시로 전달 |
+
+Claude Code의 기본 탐색 위치는 [플러그인 규격](https://code.claude.com/docs/en/plugins-reference#plugin-directory-structure), 플러그인 이름 범위와 도구 제한은 [서브에이전트 규격](https://code.claude.com/docs/en/sub-agents)을 따른다.
+현재 `agents/worker.md`의 도구 목록은 `Read`, `ToolSearch`, `mcp__plugin_daeri_operations__daeri_worker`다.
+`Read`는 `${CLAUDE_PLUGIN_ROOT}/skills/work/references/worker.md`와 필요한 제품 계약을 읽고, DAERI 업무 자료·실행·완료 기록은 단일 `daeri_worker` 게이트웨이로 처리한다.
+Claude 플러그인 정의는 기본 `agents/` 디렉터리 탐색을 사용한다.
+
+Codex의 생성·후속 지시·대기·종료는 [호스트 서브에이전트 도구](https://learn.chatgpt.com/docs/agent-configuration/subagents#orchestration-and-thread-controls)를 사용한다.
+Codex의 [공식 플러그인 규격](https://developers.openai.com/plugins/build/plugins)은 Skill·MCP 전달 경로의 근거다.
+현재 Codex 패키지는 기존 호스트의 기본 작업자와 DAERI의 공통 수행 지침을 연결한다.
+기본 작업자가 지시받은 절대 경로를 읽어 두 호스트의 같은 [worker 수행 지침](../../../skills/work/references/worker.md)을 적용한다.
+
+worker는 공통 지침에 따라 `get`으로 저장된 할당을 복구하고 `execute/search/read`의 결과에서 다음 행동을 판단한 뒤 `complete`로 근거·제한을 보존한다.
+root는 호스트의 진행·대기 도구와 위임 조회로 상태를 확인하고 반환된 근거를 원 기록과 대조해 최종 보고·기억 후보를 결정한다.
+위임 상태·토큰 수명·공유 예산·진행 중 호출은 [worker 실행 계약](../tasks/workflow.md#worker-위임과-병렬-실행), 공개 입력·출력은 [업무 MCP](../mcp/tasks.md)를 따른다.
+
+중단·재배정은 root가 DAERI 위임을 철회하고 호스트 도구로 worker를 중단하는 두 동작으로 처리한다.
+위임 철회는 DAERI의 새 호출 자격을 차단하며 이미 시작한 호출의 결과는 저장 이력으로 확인한다.
+네이티브 도구·필요한 DAERI 접점이 없거나 worker 시작이 실패하면 위임을 회수하고 root가 이어간다.
+
+### worker 권한과 신뢰 경계
+
+위임 토큰은 그 소지자에게 배정 범위의 DAERI 호출 자격을 주는 bearer 자격이다.
+실행기는 현재 root 업무·계획·승인·소유권·기한·배정 단계·출처·자료 정책·공유 예산을 검사한다.
+실제 수신 worker의 신원과 토큰 전달·보관은 호스트의 신뢰 경계이며 사용자 보고·산출물·기억에는 결과와 근거 참조를 사용한다.
+
+worker의 실제 도구 권한·프로세스·파일·다른 MCP 접근은 호스트의 도구 구성과 권한 정책이 관리한다.
+Claude의 위 도구 목록은 worker 진입의 구성이고 Codex 작업자는 [부모의 sandbox·승인 설정](https://learn.chatgpt.com/docs/agent-configuration/subagents#approvals-and-sandbox-controls)을 상속한다.
+공통 지침과 DAERI 위임은 호스트 전체에 별도 sandbox를 만들거나 DAERI 밖의 접근을 강제 차단하는 보장이 아니다.
+실제 생성된 worker의 도구 목록·MCP 연결·권한 적용은 해당 호스트에서 확인한다.
+
 ## 재개·동시 사용·환경 고정
 
 새 대화·문맥 압축·호스트 전환 뒤에는 Skill과 관련 계약을 다시 읽고 저장한 업무·계획·실행 이력을 확인한다.
@@ -295,7 +347,8 @@ work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 새 접수와 기존 업무 재개는 사용자의 의도와 저장 기록으로 구분한다.
 정확한 업무·승인 상태는 저장 기록에서 복구하고 유사 기억은 수행 방법 판단에 참고한다.
 
-한 업무의 실행 주체는 동시에 하나만 유지한다.
+한 업무의 root 실행 소유자는 동시에 하나만 유지하며 그 소유권에 연결된 유효 위임의 worker는 배정 범위에서 함께 실행할 수 있다.
+재개 시 이전 worker의 호스트 상태와 DAERI 위임·진행 중 호출을 확인하고 현재 조건에 맞는 새 위임으로 이어간다.
 일시중지와 취소를 구분하고 일시중지한 업무는 상태·남은 작업·계획을 보여 준 뒤 다시 승인받는다.
 모호한 응답·미완료 승인 요청은 호스트 전환 뒤에도 대기 상태를 유지한다.
 
@@ -326,6 +379,11 @@ work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 
 두 호스트 각각에서 마켓플레이스 추가·플러그인 설치·setup·자연어 요청·계획 승인·실행·결과 보고를 확인한다.
 이어 문맥 복구·호스트 전환·일시중지·재연결·동시 실행과 환경 미준비 안내를 검증한다.
+root의 위임 발급 → 네이티브 worker 생성 → 공통 지침 읽기 → `daeri_worker` 호출 → 근거 회수·보고와 중단·회수·직접 수행 복구도 확인한다.
 계획 전 기억 조회·기억 없는 첫 업무·검색 실패 안내·업무 후 갱신·갱신 재시도도 확인한다.
 진입 파일·로컬 실행기의 구현·검증 범위는 [최초 구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
-실제 마켓플레이스 등록·설치·Skill 진입·호스트 대화 승인은 미검증이다.
+
+설치된 Claude Code 2.1.284의 `claude plugin validate`로 현재 패키지의 agents·skills 구성을 검사해 통과했다.
+저장소 루트 `CLAUDE.md`의 문맥 로딩 경고는 남아 있으며 이 정적 검사와 실제 worker 실행은 구분한다.
+별도 MCP worker 프로세스의 실행·완료·root 보고를 확인한 로컬 통합 시험도 호스트 네이티브 worker의 생성·전달 검증과 구분한다.
+실제 마켓플레이스 등록·설치·Skill 진입·호스트 대화 승인·worker 생성·호스트 worker의 MCP 전달·도구 권한 적용·결과 회수는 미검증이다.

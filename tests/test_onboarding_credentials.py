@@ -169,6 +169,30 @@ def test_company_api_key_uses_same_yaml_and_stays_out_of_embedding_configuration
         'api_key': {'ref': 'credential:production.embedding'}}
 
 
+@pytest.mark.parametrize('remove_from_draft', [False, True])
+def test_omitted_embedding_preserves_existing_api_settings_and_revision(store, remove_from_draft):
+    profile = store.put_profile('production', embedding={
+        'provider': 'api', 'adapter': 'openai_compatible',
+        'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
+        'credential_ref': 'credential:shared.embedding', 'allow_remote': True})
+    options = {'embedding': 'api', 'embedding_adapter': 'openai_compatible'} if remove_from_draft else {}
+    draft = create_draft(store, 'production', **options)
+    if remove_from_draft:
+        edit(draft, lambda value: value.pop('embedding'))
+
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    assert checked['preview']['embedding'] == profile['embedding']
+    assert checked['preview']['changes']['changed'] is False
+    vault = Vault({'shared.embedding': 'kept-private'})
+    saved = apply_draft(store, 'production', checked['confirmation_token'],
+                        credentials=Credentials(backend=vault))
+    assert saved == profile
+    assert 'embedding' not in read_yaml(draft['path'])
+    assert vault.writes == []
+    assert vault.values == {'shared.embedding': 'kept-private'}
+
+
 @pytest.mark.parametrize('reference', [None, 123, False, []])
 def test_plaintext_embedding_key_requires_a_valid_destination_reference(store, reference):
     draft = create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')

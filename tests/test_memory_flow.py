@@ -144,6 +144,60 @@ def test_exportable_past_memory_can_be_included_in_current_report_file(remembere
     assert artifact["data"]["managed_file"]["local_path"]
 
 
+@pytest.mark.parametrize("restriction", ["empty", "partial", "redact", "omit"])
+@pytest.mark.parametrize("delivery", ["create", "read_legacy"])
+def test_current_plan_blocks_one_contributing_memory_source_in_report_file(remembered, restriction, delivery):
+    engine, profile, original, draft, previous, first, second, report = remembered
+    learned = engine.call("daeri_memory_update", knowledge_args(remembered))
+    reference = learned["data"]["memory_ref"]
+    assert engine.memory.can_export(profile["profile_id"], reference)
+    task = new_task(engine, profile, "restricted-memory-export")
+    search = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "Cache 비교"})
+    selected = copy.deepcopy(draft)
+    selected.update(steps=[], memory_search_refs=[search["data"]["memory_search_ref"]],
+        memory_refs=[reference], memory_limitations=[],
+        completion_criteria=[{"criterion_id": "explain", "description": "과거 비교 절차 설명", "required": True, "step_ids": []}])
+    selected["output"]["table_rules"] = []
+    selected["output"]["artifact_rules"] = [{"artifact_id": "memory-report", "format_id": "text",
+        "format_contract_ref": "format_text_v1", "input_kind": "report", "options": {}, "max_bytes": 10000}]
+    rule = selected["output"]["resource_rules"][1]
+    field = {"segments": [{"key": "data"}, {"key": "rows"}, {"each": True}, {"key": "id"}]}
+    if restriction in {"empty", "partial"}:
+        rule["export_fields"] = [] if restriction == "empty" else [field]
+    else:
+        rule["masking"] = [{"field": field, "action": restriction}]
+    saved = engine.call("daeri_plan_submit", {"request_id": "restricted-plan", "task_id": task["task_id"],
+        "expected_task_revision": task["task_revision"], "draft": selected})
+    assert saved["status"] == "ok", saved
+    approval = approve(engine, saved["data"])
+    if delivery == "read_legacy":
+        # Earlier runtimes could register this file despite the plan's tighter source policy.
+        reference_file = engine.store.write_artifact(task["task_id"], b"previously exported memory", "text", "text/plain", "txt")
+        current = engine.store.get_task(task["task_id"])
+        revision = current["task_revision"]
+        current["artifact_ids"] = {"memory-report": {"artifact_ref": reference_file, "source_refs": [reference]}}
+        current["artifact_permissions"] = {reference_file: {"plan_id": saved["data"]["plan_id"]}}
+        current["task_revision"] += 1
+        engine.store.update_task(current, revision)
+        fetched = engine.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": reference_file})
+        assert fetched["status"] == "error", fetched
+        assert fetched["error"]["code"] == "ACCESS_DENIED"
+        assert fetched["data"] is None
+        return
+    body = {"summary": "과거 확인한 Cache 비교 절차", "proposed_task_state": "succeeded",
+        "findings": [{"kind": "memory", "text": "두 리소스의 동일 식별자를 대조한다", "evidence_refs": [reference]}],
+        "tables": [], "checks": [{"criterion_id": "explain", "status": "met", "method": "과거 절차 근거 확인", "evidence_refs": [reference]}],
+        "limitations": [], "uncertain_effects": [], "next_actions": [],
+        "artifacts": [{"kind": "report", "artifact_id": "memory-report", "label": "과거 절차 보고"}]}
+    before = engine.store.list_records(task["task_id"])
+    submitted = engine.call("daeri_result_submit", {"request_id": "restricted-report", "task_id": task["task_id"],
+        "expected_task_revision": approval["task_revision"], "plan_id": saved["data"]["plan_id"],
+        "plan_version": saved["data"]["plan_version"], "report": body})
+    assert submitted["status"] == "error", submitted
+    assert submitted["error"]["code"] == "ACCESS_DENIED"
+    assert engine.store.list_records(task["task_id"]) == before
+
+
 @pytest.mark.parametrize("remembered", [{"memory_retention": "source_bound"}], indirect=True)
 def test_actual_source_bound_memory_and_artifact_share_unbounded_original_retention(remembered):
     engine, profile, saved, draft, approved, first, second, report = remembered

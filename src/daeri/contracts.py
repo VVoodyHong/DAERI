@@ -128,7 +128,7 @@ class TaskCancel(InputModel):
 class MemorySearch(InputModel):
     task_id: NonEmptyString
     query: NonEmptyString
-    instance_ids: UniqueIDs = Field(default=None)
+    instance_ids: Annotated[UniqueIDs, Field(min_length=1)] = Field(default=None)
     limit: Annotated[int, Field(ge=1, le=50)] = Field(default=None)
 
 
@@ -483,6 +483,72 @@ class MemoryUpdate(InputModel):
         return self
 
 
+class WorkerAssignment(InputModel):
+    label: NonEmptyString
+    objective: NonEmptyString
+    step_ids: Annotated[UniqueIDs, Field(min_length=1, max_length=100)]
+    completion_criteria: Annotated[list[NonEmptyString], Field(min_length=1, max_length=20)]
+    source_refs: UniqueIDs = Field(default_factory=list)
+
+
+class WorkerCall(InputModel):
+    step_id: NonEmptyString
+    call_id: NonEmptyString
+    parameters: JsonObject
+    bindings: list[BindingSelection] = Field(default_factory=list)
+
+
+class WorkerResult(InputModel):
+    summary: NonEmptyString
+    evidence_refs: UniqueIDs
+    limitations: list[NonEmptyString]
+
+
+WORKER_FIELDS = {
+    "create": ({"request_id", "expected_task_revision", "assignment"}, {"ttl_seconds"}),
+    "get": ({"delegation_token"}, set()),
+    "execute": ({"delegation_token", "call"}, {"timeout_ms"}),
+    "search": ({"delegation_token", "query"}, {"instance_ids", "limit"}),
+    "read": ({"delegation_token", "record_ref"}, {"cursor", "limit_bytes"}),
+    "complete": ({"request_id", "delegation_token", "result"}, set()),
+    "revoke": ({"request_id", "expected_task_revision", "delegation_id"}, set()),
+}
+
+
+class WorkerRequest(InputModel):
+    model_config = ConfigDict(json_schema_extra={"oneOf": [
+        {"properties": {"operation": {"const": operation},
+            **{field: False for field in set().union(*(a | b for a, b in WORKER_FIELDS.values())) - required - optional}},
+         "required": sorted(required)}
+        for operation, (required, optional) in WORKER_FIELDS.items()
+    ]})
+    operation: Literal["create", "get", "execute", "search", "read", "complete", "revoke"]
+    task_id: NonEmptyString
+    request_id: NonEmptyString = Field(default=None)
+    expected_task_revision: PositiveInt = Field(default=None)
+    assignment: WorkerAssignment = Field(default=None)
+    ttl_seconds: Annotated[int, Field(ge=1, le=86400)] = Field(default=None)
+    delegation_id: NonEmptyString = Field(default=None)
+    delegation_token: NonEmptyString = Field(default=None)
+    call: WorkerCall = Field(default=None)
+    timeout_ms: Annotated[int, Field(ge=1, le=60000)] = Field(default=None)
+    query: NonEmptyString = Field(default=None)
+    instance_ids: Annotated[UniqueIDs, Field(min_length=1)] = Field(default=None)
+    limit: Annotated[int, Field(ge=1, le=50)] = Field(default=None)
+    record_ref: NonEmptyString = Field(default=None)
+    cursor: NonEmptyString = Field(default=None)
+    limit_bytes: Annotated[int, Field(ge=1, le=1048576)] = Field(default=None)
+    result: WorkerResult = Field(default=None)
+
+    @model_validator(mode="after")
+    def operation_fields(self) -> Self:
+        required, optional = WORKER_FIELDS[self.operation]
+        fields = self.model_fields_set - {"operation", "task_id"}
+        if not required <= fields or fields - required - optional:
+            raise ValueError("fields must match the worker operation")
+        return self
+
+
 INPUT_MODELS: dict[str, type[InputModel]] = {
     "daeri_task_create": TaskCreate,
     "daeri_task_update": TaskUpdate,
@@ -499,4 +565,5 @@ INPUT_MODELS: dict[str, type[InputModel]] = {
     "daeri_result_submit": ResultSubmit,
     "daeri_result_get": ResultGet,
     "daeri_memory_update": MemoryUpdate,
+    "daeri_worker": WorkerRequest,
 }

@@ -94,7 +94,7 @@ class ReadAdapter:
     def validate_connection(self, config):
         connection = config["connection"]
         if connection["transport"] != "stdio":
-            return
+            raise StoreError("UNSUPPORTED_CONSTRAINT", "This adapter cannot verify the remote MCP resource target and authentication context; use its supported local connection.")
         env = connection.get("env", {})
         forbidden = {"PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "NODE_OPTIONS", "BASH_ENV", "ENV", "SHELLOPTS", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"}
         if any(key.upper() in forbidden or key.upper().startswith(("DYLD_", "LD_")) for key in (*env, *connection.get("auth_env", {}))):

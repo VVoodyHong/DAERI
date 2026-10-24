@@ -212,8 +212,10 @@ def test_parallel_prepare_is_rejected_before_any_install(installation):
 
 
 def test_plugin_configs_use_the_same_offline_os_independent_entrypoint():
-    claude = json.loads((ROOT / '.mcp.json').read_text())['mcpServers']['daeri']
-    codex = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']['daeri']
+    claude_servers = json.loads((ROOT / '.mcp.json').read_text())['mcpServers']
+    codex_servers = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']
+    assert set(claude_servers) == set(codex_servers) == {'operations'}
+    claude, codex = claude_servers['operations'], codex_servers['operations']
     for server, variable in [(claude, '${CLAUDE_PLUGIN_ROOT}'), (codex, '${PLUGIN_ROOT}')]:
         assert server['command'] == variable + '/.venv/bin/python.exe'
         assert server['args'] == ['-I', '-m', 'daeri.server']
@@ -230,7 +232,7 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
     environment = plugin / '.venv'
     portable = environment / 'bin/python.exe'
     subprocess.run([str(portable), '-I', '-c', 'import pathlib,sys; assert pathlib.Path(sys.prefix) == pathlib.Path(sys.argv[1])', str(environment)], check=True)
-    config = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']['daeri']
+    config = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']['operations']
     args = [arg.replace('${PLUGIN_ROOT}', str(plugin)) for arg in config['args']]
     command = config['command'].replace('${PLUGIN_ROOT}', str(plugin))
     env = {'DAERI_DATA_DIR': str(tmp_path / 'data'), 'PYTHONHOME': str(tmp_path / 'foreign-python'),
@@ -244,7 +246,7 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
         async with stdio_client(parameters) as (reader, writer):
             async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=15)) as session:
                 hello = await session.initialize()
-                assert hello.serverInfo.name == 'daeri'
+                assert hello.serverInfo.name == 'operations'
                 names = {tool.name for tool in (await session.list_tools()).tools}
                 assert {'daeri_task_create', 'daeri_plan_submit', 'daeri_approval_request'} <= names
 

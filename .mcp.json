@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "daeri": {
+    "operations": {
       "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python.exe",
       "args": [
         "-I",

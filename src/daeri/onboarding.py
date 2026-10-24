@@ -492,7 +492,7 @@ def _configuration(store, name, document, profile, meta):
             if key in safe:
                 embedding[spec['config_key']] = safe[key]['ref']
         config['embedding'] = validate_embedding_config(config['embedding'])
-        if safe:
+        if safe and 'embedding' in sanitized:
             sanitized['embedding']['credentials'] = safe
     except StoreError:
         embedding = config['embedding']
