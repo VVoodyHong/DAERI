@@ -20,6 +20,7 @@ from .embedding import create_api_embedder, validate_embedding_config
 CATEGORIES = {"service_rule", "resource_structure", "procedure", "lesson"}
 MODEL_NAME = "intfloat/multilingual-e5-small"
 VECTOR_LIMITATION = "선택한 임베딩 제공자 또는 벡터 색인을 사용할 수 없어 키워드 검색만 수행했습니다."
+SEARCH_SOURCE = "memory_versions v JOIN memory_heads h ON h.current_ref=v.memory_ref AND h.memory_id=v.memory_id"
 
 
 def _require(condition, code, message):
@@ -135,7 +136,7 @@ class LocalEmbedder:
 
 
 class MemoryService:
-    def __init__(self, store, embedder=None, *, auto_load=True, credentials=None):
+    def __init__(self, store, embedder=None, *, auto_load=True, credentials=None, cleanup=True):
         self.store, self.embedder, self.vector_ready = store, embedder, False
         self._auto_load, self._credentials, self._providers = auto_load, credentials, {}
         with self.store.transaction():
@@ -170,7 +171,8 @@ class MemoryService:
                                        (_json(lineage), row["memory_ref"]))
         if self.embedder is not None:
             self._enable_vectors()
-        self.cleanup()
+        if cleanup:
+            self.cleanup()
 
     def _selected_embedder(self, profile):
         config = validate_embedding_config(profile.get("embedding"))
@@ -536,7 +538,7 @@ class MemoryService:
         except (OverflowError, struct.error):
             raise StoreError("MEMORY_INDEX_INCOMPLETE", "저장 가능한 임베딩 벡터가 필요합니다.") from None
 
-    def _index(self, profile_id, memory_ref):
+    def _index(self, profile_id, memory_ref, *, vectors=True):
         try:
             with self.store.transaction():
                 _, item = self._row(profile_id, memory_ref)
@@ -548,6 +550,8 @@ class MemoryService:
                 if profile["embedding"]["provider"] == "keyword_only":
                     self.store._db.execute("UPDATE memory_versions SET index_state='ready' WHERE memory_ref=?", (memory_ref,))
                     return "ready"
+            if not vectors:
+                return "pending"
             embedder = self._selected_embedder(profile)
             if embedder is not None and self.vector_ready:
                 self._check_embedding_context(profile, [memory_ref])
@@ -564,6 +568,42 @@ class MemoryService:
             pass
         return "pending"
 
+    def _search_scope(self, profile, policy, instance_ids):
+        instances = set(policy.get('instance_ids', []))
+        if instance_ids is not None:
+            instances &= set(instance_ids)
+        # SQL narrows canonical candidates; current source and resource permissions remain authoritative.
+        return """h.profile_id=? AND v.profile_id=h.profile_id AND h.invalidated=0 AND v.body IS NOT NULL
+            AND (v.expires_at IS NULL OR v.expires_at>?) AND ?
+            AND json_extract(v.body,'$.category') IN (SELECT value FROM json_each(?))
+            AND NOT EXISTS (SELECT 1 FROM json_each(v.body,'$.instance_ids') i
+                            WHERE i.value NOT IN (SELECT value FROM json_each(?)))
+            AND (json_extract(v.body,'$.retention')!='long_term' OR ?)""", [
+                profile['profile_id'], datetime.now(UTC).isoformat(),
+                policy.get('model_allowed') is True and policy.get('retain_allowed') is True,
+                _json(policy.get('categories', [])), _json(sorted(instances)), policy.get('long_term_allowed') is True]
+
+    def _search_refs(self, sql, parameters, profile, policy, instance_ids, limit=1):
+        cursor = self.store._db.execute(sql, parameters)
+        references = []
+        try:
+            while rows := cursor.fetchmany(64):
+                for row in rows:
+                    reference = row[0]
+                    if reference in references:
+                        continue
+                    try:
+                        _, item = self._row(profile['profile_id'], reference, check_policy=False)
+                    except StoreError:
+                        continue
+                    if self._allowed(item, policy, instance_ids, profile=profile):
+                        references.append(reference)
+                        if len(references) == limit:
+                            return references
+            return references
+        finally:
+            cursor.close()
+
     def search(self, profile_id, query, limit=10, instance_ids=None):
         _require(isinstance(query, str) and query.strip() and len(query.encode()) <= 4096
                  and type(limit) is int and 0 < limit <= 50,
@@ -574,63 +614,63 @@ class MemoryService:
                      and all(isinstance(value, str) for value in instance_ids)
                      and set(instance_ids) <= set(policy.get("instance_ids", []))),
                      "ACCESS_DENIED", "현재 profile의 기억 조회 허용 대상만 선택할 수 있습니다.")
-            rows = self.store._db.execute("""SELECT v.* FROM memory_versions v JOIN memory_heads h USING(memory_id)
-                WHERE h.profile_id=? AND h.current_ref=v.memory_ref AND h.invalidated=0 AND v.body IS NOT NULL
-                AND (v.expires_at IS NULL OR v.expires_at>?) ORDER BY v.memory_ref LIMIT 10001""", (profile_id, datetime.now(UTC).isoformat())).fetchall()
-            eligible = {}
-            for row in rows[:10000]:
-                item = json.loads(row["body"])
-                item["expires_at"] = row["expires_at"]
-                if self._allowed(item, policy, instance_ids, profile=profile):
-                    eligible[row["memory_ref"]] = item
+            scope, parameters = self._search_scope(profile, policy, instance_ids)
+            eligible = self._search_refs(f"SELECT v.memory_ref FROM {SEARCH_SOURCE} WHERE {scope}",
+                parameters, profile, policy, instance_ids) if profile['embedding']['provider'] == 'api' else []
         query_vector = None
         embedder = self._selected_embedder(profile) if eligible or profile["embedding"]["provider"] == "local" else None
         if embedder is not None and self.vector_ready:
             try:
                 if profile['embedding']['provider'] == 'api':
-                    self._check_embedding_context(profile, eligible, instance_ids)
+                    # Provider preparation may outlive the initially permitted observation.
+                    with self.store.transaction():
+                        latest, latest_policy = self._policy(profile_id)
+                        scope, parameters = self._search_scope(latest, latest_policy, instance_ids)
+                        eligible = self._search_refs(f"SELECT v.memory_ref FROM {SEARCH_SOURCE} WHERE {scope}",
+                            parameters, latest, latest_policy, instance_ids)
+                        self._check_embedding_context(profile, eligible, instance_ids)
                 query_vector = self._vector(embedder.embed_query(redact(query)), embedder)
             except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
                 pass
         with self.store.transaction():
-            current, _ = self._policy(profile_id)
+            current, policy = self._policy(profile_id)
             if current["embedding"] != profile["embedding"]:
                 query_vector = None
-            # Embedding can wait on a remote service; recheck permissions before ranking.
-            for reference in list(eligible):
-                try:
-                    self._row(profile_id, reference)
-                except StoreError:
-                    eligible.pop(reference)
-            limitations = ["기억 10,000건의 검색 상한에 도달해 일부 항목을 검색하지 못했습니다."] if len(rows) > 10000 else []
+            # Embedding can wait on a remote service; select again under current canonical permissions.
+            scope, parameters = self._search_scope(current, policy, instance_ids)
+            limitations = []
             ranked, keyword_ok, vector_ok = [], False, False
-            allowed = list(eligible)
-            placeholders = ",".join("?" for _ in allowed) or "NULL"
             tokens = re.findall(r"[^\W_]+", redact(query), re.UNICODE)[:64]
             expression = " OR ".join('"' + token.replace('"', '""') + '"' for token in tokens)
             try:
-                hits = self.store._db.execute(f"""SELECT memory_ref FROM memory_fts WHERE memory_fts MATCH ?
-                    AND memory_ref IN ({placeholders}) ORDER BY bm25(memory_fts),memory_ref LIMIT ?""",
-                    [expression, *allowed, limit * 4]).fetchall() if expression else []
-                ranked.append([row[0] for row in hits])
+                hits = self._search_refs(f"""SELECT v.memory_ref FROM {SEARCH_SOURCE}
+                    JOIN memory_fts ON memory_fts.memory_ref=v.memory_ref WHERE {scope} AND memory_fts MATCH ?
+                    ORDER BY bm25(memory_fts),v.memory_ref""",
+                    [*parameters, expression], current, policy, instance_ids, limit * 4) if expression else []
+                ranked.append(hits)
                 keyword_ok = True
-                indexed = self.store._db.execute(f"SELECT count(*) FROM memory_fts WHERE memory_ref IN ({placeholders})", allowed).fetchone()[0]
-                if indexed < len(allowed):
+                missing = self._search_refs(f"""SELECT v.memory_ref FROM {SEARCH_SOURCE} WHERE {scope}
+                    AND v.memory_ref NOT IN (SELECT memory_ref FROM memory_fts WHERE memory_ref IS NOT NULL)""",
+                    parameters, current, policy, instance_ids)
+                if missing:
                     limitations.append("키워드 색인 갱신이 대기 중인 기억이 있습니다.")
             except sqlite3.Error:
                 limitations.append("키워드 색인을 사용할 수 없습니다.")
             if query_vector is not None:
                 try:
-                    vectors = self.store._db.execute(f"""SELECT memory_ref FROM memory_vectors
-                        WHERE model_id=? AND dimensions=? AND memory_ref IN ({placeholders})
-                        ORDER BY vec_distance_cosine(embedding,?),memory_ref LIMIT ?""",
-                        [embedder.model_id, embedder.dimensions, *allowed, query_vector, limit * 4]).fetchall()
-                    ranked.append([row[0] for row in vectors])
+                    vectors = self._search_refs(f"""SELECT v.memory_ref FROM {SEARCH_SOURCE}
+                        JOIN memory_vectors x ON x.memory_ref=v.memory_ref WHERE {scope}
+                        AND x.model_id=? AND x.dimensions=?
+                        ORDER BY vec_distance_cosine(x.embedding,?),v.memory_ref""",
+                        [*parameters, embedder.model_id, embedder.dimensions, query_vector],
+                        current, policy, instance_ids, limit * 4)
+                    ranked.append(vectors)
                     vector_ok = True
-                    indexed = self.store._db.execute(f"""SELECT count(*) FROM memory_vectors
-                        WHERE model_id=? AND dimensions=? AND memory_ref IN ({placeholders})""",
-                        [embedder.model_id, embedder.dimensions, *allowed]).fetchone()[0]
-                    if indexed < len(allowed):
+                    missing = self._search_refs(f"""SELECT v.memory_ref FROM {SEARCH_SOURCE} WHERE {scope}
+                        AND NOT EXISTS (SELECT 1 FROM memory_vectors x WHERE x.memory_ref=v.memory_ref
+                                        AND x.model_id=? AND x.dimensions=?)""",
+                        [*parameters, embedder.model_id, embedder.dimensions], current, policy, instance_ids)
+                    if missing:
                         limitations.append("현재 모델의 벡터 색인 갱신이 대기 중인 기억이 있습니다.")
                 except (StoreError, sqlite3.Error, ValueError, RuntimeError, OSError):
                     limitations.append(VECTOR_LIMITATION)
@@ -672,14 +712,14 @@ class MemoryService:
                 (datetime.now(UTC).isoformat(), row["memory_id"]))
             return {"memory_ref": memory_ref, "memory_state": "invalidated", "expires_at": None, "index_state": "ready"}
 
-    def reindex(self, profile_id=None):
+    def reindex(self, profile_id=None, *, vectors=True):
         with self.store.transaction():
             rows = self.store._db.execute("""SELECT v.profile_id,v.memory_ref FROM memory_versions v
                 JOIN memory_heads h USING(memory_id) WHERE h.current_ref=v.memory_ref AND h.invalidated=0
                 AND v.body IS NOT NULL AND (v.expires_at IS NULL OR v.expires_at>?)
                 AND NOT EXISTS (SELECT 1 FROM profile_deletions d WHERE d.profile_id=v.profile_id)""",
                 (datetime.now(UTC).isoformat(),)).fetchall()
-        states = [self._index(row["profile_id"], row["memory_ref"]) for row in rows
+        states = [self._index(row["profile_id"], row["memory_ref"], vectors=vectors) for row in rows
                   if profile_id is None or row["profile_id"] == profile_id]
         return {"ready": states.count("ready"), "pending": states.count("pending")}
 

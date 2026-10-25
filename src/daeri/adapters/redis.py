@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .base import ReadAdapter, denied
+from .base import ReadAdapter
 from ..storage import StoreError
 
 
@@ -10,6 +10,11 @@ class RedisReadAdapter(ReadAdapter):
     adapter_id = "redis_read"
     resource_type = "Cache"
     read_tools = frozenset({
+        # redis-mcp-server 0.5.1 has no read-only hints or mode. These definitions
+        # only read Redis; subscription/group consumers and external docs search do not.
+        'scan_keys', 'scan_all_keys', 'hexists', 'llen', 'get_vector_from_hash',
+        'get_indexes', 'get_index_info', 'get_indexed_keys_number',
+        'vector_search_hash', 'hybrid_search', 'dbsize', 'info', 'client_list', 'xrange',
         'get',
         'get_string',
         'hash_get',
@@ -58,7 +63,8 @@ class RedisReadAdapter(ReadAdapter):
     setup_credentials = {'REDIS_PWD': {'field': 'password', 'description': '캐시 접속에 사용할 비밀번호입니다.'}}
     executable = "redis-mcp-server"
     normalize_results = True
-    text_error_prefixes = ("Error:", "Error retrieving ")
+    text_error_prefixes = ("Error:", "Error retrieving ", "Error getting ", "Error scanning ",
+                           "Error checking ", "Error performing ")
 
     def validate_connection(self, config):
         super().validate_connection(config)
@@ -94,14 +100,7 @@ class RedisReadAdapter(ReadAdapter):
                 connection["args"].append("--cluster-mode")
         return connection
 
-    def normalize(self, parameters, constraints, scope):
-        result = super().normalize(parameters, constraints, scope)
-        keys = [parameters[field] for field in ("key", "name") if field in parameters]
-        if not keys or any(not isinstance(key, str) or any(c in key for c in "*?[]\x00") for key in keys):
-            denied("Cache reads require explicit literal keys.")
-        return result
-
-    def source_complete(self, value, invocation):
-        if super().source_complete(value, invocation) is False:
-            return False
-        return True if invocation.operation == "get" else None
+    def provider_error(self, value):
+        data = value.get('data', value)
+        if isinstance(data, dict) and data.get('error'):
+            raise StoreError('EXTERNAL_EXECUTION_FAILED', 'The lower Cache MCP reported a failed read operation.')

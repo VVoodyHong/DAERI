@@ -139,12 +139,12 @@ def test_unapproved_search_change_is_rejected():
 
 
 @pytest.mark.parametrize('issues,total,expected', [
-    ([], 0, True),
-    ([{'key': 'OPS-1'}], 1, True),
-    ([{'key': 'OPS-1'}], 2, False),
-    ([{'key': 'OPS-1'}], 0, False),
+    ([], 0, None),
+    ([{'key': 'OPS-1'}], 1, None),
+    ([{'key': 'OPS-1'}], 2, None),
+    ([{'key': 'OPS-1'}], 0, None),
 ])
-def test_search_completeness_requires_consistent_total_and_issue_count(issues, total, expected):
+def test_collection_completeness_is_left_to_the_host(issues, total, expected):
     invocation = SimpleNamespace(operation='jira_search')
     result = {'data': {'issues': issues, 'start_at': 0, 'total': total}}
     assert get_adapter('jira_read').source_complete(result, invocation) is expected
@@ -226,7 +226,7 @@ server.run()
         assert result['result']['data'] == {'key': 'OPS-42', 'server': resource['target']['server'], 'history_updated': False}
     page = registry.normalize(profile, 'issue', 'list-project-issues', {'project_key': 'OPS'},
                               {'equals': {'project_key': 'OPS'}, 'max_values': {'limit': 50, 'start_at': 100}})
-    assert registry.execute(page)['source_complete'] is False
+    assert registry.execute(page)['source_complete'] is None
     search = registry.normalize(profile, 'issue-2', 'search-issues', {'jql': 'project = OPS'},
                                 {'equals': {'jql': 'project = OPS'}, 'max_values': {'limit': 50}})
-    assert registry.execute(search)['source_complete'] is True
+    assert registry.execute(search)['source_complete'] is None

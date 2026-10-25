@@ -213,7 +213,8 @@ def profile_template(store, recipe_id, profile_name, instance_id):
                                'args': copy.deepcopy(item['args']), 'env': copy.deepcopy(item['env']),
                                'auth_env': {name: resource_reference(profile_name, instance_id, name)
                                             for name in item['auth_env']}},
-                'capabilities': copy.deepcopy(item['capabilities']), 'policy': None}
+                'capabilities': copy.deepcopy(item['capabilities']),
+                'discover_tools': item.get('discover_tools', False), 'policy': None}
     return {'name': profile_name, 'core_context': [], 'resources': [resource],
             'retention_days': None, 'long_term_memory_days': None, 'memory_policy': None}
 
@@ -312,7 +313,7 @@ def _current_setup_values(resource, contract):
     return values
 
 
-def build_setup_resource(store, recipe_id, profile_name, instance_id, values, existing=None):
+def build_setup_resource(store, recipe_id, profile_name, instance_id, values, existing=None, *, refresh_contract=False):
     """Return a validated recipe resource copy with explicit input changes applied."""
     from .policy import pointer_set
     contract = setup_schema(recipe_id)
@@ -333,6 +334,27 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
     merged.update(values)
     _require(_validate_setup_values(contract, merged)['complete'], 'Required setup answers are missing or invalid.')
     resource = copy.deepcopy(existing) if existing is not None else template
+    if existing is not None and refresh_contract:
+        defaults = {item['tool_name']: item for item in template['capabilities']}
+        custom_limits = False
+        for capability in resource['capabilities']:
+            guards = capability['constraints']
+            if recipe_id == 'db-postgres' and guards == {'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 100}:
+                capability['constraints'] = copy.deepcopy(defaults[capability['tool_name']]['constraints'])
+            elif recipe_id == 'db-postgres' and set(guards) & {'sql_field', 'tables', 'columns', 'max_rows'}:
+                raise StoreError('UNSUPPORTED_CONSTRAINT', 'Explicit SQL semantic limits require DB permission controls or supported field constraints before refreshing this contract.')
+            elif recipe_id == 'issue-jira' and guards == {'max_values': {'limit': 50}}:
+                capability['constraints'] = copy.deepcopy(defaults[capability['tool_name']]['constraints'])
+            expected = copy.deepcopy(defaults[capability['tool_name']]['constraints'])
+            if recipe_id == 'infra-aws':
+                expected['region'] = resource['target'].get('region')
+            custom_limits |= capability['constraints'] != expected
+        env = resource['connection'].get('env', {})
+        previous_filter = ','.join(item['tool_name'] for item in resource['capabilities'])
+        if not custom_limits and recipe_id in {'document-confluence', 'issue-jira'} and env.get('ENABLED_TOOLS') == previous_filter:
+            env.pop('ENABLED_TOOLS')
+        if not custom_limits:
+            resource['discover_tools'] = True
     for name, value in values.items():
         for destination in contract['configuration_paths'][name]:
             bound = str(value).lower() if type(value) is bool else str(value)
@@ -341,7 +363,7 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
     return get_adapter(contract['adapter']).finalize_setup_resource(resource, profile_name=profile_name)
 
 
-def configure_resource(store, recipe_id, profile_name, instance_id, path, *, expected_revision):
+def configure_resource(store, recipe_id, profile_name, instance_id, path, *, expected_revision, refresh_contract=False):
     """Apply explicit answers to one recipe resource in an unchanged profile revision."""
     contract = setup_schema(recipe_id)
     supplied = read_config(path)
@@ -353,7 +375,8 @@ def configure_resource(store, recipe_id, profile_name, instance_id, path, *, exp
             raise StoreError('REVISION_CONFLICT', 'Inspect the changed profile before applying setup answers.')
         resources = copy.deepcopy(profile['resources'])
         existing = next((resource for resource in resources if resource['instance_id'] == instance_id), None)
-        resource = build_setup_resource(store, recipe_id, profile_name, instance_id, supplied, existing)
+        resource = build_setup_resource(store, recipe_id, profile_name, instance_id, supplied, existing,
+                                       refresh_contract=refresh_contract)
         if existing is None:
             resources.append(resource)
         else:

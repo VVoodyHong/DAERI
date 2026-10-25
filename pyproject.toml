@@ -4,18 +4,18 @@ build-backend = "hatchling.build"
 
 [project]
 name = "daeri-agent"
-version = "0.1.22"
+version = "0.1.23"
 description = "Local MCP runtime for DAERI task execution, worker delegation and profile memory"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "mcp>=1.30,<2",
   "pydantic>=2.11,<3",
   "jsonschema>=4.20,<5",
-  "sqlglot>=27,<31",
   "httpx>=0.28,<1",
   "sqlite-vec>=0.1.9,<0.2",
   "keyring>=25.6,<26",
   "pyyaml>=6,<7",
+  "cryptography>=50,<51",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +33,9 @@ packages = ["src/daeri"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "recipes" = "daeri/recipes"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.mcp.json", "/.mcp.prepare.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

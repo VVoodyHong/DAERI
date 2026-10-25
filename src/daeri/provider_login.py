@@ -88,7 +88,8 @@ def _configuration(request, home):
     existing = dict(parser[section]) if parser.has_section(section) else {}
     _require(not existing.get('sso_account_id') or existing['sso_account_id'] == request['account'],
              'The configured provider account differs from the selected DAERI target.')
-    session_name = existing.get('sso_session')
+    new_profile = not parser.has_section(section)
+    session_name = 'daeri-' + profile if new_profile else existing.get('sso_session')
     session_section = provider_section(parser, 'sso-session', session_name) if session_name else None
     session = dict(parser[session_section]) if session_section and parser.has_section(session_section) else existing
     start_url = request.get('start_url') or session.get('sso_start_url')
@@ -104,10 +105,8 @@ def _configuration(request, home):
         _require(not session.get(key) or session[key] == expected, 'The existing provider login context differs; use a separate profile.')
     _require(not existing.get('sso_role_name') or existing['sso_role_name'] == role,
              'The existing provider role differs; use a separate profile.')
-    if not parser.has_section(section):
+    if new_profile:
         parser.add_section(section)
-        session_name = 'daeri-' + profile
-        session_section = provider_section(parser, 'sso-session', session_name)
         if not parser.has_section(session_section): parser.add_section(session_section)
         parser[section]['sso_session'] = session_name
     if session_name:
@@ -130,7 +129,7 @@ def _client(region):
     from botocore.session import get_session
     return get_session().create_client('sso-oidc', region_name=region,
         config=Config(signature_version=UNSIGNED, connect_timeout=10, read_timeout=30,
-                      retries={'max_attempts': 0}))
+                      retries={'max_attempts': 0}, ignore_configured_endpoint_urls=True))
 
 
 def device_login(request, *, client=None, home=None, emit=None, sleep=time.sleep,

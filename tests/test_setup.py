@@ -416,12 +416,10 @@ def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp
 def test_prepare_still_rejects_a_disabled_recipe_safety_setting(store, private_uv, monkeypatch):
     configured = prepared_resource(store)
     configured['connection']['env']['MCP_READ_ONLY'] = 'false'
-    store.put_profile('service', resources=[configured])
     monkeypatch.setattr('daeri.setup.subprocess.run', lambda *args, **kwargs:
                         pytest.fail('Unsafe recipe settings must not start program preparation'))
-    with pytest.raises(StoreError) as caught:
-        prepare_resource(store, 'service', 'source-one', 'source-gitlab')
-    assert caught.value.code == 'INVALID_INPUT'
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        store.put_profile('service', resources=[configured])
 
 
 @pytest.mark.parametrize('invalid_response', [None, 'prompt-profile', 'result-account', 'extra-field'])

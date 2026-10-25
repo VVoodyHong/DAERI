@@ -8,6 +8,9 @@ class ConfluenceReadAdapter(ReadAdapter):
     adapter_id = "confluence_read"
     aliases = ("document_read",)
     resource_type = "Document"
+    discover_annotations = True
+    tool_prefix = 'confluence_'
+    read_only_environment = 'READ_ONLY_MODE'
     read_tools = frozenset({
         'confluence_get_page',
         'confluence_get_page_children',
@@ -57,8 +60,8 @@ class ConfluenceReadAdapter(ReadAdapter):
 
     def normalize(self, parameters, constraints, scope):
         result = super().normalize(parameters, constraints, scope)
-        if any(field in parameters for field in ("query", "cql", "url")):
-            raise StoreError("UNSUPPORTED_CONSTRAINT", "Unparsed Document query languages and indirect URLs are unsupported; use page/space IDs.")
+        if any(field in parameters for field in ('url', 'server', 'base_url', 'cloud_id', 'site_url')):
+            denied('The selected Document connection supplies the server.')
         if "page_id" in parameters and (not isinstance(parameters["page_id"], str) or not parameters["page_id"].isdigit()):
             denied("Use an explicit numeric page ID instead of an indirect URL or tiny link.")
         return result

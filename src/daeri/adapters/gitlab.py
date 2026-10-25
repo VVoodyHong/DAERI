@@ -8,6 +8,9 @@ class GitlabReadAdapter(ReadAdapter):
     adapter_id = "gitlab_read"
     aliases = ("source_read",)
     resource_type = "Source"
+    discover_annotations = True
+    tool_prefix = 'gitlab_'
+    read_only_environment = 'MCP_READ_ONLY'
     read_tools = frozenset({
         'get_commit',
         'get_file_content',
@@ -63,32 +66,14 @@ class GitlabReadAdapter(ReadAdapter):
                 raise StoreError("CONTEXT_CHANGED", "The resource server differs from its configured target.")
         return {}
 
-    def prepare_parameters(self, parameters, input_schema):
-        for field in ("ref", "path"):
-            if field in input_schema.get("properties", {}) and (field not in parameters or parameters[field] is None):
-                raise StoreError("UNSUPPORTED_CONSTRAINT", "Source revision and path must be explicit; provider defaults cannot choose the approved target.")
-
     def normalize(self, parameters, constraints, scope):
         result = super().normalize(parameters, constraints, scope)
         for field in ("project_id", "id"):
             if field in parameters and isinstance(parameters[field], str):
                 clean_path(parameters[field])
         for field in ("file_path", "path"):
-            if field in parameters:
+            if parameters.get(field) not in (None, ''):
                 clean_path(parameters[field])
         if "url" in parameters:
             denied("Use explicit repository/ref/path arguments instead of an indirect URL.")
         return result
-
-    def source_complete(self, value, invocation):
-        if super().source_complete(value, invocation) is False:
-            return False
-        data = value.get("data", value)
-        if isinstance(data, dict) and invocation.operation in ("gitlab_get_file", "get_repository_file"):
-            metadata = data.get("metadata", data)
-            arguments = invocation.prepared_request["arguments"]
-            if any(arguments.get(field) is not None for field in ("start_line", "end_line", "limit")) or arguments.get("offset", 0) != 0:
-                return False
-            if isinstance(metadata, dict) and metadata.get("truncated") is False:
-                return True
-        return None

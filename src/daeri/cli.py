@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 import sys
 
 
@@ -105,6 +106,17 @@ def _parser():
     delete = profile.add_parser('delete', help='Preview a profile cascade; apply only with its confirmation token')
     delete.add_argument('name_or_id')
     delete.add_argument('--confirm', metavar='DELETION_TOKEN')
+    backup = profile.add_parser('backup', allow_abbrev=False,
+                               help='Encrypt one profile and its permitted local data')
+    backup.add_argument('name_or_id')
+    backup.add_argument('archive_file', type=Path)
+    restore = profile.add_parser('restore', allow_abbrev=False,
+                                help='Inspect an encrypted archive, then restore with its confirmation token')
+    restore.add_argument('archive_file', type=Path)
+    restore.add_argument('--confirm', metavar='CONFIRMATION_TOKEN')
+    for operation in (backup, restore):
+        operation.add_argument('--password-file', type=Path,
+                               help='Private UTF-8 password file; otherwise use hidden terminal input')
     resource = commands.add_parser('resource').add_subparsers(dest='resource_command', required=True)
     resource.add_parser('catalog')
     resource.add_parser('setup-schema').add_argument('recipe')
@@ -117,6 +129,7 @@ def _parser():
     configure.add_argument('--instance', required=True)
     configure.add_argument('--values', dest='values_file', type=Path, required=True)
     configure.add_argument('--expected-revision', type=int, required=True)
+    configure.add_argument('--refresh-contract', action='store_true', help='Previewed upgrade to current read-tool discovery while preserving explicit restrictions')
     template = resource.add_parser('template')
     template.add_argument('recipe')
     template.add_argument('--profile', required=True)
@@ -188,6 +201,75 @@ def _auth(args):
     return {'reference': args.reference, 'available': True}
 
 
+def _archive_password(args):
+    from .storage import StoreError
+    if args.password_file is not None:
+        try:
+            path = args.password_file
+            if path.is_symlink():
+                raise ValueError
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+                                 | getattr(os, 'O_NONBLOCK', 0))
+            try:
+                details = os.fstat(descriptor)
+                if (not stat.S_ISREG(details.st_mode) or details.st_size > 1025
+                        or (os.name != 'nt' and stat.S_IMODE(details.st_mode) & 0o077)):
+                    raise ValueError
+                with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+                    content = stream.read(1026)
+            finally:
+                os.close(descriptor)
+            if len(content) > 1025:
+                raise ValueError
+            if content.endswith(b'\r\n'):
+                content = content[:-2]
+            elif content.endswith(b'\n'):
+                content = content[:-1]
+            value = content.decode('utf-8')
+        except (OSError, ValueError, UnicodeError):
+            raise StoreError('INVALID_INPUT', 'A private, bounded UTF-8 password file is required.') from None
+    else:
+        if not sys.stdin.isatty():
+            return None
+        import getpass
+        import warnings
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', getpass.GetPassWarning)
+                value = getpass.getpass('DAERI archive password (hidden): ')
+        except (getpass.GetPassWarning, EOFError, OSError):
+            raise StoreError('INVALID_INPUT', 'A terminal with hidden input is required.') from None
+    try:
+        if not 8 <= len(value.encode('utf-8')) <= 1024 or any(char in value for char in '\r\n'):
+            raise ValueError
+    except (ValueError, UnicodeError):
+        raise StoreError('INVALID_INPUT', 'A bounded single-line archive password is required.') from None
+    return value
+
+
+def _profile_archive(args):
+    passphrase = _archive_password(args)
+    if passphrase is None:
+        return {'status': 'input_required',
+                'message': '사용자 터미널의 숨김 입력이나 비공개 --password-file로 백업 암호를 제공해 주세요.'}
+    from .profile_portability import backup_profile, inspect_backup, restore_profile
+    if args.profile_command == 'backup':
+        from .engine import Engine
+        engine = Engine(data_directory(args.data_dir))
+        try:
+            return backup_profile(engine, args.name_or_id, args.archive_file, passphrase)
+        finally:
+            engine.close()
+    if args.confirm is None:
+        return inspect_backup(args.archive_file, passphrase)
+    from .storage import Store
+    store = Store(data_directory(args.data_dir))
+    try:
+        return restore_profile(store, args.archive_file, passphrase, args.confirm)
+    finally:
+        store.close()
+
+
 def _with_store(args):
     from .storage import Store
     from .security import redact
@@ -229,7 +311,8 @@ def _with_store(args):
             if args.resource_command == 'configure':
                 from .setup import configure_resource
                 return configure_resource(store, args.recipe, args.profile, args.instance,
-                                          args.values_file, expected_revision=args.expected_revision)
+                                          args.values_file, expected_revision=args.expected_revision,
+                                          refresh_contract=args.refresh_contract)
             if args.resource_command == 'login':
                 return login_resource(store, args.profile, args.instance, start_url=args.start_url,
                                       sso_region=args.sso_region, role=args.role, no_browser=args.no_browser)
@@ -282,6 +365,8 @@ def main():
             code = 0
         elif args.command == 'auth':
             result, code = _auth(args), 0
+        elif args.command == 'profile' and args.profile_command in {'backup', 'restore'}:
+            result, code = _profile_archive(args), 0
         elif args.command == 'resource' and args.resource_command in {'catalog', 'template', 'setup-schema', 'validate-setup'}:
             from types import SimpleNamespace
             from .setup import load_catalog, profile_template, setup_schema, validate_setup

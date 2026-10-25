@@ -72,12 +72,18 @@ def _view(engine, task, grant):
     plan = engine._current_plan(task)
     steps = [copy.deepcopy(step) for step in plan["draft"]["steps"] if step["step_id"] in grant["step_ids"]]
     # Contract descriptions are resolved now; configuration changes invalidate the grant.
-    contracts = [engine.registry.get(engine._current_profile(task), step["instance_id"], step["capability_id"])
-        for step in steps]
+    contracts = {}
+    profile = engine._current_profile(task)
+    for step in steps:
+        descriptor = engine.registry.get(profile, step["instance_id"], step["capability_id"])
+        contracts[(step["instance_id"], step["capability_id"])] = descriptor
+        for member in descriptor.get("capability_refs", []):
+            key = (step["instance_id"], member["capability_id"])
+            contracts[key] = engine.registry.get(profile, *key)
     result = {"task_id": task["task_id"], "task_revision": task["task_revision"],
         "delegation_id": grant["delegation_id"], "state": grant["state"], "expires_at": grant["expires_at"],
         "plan_ref": grant["plan_ref"], "assignment": _assignment(engine, task, grant),
-        "steps": steps, "contracts": contracts, "result_ref": grant.get("result_ref"),
+        "steps": steps, "contracts": list(contracts.values()), "result_ref": grant.get("result_ref"),
         "calls": [{key: call[key] for key in ("call_id", "step_id", "call_state", "result_ref", "error_code")}
             for call in task["calls"] if call.get("delegation_id") == grant["delegation_id"]]}
     if grant.get("result_ref"):
@@ -187,9 +193,11 @@ def run(engine, args):
             require(call["step_id"] in grant["step_ids"], "SCOPE_VIOLATION", "위임한 단계의 호출이 필요합니다.")
             plan = engine._current_plan(task)
             step = next(item for item in plan["draft"]["steps"] if item["step_id"] == call["step_id"])
+            capability = call.get("capability_id", step["capability_id"])
+            require(capability != "*", "INVALID_INPUT", "읽기 묶음에서 실행할 실제 기능을 선택하세요.")
             execute = {"task_id": task["task_id"], **grant["plan_ref"], "approval_id": grant["approval_id"],
                 "_delegation_id": grant["delegation_id"], "_timeout_ms": args.get("timeout_ms", 10000),
-                **call, **{key: step[key] for key in ("instance_id", "capability_id", "contract_ref")}}
+                **call, "capability_id": capability, **{key: step[key] for key in ("instance_id", "contract_ref")}}
             # Explicit dependencies can use prior outputs only when their references were provided.
             for binding in call.get("bindings", []):
                 source = next((item for item in task["calls"] if item["call_id"] == binding["source_call_id"]), None)

@@ -82,13 +82,15 @@ def evidence_matches_step(record, step):
                 json.dumps(step["scope"], sort_keys=True, allow_nan=False))
 
 
-def validate_plan(profile, draft, registry, formats, evidence_instances=()):
+def validate_plan(profile, draft, registry, evidence_instances=()):
     # The MCP boundary normally performs this check; keep direct callers safe too.
     try:
         draft = resolve_memory_defaults(profile, PlanDraft.model_validate(draft).model_dump(exclude_unset=True))
     except ValidationError:
         raise StoreError("PLAN_INVALID", "계획의 중첩 필드·자료형·필수값을 확인하세요.") from None
-    steps, contracts, descriptors = {}, [], {}
+    check(not draft["output"].get("table_rules") and not draft["output"].get("artifact_rules"),
+          "표·파일은 호스트에서 작성하고 결과에 등록하세요. 이전 생성 규칙은 새 계획에 사용할 수 없습니다.")
+    steps, contracts = {}, []
     required = {"step_id", "description", "purpose", "depends_on", "instance_id", "capability_id", "contract_ref", "scope", "input_bindings"}
     for step in draft["steps"]:
         check(required <= set(step) <= required | {"conditions", "reconciliation"}, "실행 단계의 필드를 확인하세요.")
@@ -128,7 +130,6 @@ def validate_plan(profile, draft, registry, formats, evidence_instances=()):
             if condition["operator"] == "in":
                 check(isinstance(value, list) and value and all(not isinstance(item, (dict, list)) for item in value), "in 조건은 비어 있지 않은 스칼라 배열이 필요합니다.")
         steps[step["step_id"]] = step
-        descriptors[step["step_id"]] = descriptor
         contracts.append(descriptor["contract_ref"])
 
     visited, visiting = set(), set()
@@ -173,36 +174,13 @@ def validate_plan(profile, draft, registry, formats, evidence_instances=()):
         ranks = {"none": 0, "source_bound": 1, "long_term": 2}
         check(ranks[memory["retention"]] <= ranks[upper.get("retention", "none")] and
               (not memory["allow_model_recall"] or upper.get("allow_model_recall") is True), "profile의 기억 보존·재제공 상한을 초과했습니다.")
+        if memory["retention"] != "none":
+            profile_memory = effective_profile_memory_policy(profile)
+            check(rule["instance_id"] in profile_memory.get("instance_ids", []) and
+                  set(memory["categories"]) <= set(profile_memory.get("categories", [])) and
+                  profile_memory.get("retain_allowed") is True and
+                  (not memory["allow_model_recall"] or profile_memory.get("model_allowed") is True) and
+                  (memory["retention"] != "long_term" or profile_memory.get("long_term_allowed") is True),
+                  "profile의 기억 대상·범주·보존·재제공 상한을 초과했습니다.")
 
-    table_ids = set()
-    for table in draft["output"]["table_rules"]:
-        fields = {"table_id", "sources", "join_mode", "coverage", "allowed_operations", "max_rows", "ratio_scale"}
-        check(set(table) == fields and isinstance(table["table_id"], str) and table["table_id"] not in table_ids, "표 규칙의 필드와 고유 ID를 확인하세요.")
-        table_ids.add(table["table_id"])
-        check(table["join_mode"] in {"none", "inner", "full"} and table["coverage"] in {"complete", "selected"}, "표 결합·전체성 규칙이 올바르지 않습니다.")
-        check(type(table["max_rows"]) is int and 1 <= table["max_rows"] <= 10000, "표는 최대 10,000행까지 검증합니다.")
-        check(isinstance(table["allowed_operations"], list) and table["allowed_operations"] and
-              len(set(table["allowed_operations"])) == len(table["allowed_operations"]) and
-              set(table["allowed_operations"]) <= {"copy", "equal", "sum", "difference", "ratio", "missing"}, "지원하는 표 연산을 선택하세요.")
-        check((type(table["ratio_scale"]) is int and 0 <= table["ratio_scale"] <= 18) if "ratio" in table["allowed_operations"] else table["ratio_scale"] is None, "비율의 반올림 자릿수를 확인하세요.")
-        check(isinstance(table["sources"], list) and table["sources"] and len({source.get("source_id") for source in table["sources"]}) == len(table["sources"]), "표 원본 ID는 하나 이상이며 고유해야 합니다.")
-        for source in table["sources"]:
-            check(set(source) == {"source_id", "step_id", "rows_pointer", "key_pointers"} and source["step_id"] in steps, "표 원본은 승인한 자료 확보 단계를 참조해야 합니다.")
-            pointer_tokens(source["rows_pointer"])
-            check(isinstance(source["key_pointers"], list) and len(set(source["key_pointers"])) == len(source["key_pointers"]), "결합키 포인터를 확인하세요.")
-            for key in source["key_pointers"]:
-                pointer_tokens(key)
-
-    available, artifact_ids = {item["format_id"]: item for item in formats}, set()
-    for artifact in draft["output"]["artifact_rules"]:
-        check(set(artifact) == {"artifact_id", "format_id", "format_contract_ref", "input_kind", "options", "max_bytes"}, "산출물 규칙의 필드를 확인하세요.")
-        check(isinstance(artifact["artifact_id"], str) and artifact["artifact_id"] not in artifact_ids, "산출물 ID는 고유해야 합니다.")
-        artifact_ids.add(artifact["artifact_id"])
-        descriptor = available.get(artifact["format_id"])
-        check(descriptor and descriptor["available"] and descriptor["contract_ref"] == artifact["format_contract_ref"] and artifact["input_kind"] in descriptor["input_kinds"], "현재 등록한 파일 형식·입력 종류·계약을 선택하세요.")
-        check(type(artifact["max_bytes"]) is int and 0 < artifact["max_bytes"] <= 10 * 1024 * 1024, "파일 크기 상한은 10MiB 이내로 지정하세요.")
-        try:
-            Draft202012Validator(descriptor["options_schema"]).validate(artifact["options"])
-        except Exception:
-            raise StoreError("PLAN_INVALID", "파일 생성 옵션이 올바르지 않습니다.") from None
     return sorted(set(contracts))

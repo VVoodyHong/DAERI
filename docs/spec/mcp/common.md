@@ -23,12 +23,12 @@
 | `daeri_memory_search` | 현재 profile의 기본 맥락·관련 기억 조회 | [기억](tasks.md#기억-mcp-도구) |
 | `daeri_memory_update` | 근거를 확인해 기억 저장·정정·무효화 | [기억](tasks.md#기억-mcp-도구) |
 | `daeri_resource_list` | 등록 리소스·기능 요약 | [리소스](resources.md) |
-| `daeri_capability_get` | 기능의 입력·출력·제약 계약 | [리소스](resources.md) |
+| `daeri_capability_get` | 읽기 묶음·개별 기능의 입력·출력·제약 계약 | [리소스](resources.md) |
 | `daeri_plan_submit` | 계획 검사·불변 저장 | [계획·승인](plans.md) |
 | `daeri_plan_get` | 저장 계획·확인 상태 조회 | [계획·승인](plans.md) |
 | `daeri_approval_request` | 호스트 대화의 승인 요청·사용자 응답 연결 | [계획·승인](plans.md) |
 | `daeri_capability_execute` | 검사 후 등록 기능 실행 | [리소스](resources.md) |
-| `daeri_result_submit` | 완료 근거·보고·산출물과 자동 기억 처리 | [업무·결과](tasks.md) |
+| `daeri_result_submit` | 호스트 보고·파일 등록과 선별 기억 자동 처리 | [업무·결과](tasks.md) |
 | `daeri_result_get` | 보존 자료의 허용 내용 조회 | [업무·결과](tasks.md) |
 
 사용 순서·실행 검사는 [업무 흐름](../tasks/workflow.md)을 따른다.
@@ -115,9 +115,12 @@ null은 시간에 따른 무기한 보존을 뜻한다.
 보고·표·파일·기억에 공개하는 같은 필드도 이 형식을 사용하고, 개별 기한은 [업무 보존](../tasks/workflow.md#이력과-완료-근거)과 [기억 보존](../tasks/memory.md#보존과-장기-운영지식)에서 해소한다.
 파생 자료는 가장 이른 유한 기한을 승계하며 모든 기여 조건이 무기한일 때만 null이다.
 
+파생 보고·파일·worker 요약과 기억의 출처 검사는 시작·말단 기록을 포함해 한 경로 최대 32개, 검사 전체 최대 256개의 고유 기록을 허용한다.
+같은 기록의 반복 인용은 한 번 계산하며 순환·한도 초과·확인 불가는 `RESULT_VALIDATION_FAILED`로 반환한다.
+
 ## 필드 경로와 선택
 
-바인딩·셀 근거는 단일 값의 `JsonPointer`, 제공·마스킹·보존 정책은 필드 집합의 `FieldSelector`를 사용한다.
+입력 바인딩은 단일 값의 `JsonPointer`, 제공·마스킹·보존 정책은 필드 집합의 `FieldSelector`를 사용한다.
 어댑터와 저장·보고·기억 기능의 권한 검사는 이 공통 문법을 사용한다.
 
 ### 단일 값의 JsonPointer
@@ -131,8 +134,7 @@ null은 시간에 따른 무기한 보존을 뜻한다.
 중복 객체 키·잘못된 이스케이프·타입 불일치·범위 밖 인덱스는 해소 실패다.
 객체의 `*`·`-`는 문자 그대로의 키다.
 
-바인딩의 기준은 기능 결과 또는 `parameters`이고, 셀 근거는 저장된 기능 결과의 JSON 본문이다.
-행 기준 경로처럼 다른 기준을 사용하는 필드는 해당 DTO에 명시한다.
+바인딩의 출처 경로는 저장한 기능 결과, 대상 경로는 호출의 `parameters`를 기준으로 해소한다.
 값을 해소할 때 누락·명시적 null·문자열·숫자의 원래 상태와 타입을 유지한다.
 
 ### 필드 집합의 FieldSelector
@@ -156,7 +158,7 @@ null은 시간에 따른 무기한 보존을 뜻한다.
 기능 출력의 스키마 검증과 실제 값의 선택 해소는 각 경계에서 수행한다.
 스키마가 허용한 선택 필드의 부재는 0개 선택으로 해소하고 빈 배열은 빈 구조 값으로 유지한다.
 선택 중 객체·배열의 실제 타입이 다르면 선택 해소 실패다.
-정확한 값이 필요한 바인딩·셀 근거는 아래 단일 경로 검사와 완전성 검사를 추가한다.
+바인딩은 단일 경로를 해소하고 실제 제공이 허용된 원본 값과 대조한다.
 선택자는 고유하며 한 마스킹 목록의 부모·자식 겹침이나 충돌은 검증 실패다.
 
 서로 다른 제공 정책은 말단 경로의 교집합으로, 마스킹은 그 뒤에 적용한다.
@@ -164,7 +166,7 @@ null은 시간에 따른 무기한 보존을 뜻한다.
 부모 객체를 반환할 때에도 모든 자손의 가림 결과를 유지한다.
 제공·보존·바인딩은 허용 범위와 출처를 해소한 값에 적용한다.
 
-정확한 바인딩·셀 근거의 부재는 `BINDING_INVALID` 또는 `RESULT_VALIDATION_FAILED`다.
+바인딩 출처의 누락·가림·허용 필드 이탈은 `BINDING_INVALID`다.
 기능 결과의 부재 표시는 해당 기능이 실제 부재를 확정한 근거를 요구하며 잘림·가림은 미확인 상태로 처리한다.
 입력 바인딩의 같은 대상·부모/자식 대상 겹침은 `PLAN_INVALID`로 거부한다.
 JSON 경로 검사와 함께 실제 리소스의 대상·범위를 검사하며 자연어 의미는 호스트가 근거와 대조한다.
@@ -277,7 +279,7 @@ MCP의 `structuredContent`에 이 객체를 담고 같은 JSON을 텍스트 내�
 | `RESULT_PERSIST_FAILED` | 외부 실행 후 결과 보존 실패 | `reconcile` |
 | `STORE_UNAVAILABLE` | 신뢰할 업무·승인·호출 기록을 읽을 수 없음 | `stop` |
 | `RESULT_TRUNCATED` | 원본 결과가 잘리거나 일부만 확보됨 | `refresh` 또는 `request_approval` |
-| `RESULT_VALIDATION_FAILED` | 기능 출력·완료 주장·근거·산출물 검증 실패; 확인한 외부 효과는 유지 | `fix_input` |
+| `RESULT_VALIDATION_FAILED` | 기능 출력·보고 구조·완료 근거·파일 등록 검사 실패; 확인한 외부 효과는 유지 | `fix_input` |
 | `RECORD_EXPIRED` | 필요한 기록의 보존 기한 종료 | `stop` |
 | `RECORD_UNAVAILABLE` | 기록 내용의 손실·삭제·무결성 문제 | `stop` |
 | `MEMORY_SEARCH_INCOMPLETE` | 한쪽 검색만 가능하거나 기억 색인의 일부를 사용할 수 없음 | `refresh` |

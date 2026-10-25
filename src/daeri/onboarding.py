@@ -496,7 +496,8 @@ def _configuration(store, name, document, profile, meta):
             issues.extend(_issue(field + '.inputs.' + key, message='필수값을 입력하세요.') for key in missing)
             continue
         try:
-            resource = build_setup_resource(store, recipe, name, instance, block['inputs'], existing=existing)
+            resource = build_setup_resource(store, recipe, name, instance, block['inputs'], existing=existing,
+                                            refresh_contract=True)
             credential_fields = resource_credential_fields(resource)
             supplied = copy.deepcopy(block.get('credentials', {}))
             if existing and isinstance(supplied, dict):
@@ -565,6 +566,14 @@ def _configuration(store, name, document, profile, meta):
     return config, issues, sanitized, updates
 
 
+def _read_contract(resource):
+    return {'discover_tools': resource.get('discover_tools', False),
+            'capabilities': sorted([
+                {key: copy.deepcopy(capability[key]) for key in ('capability_id', 'tool_name', 'constraints')}
+                for capability in resource['capabilities']], key=lambda item: item['capability_id']),
+            'enabled_tools': resource['connection'].get('env', {}).get('ENABLED_TOOLS')}
+
+
 def _inspect(store, name):
     path, metadata, meta, document, digest = _read_draft(store, name)
     profile = _current(store, name)
@@ -574,7 +583,7 @@ def _inspect(store, name):
         if recipe not in load_catalog() or fingerprint != _schema_digest(recipe):
             raise StoreError('REVISION_CONFLICT', '제품 입력 규격이 변경되었습니다. 초안을 확인하고 기준을 갱신하세요.')
     config, issues, sanitized, updates = _configuration(store, name, document, profile, meta)
-    token = _digest([meta, digest]) if not issues else None
+    token = _digest([meta, digest, config]) if not issues else None
     preview = copy.deepcopy(sanitized) if not issues else None
     if preview is not None:
         for instance, block in preview['resources'].items():
@@ -591,6 +600,12 @@ def _inspect(store, name):
         preview['changes'] = {'created': profile is None,
                               'updated_resources': [r['instance_id'] for r in config['resources']
                                                     if r != current_resources.get(r['instance_id'])],
+                              'resource_contracts': {
+                                  resource['instance_id']: {'before': _read_contract(previous),
+                                                            'after': _read_contract(resource)}
+                                  for resource in config['resources']
+                                  if (previous := current_resources.get(resource['instance_id'])) is not None
+                                  and _read_contract(previous) != _read_contract(resource)},
                               'settings': [key for key in sorted(PROFILE_FIELDS - {'name', 'resources'})
                                            if profile is None or config[key] != profile[key]],
                               'changed': bool(updates) or profile is None or any(config[key] != profile[key] for key in PROFILE_FIELDS),

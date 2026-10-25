@@ -261,6 +261,77 @@ def test_validation_token_binds_the_reviewed_bytes(store):
     assert not store.list_profiles()
 
 
+def test_setup_previews_generated_read_contract_refresh_before_apply(store, monkeypatch):
+    from daeri import onboarding
+    from daeri.setup import build_setup_resource
+    resource = build_setup_resource(store, 'db-postgres', 'production', 'primary', DB)
+    resource.pop('discover_tools')
+    old_constraints = {'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
+    resource['capabilities'][0]['constraints'] = old_constraints
+    profile = store.put_profile('production', resources=[resource], embedding={'provider': 'keyword_only'})
+    create_draft(store, 'production', {'primary': 'db-postgres'})
+
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    assert checked['preview']['changes']['resource_contracts'] == {'primary': {
+        'before': {'discover_tools': False, 'capabilities': resource['capabilities'], 'enabled_tools': None},
+        'after': {'discover_tools': True, 'capabilities': [
+            {'capability_id': 'query', 'tool_name': 'execute_sql', 'constraints': {}}], 'enabled_tools': None}}}
+    assert store.get_profile('production') == profile
+
+    def changed_contract(*args, **kwargs):
+        changed = build_setup_resource(*args, **kwargs)
+        changed['discover_tools'] = False
+        return changed
+
+    with monkeypatch.context() as patch:
+        patch.setattr(onboarding, 'build_setup_resource', changed_contract)
+        with pytest.raises(StoreError, match='REVISION_CONFLICT'):
+            apply_draft(store, 'production', checked['confirmation_token'])
+    assert store.get_profile('production') == profile
+    saved = apply_draft(store, 'production', checked['confirmation_token'])
+    assert saved['resources'][0]['discover_tools'] is True
+    assert saved['resources'][0]['capabilities'][0]['constraints'] == {}
+
+
+def test_setup_contract_preview_includes_removed_lower_tool_filter(store):
+    from daeri.setup import build_setup_resource
+    resource = build_setup_resource(store, 'issue-jira', 'production', 'issues', {
+        'server': 'https://issues.example.test', 'auth_type': 'personal_token'})
+    resource.pop('discover_tools')
+    selected = ','.join(cap['tool_name'] for cap in resource['capabilities'])
+    resource['connection']['env']['ENABLED_TOOLS'] = selected
+    store.put_profile('production', resources=[resource], embedding={'provider': 'keyword_only'})
+    create_draft(store, 'production', {'issues': 'issue-jira'})
+
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    change = checked['preview']['changes']['resource_contracts']['issues']
+    assert change['before']['enabled_tools'] == selected
+    assert change['after']['enabled_tools'] is None
+    assert change['before']['discover_tools'] is False
+    assert change['after']['discover_tools'] is True
+
+
+def test_setup_contract_preview_preserves_administrator_read_restrictions(store):
+    from daeri.setup import build_setup_resource
+    resource = build_setup_resource(store, 'cache-redis', 'production', 'cache', {
+        'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
+    resource.pop('discover_tools')
+    resource['capabilities'][0]['constraints'] = {'fixed': {'key': 'only-approved'}}
+    profile = store.put_profile('production', resources=[resource], embedding={'provider': 'keyword_only'})
+    create_draft(store, 'production', {'cache': 'cache-redis'})
+
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    assert checked['preview']['changes']['resource_contracts'] == {}
+    assert checked['preview']['changes']['updated_resources'] == []
+    saved = apply_draft(store, 'production', checked['confirmation_token'])
+    assert saved == profile
+    assert saved['resources'][0]['capabilities'] == resource['capabilities']
+    assert not saved['resources'][0].get('discover_tools', False)
+
+
 def test_existing_changes_and_new_profile_creation_conflict_until_explicit_refresh(store):
     completed(store)
     token = validate_draft(store, 'production')['confirmation_token']

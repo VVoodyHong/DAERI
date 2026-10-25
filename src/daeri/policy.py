@@ -189,12 +189,6 @@ def validate_resource_policy(policy):
     return policy
 
 
-def view(value, rule, ceiling, mode):
-    """Return a view and its unmasked original leaf paths for provenance checks."""
-    result, usable, _ = disclosure(value, rule, ceiling, mode)
-    return result, usable
-
-
 def disclosure(value, rule, ceiling, mode):
     """Keep visible redaction markers distinct from usable original evidence."""
     allowed = selected_paths(value, rule.get(mode, [])) & selected_paths(value, ceiling.get(mode, []))

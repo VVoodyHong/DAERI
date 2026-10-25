@@ -11,6 +11,7 @@ import pytest
 
 from daeri.engine import Engine
 from test_execution_flow import configured, begin, approve, execution
+from test_engine import bundle_runtime, bundle_plan
 
 
 def create_worker(engine, saved, step_ids, *, key="worker", **extra):
@@ -308,3 +309,35 @@ def test_worker_gateway_rejects_mixed_operations(configured, extra):
     saved, _ = begin(engine, profile)
     payload = {"operation": "get", "task_id": saved["task_id"], "delegation_token": "token", **extra}
     assert engine.call("daeri_worker", payload)["error"]["code"] == "INVALID_INPUT"
+
+
+def test_worker_selects_different_read_tools_in_one_approved_resource_step(bundle_runtime):
+    engine, profile = bundle_runtime
+    saved, _ = bundle_plan(engine, profile)
+    approve(engine, saved)
+    grant = create_worker(engine, saved, ["read-0"])["data"]
+    contracts = {item["capability_id"]: item for item in grant["contracts"]}
+    assert set(contracts) == {"*", "get", "scan_keys"}
+    assert contracts["scan_keys"]["input_schema"] == {"type": "object", "additionalProperties": True}
+    refs = []
+    for index, (capability, parameters) in enumerate([("get", {"key": "orders"}), ("scan_keys", {"pattern": "orders:*"})]):
+        result = worker_call(engine, saved, grant, "execute", call={"step_id": "read-0", "call_id": f"chosen-{index}",
+            "capability_id": capability, "parameters": parameters})
+        assert result["status"] == "ok", result
+        assert result["data"]["inline_result"]["data"]["tool"] == capability
+        assert result["data"]["actual_capability_id"] == capability
+        refs.append(result["data"]["result_ref"])
+    completed = worker_call(engine, saved, grant, "complete", request_id="finished", result={
+        "summary": "필요한 도구를 선택해 조회했다", "evidence_refs": refs, "limitations": []})
+    assert completed["status"] == "ok", completed
+    assert engine.store.get_task(saved["task_id"])["usage"]["tool_calls"] == 2
+
+
+def test_worker_bundle_requires_a_real_tool_selection_before_dispatch(bundle_runtime):
+    engine, profile = bundle_runtime
+    saved, _ = bundle_plan(engine, profile)
+    approve(engine, saved)
+    grant = create_worker(engine, saved, ["read-0"])["data"]
+    result = run_read(engine, saved, grant)
+    assert result["error"]["code"] == "INVALID_INPUT", result
+    assert engine.store.get_task(saved["task_id"])["calls"] == []

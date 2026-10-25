@@ -90,9 +90,20 @@ def test_setup_to_approved_report_file_memory_and_next_task_without_policy_edits
         second = engine.call('daeri_capability_execute', execution(saved,
             {**approved, 'task_revision': first['data']['task_revision']}, plan['steps'][1], call_id='call-2'))
         assert second['status'] == 'ok', second
+        body = comparison_report(first['data'], second['data'])
+        sources = [first['data']['result_ref'], second['data']['result_ref']]
+        output = Path(engine.store.artifact_workspace(saved['task_id'])) / 'comparison.csv'
+        output.write_text('ID,A,B,Difference\none,10,7,3\n', encoding='utf-8')
+        body['artifacts'] = [{'artifact_id': 'comparison-csv', 'label': '캐시 비교',
+            'local_path': str(output), 'media_type': 'text/csv', 'source_refs': sources}]
         report = engine.call('daeri_result_submit', {'request_id': 'report', 'task_id': saved['task_id'],
             'expected_task_revision': second['data']['task_revision'], 'plan_id': saved['plan_id'],
-            'plan_version': saved['plan_version'], 'report': comparison_report(first['data'], second['data'])})
+            'plan_version': saved['plan_version'], 'report': body,
+            'memory_candidates': [{'draft': {'category': 'procedure',
+                'statement': 'Cache 비교는 같은 식별자의 조회를 같은 기준으로 대조하고 차이를 검산한다.',
+                'applicability': '현재 profile의 캐시 비교', 'instance_ids': ['cache-a', 'cache-b'],
+                'verification_method': '실제 승인한 조회 결과와 호스트가 만든 비교 파일 대조'},
+                'source_refs': sources}]})
         assert report['status'] == 'ok', report
         assert report['data']['memory']['state'] == 'ready', report
         memories = [item['memory_ref'] for item in report['data']['memory']['items']

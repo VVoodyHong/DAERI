@@ -41,7 +41,11 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
 2. 관리 진입으로 `check`를 호출한다.
    `setup_required`이면 macOS는 `sh "<루트>/scripts/setup.sh" --prepare`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\setup.ps1" -Prepare`로 준비한다.
    `check`의 `version`과 플러그인 `pyproject.toml`의 버전을 대조하고 차이가 있으면 확인한 세팅 범위에서 환경을 준비한다.
-   준비 완료 뒤 `check`의 `ready`·버전 일치와 실제 MCP 연결을 확인하고 `profile list`로 기존 설정을 읽는다.
+   준비 완료 뒤 `check`의 `ready`·버전 일치를 확인하고 `profile list`로 기존 설정을 읽는다.
+   `ready: true`여도 `operations` 도구가 열거되지 않았으면 루트 `.mcp.json`의 존재를 확인한다.
+   파일이 없으면 이미 시작에 동의한 세팅 범위에서 위 준비 명령을 다시 실행한다.
+   준비 과정이 생성한 MCP 연결 구성은 [호스트별 다시 읽기](../../docs/spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)로 반영한다.
+   실제 MCP 초기화·도구 목록 확인은 로컬 준비 결과와 구분하고, 현재 대화에서 연결이 아직 준비되지 않았으면 관리 진입으로 설정을 이어간다.
    기존 환경의 손상·중단·버전 차이는 [준비·복구 계약](../../docs/spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)으로 처리한다.
    `setup status PROFILE`의 [초안 상태](../../docs/spec/configuration/profiles.md#생성과-파일-위치)로 다음 단계를 정한다.
    `new`는 선택 단계로, `resume`은 기존 초안 재개로, 오류는 반환한 원인의 복구 안내로 이어간다.

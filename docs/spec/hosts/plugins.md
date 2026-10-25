@@ -16,7 +16,7 @@ root는 독립적인 하위 작업을 호스트 네이티브 작업자(worker)�
 |---|---|
 | 호스트별 플러그인 | 마켓플레이스 등록·설치와 Skill·실행기 연결 |
 | setup Skill | 환경 준비·profile·리소스 연결 관리 진입 |
-| profile Skill | 현재 대화에서 새 업무의 기본 대상 선택·전환과 확인한 profile 삭제 |
+| profile Skill | 현재 대화의 기본 대상 선택·전환, profile 백업·확인 후 복원·삭제 |
 | work Skill | 총괄의 계획·승인·직접 수행·작업 배정·결과 통합·보고 지침 |
 | worker 지침·호스트 진입 | 배정받은 목표·단계의 수행 루프와 근거 반환, 호스트별 네이티브 worker 연결 |
 | list-profiles Skill | 저장한 profile 목록 요약 |
@@ -27,6 +27,8 @@ root는 독립적인 하위 작업을 호스트 네이티브 작업자(worker)�
 개발 지침은 DAERI 저장소에, 사용자용 Skill·제품 참조는 설치한 플러그인에 둔다.
 root·worker의 추론과 worker 생성·대기·결과 회수는 호스트가 담당하고 실행기·저장소는 사용자 PC에서 동작한다.
 호스트는 실제 근거에서 재사용 지식을 선별해 보고에 연결하고 실행기는 자동 저장·색인·재시도를 처리한다.
+분석·계산·보고·파일 내용 작성과 검증은 호스트가 적절한 도구로 수행한다.
+실행기는 호스트가 제출한 파일과 보고의 승인·출처·현재 권한·보존·무결성을 검사한다.
 선택한 임베딩 제공자는 검색용 벡터를 만든다.
 플러그인·현재 호스트 모델·로컬 실행기로 기본 구성을 완성한다.
 
@@ -57,7 +59,7 @@ setup·profile·list-profiles·work의 대화 응답은 확인한 결과와 필�
 
 배포자는 소스와 호스트별 마켓플레이스 구성을 제공한다.
 사용자는 마켓플레이스 추가·플러그인 설치 후 호스트의 setup 진입점으로 세팅한다.
-setup은 profile 확인 → 시작 확인·환경 준비 → 종류·제품·개수·임베딩 선택 → YAML 편집·검증·확인·적용 → 연결·기억 준비 순서다.
+setup은 아래 [정형 질문](#setup의-정형-질문)과 [환경 준비](../installation/environment.md#아무-개발-도구가-없는-최초-진입) 순서로 진행한다.
 준비 결과는 profile 저장·리소스별 연결·기억·현재 호스트 MCP 연결로 구분한다.
 해당 대화에서 확인한 profile을 대상으로 work 또는 자연어로 업무를 요청한다.
 
@@ -72,7 +74,7 @@ setup은 profile 확인 → 시작 확인·환경 준비 → 종류·제품·개
 |---|---|---|
 | 마켓플레이스 | `.agents/plugins/marketplace.json` | `.claude-plugin/marketplace.json` |
 | 플러그인 정의 | `.codex-plugin/plugin.json` 호환 형식 | `.claude-plugin/plugin.json` |
-| MCP 구성 | 플러그인 정의 안의 `mcpServers.operations` | 루트 `.mcp.json`의 `mcpServers.operations` |
+| MCP 구성 | 준비 성공 후 생성한 루트 `.mcp.json`을 기본 탐색 | 같은 루트 파일을 기본 탐색 |
 | 공유 Skill | `skills/<Skill명>/SKILL.md`의 setup·profile·work·list-profiles | 같은 네 Skill |
 | worker 진입 | 호스트가 제공하는 기본 서브에이전트에 공통 지침의 설치된 절대 경로 전달 | 루트 `agents/worker.md`를 기본 탐색해 `daeri:worker`로 사용 |
 | 공통 worker 지침 | `skills/work/references/worker.md` | 같은 지침을 `${CLAUDE_PLUGIN_ROOT}`에서 읽음 |
@@ -81,6 +83,7 @@ setup은 profile 확인 → 시작 확인·환경 준비 → 종류·제품·개
 
 두 카탈로그의 이름은 `daeri-marketplace`, 플러그인 이름은 `daeri`다.
 각 카탈로그는 저장소 루트의 플러그인을 가리키며 호스트는 설치한 사본에서 Skill과 프로그램을 읽는다.
+첫 배포물은 Skill·worker 지침·프로그램 소스를 전달하고 MCP 연결 구성은 해당 사본의 전용 환경 준비 성공 후 생성한다.
 마켓플레이스를 추가할 때는 두 호스트의 카탈로그를 포함한 저장소 전체를 제공한다.
 
 DAERI 업무 실행기의 MCP 등록명과 초기화 응답의 `serverInfo.name`은 `operations`다.
@@ -113,13 +116,16 @@ DAERI profile 인증은 이후 등록 리소스의 연결에 사용한다.
 공식 [Codex 플러그인 안내](https://developers.openai.com/plugins/build/plugins)와 [Claude Code 플러그인 안내](https://code.claude.com/docs/en/plugins)를 기준으로 실제 패키징을 확인한다.
 준비 프로그램과 실행기의 책임·연결은 [개발 안내](../../development/dependencies.md#실행-진입점과-모듈)를 따른다.
 macOS와 Windows는 같은 전용 Python stdio 진입 구성을 사용한다.
-Codex의 command는 `${PLUGIN_ROOT}/.venv/bin/python.exe`, Claude Code는 `${CLAUDE_PLUGIN_ROOT}/.venv/bin/python.exe`이며 args는 `-I`, `-m`, `daeri.server`다.
+준비 스크립트가 생성한 command는 설치 사본의 `.venv/bin/python.exe` 절대 경로이며 args는 `-I`, `-m`, `daeri.server`다.
 공통 실행 파일의 OS별 준비는 [환경 격리](../installation/environment.md#공통-실행-파일과-환경-격리)를 따른다.
 OS별 shell은 명시적 setup에 사용하고 일반 MCP는 준비된 전용 Python을 직접 실행한다.
 실행기의 환경은 설치한 플러그인 루트의 전용 환경으로 고정한다.
 setup 준비는 시작 응답과 호스트의 명령 실행 권한, 실제 업무는 업무 계획의 유효 승인을 각각 요구한다.
 위 설치 문법·파일 구성은 공식 문서·호스트 소스·로컬 CLI 정의로 검토했다.
-실제 마켓플레이스 추가·설치·Skill 호출은 미검증이다.
+Claude Code의 루트 MCP 구성 탐색은 [공식 플러그인 파일 규격](https://code.claude.com/docs/en/plugins-reference#mcpservers)을 따른다.
+Codex CLI 0.147.0의 임시 플러그인 `plugin/read`에서는 루트 MCP 파일의 부재·빈 구성은 서버 목록 `[]`, 준비 후 구성은 `operations`로 읽히는 것을 확인했다.
+같은 CLI의 임시 사용자 공간에 시험 플러그인을 설치해 구성 생성 뒤 새 프로세스의 MCP 초기화·도구 노출도 확인했다.
+DAERI의 실제 마켓플레이스 설치·Skill 호출·실행 중 대화 재연결은 별도 검증 대상이다.
 
 ### 설치한 플러그인 업데이트
 
@@ -140,21 +146,29 @@ codex plugin add daeri@daeri-marketplace
 
 명령은 [Claude Code 업데이트](https://code.claude.com/docs/en/discover-plugins#update-plugins-now)와 [Codex 플러그인 관리](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace)를 따른다.
 업데이트 뒤 호스트를 다시 시작하고 setup으로 플러그인 프로젝트 버전과 설치한 실행기 패키지 버전을 대조한다.
-버전이 다르거나 환경이 없으면 명시적 준비로 실행 환경을 교체하고 새 프로세스로 MCP를 다시 연결한다.
-업데이트 반영은 기본 검사와 배포본·실행 패키지의 버전 일치, 새 프로세스 연결로 확인한다.
+버전이 다르거나 환경·MCP 등록이 누락되면 명시적 준비로 해당 사본을 준비하고 연결 구성을 발행한다.
+업데이트 반영은 기본 검사와 배포본·실행 패키지의 버전 일치, 아래 새 구성 읽기와 실제 MCP 연결로 확인한다.
 프로그램 환경은 버전별 설치 사본에 두고 profile·업무·기억은 별도 사용자 저장소를 사용한다.
 기존 profile의 보존 설정을 바꾸려면 기존 연결·정책을 유지하면서 해당 설정만 명시적으로 변경한다.
 기존 자료는 업데이트 뒤에도 저장한 기한·만료 상태를 유지한다.
 
 ## 설치부터 업무 시작까지의 실제 경계
 
-플러그인 설치는 Skill과 로컬 MCP 시작 구성을 전달한다.
-아직 런타임이 없는 PC에서는 MCP 시작이 실패할 수 있지만 setup Skill은 설치된 Markdown 지침으로 진입한다.
-설치 실패는 로컬 실행 준비 상태로, 리소스·업무 실패는 해당 실행 결과로 안내한다.
+플러그인 설치 후 최초 진입점은 설치한 setup Skill이다.
+이 단계의 MCP 등록 목록은 비어 있으며, 사용자가 세팅 시작을 선택한 뒤 [전용 환경 준비와 MCP 구성 발행](../installation/environment.md#구현한-자동-준비의-입출력과-경계)을 수행한다.
+플러그인 전달·로컬 준비·리소스 연결·업무 실행은 각 단계의 실제 결과로 안내한다.
 같은 이름의 profile은 [YAML 변경 계약](../configuration/profiles.md#검증과-변경-의미)에 따라 저장한 구성에서 요청한 설정을 이어간다.
 
-공통 MCP 시작은 준비된 전용 Python으로 설치된 패키지만 실행한다.
-필수 모델·패키지 누락 또는 버전 불일치는 setup 준비 안내로 처리한다.
+준비 후 호스트가 설치 사본의 새 연결 구성을 다시 읽는다.
+Claude Code는 `/reload-plugins` 또는 새 세션을 사용한다.
+Codex는 현재 클라이언트에서 지원을 확인한 새로고침을 사용하거나 프로세스를 재시작한다.
+호스트의 실제 MCP 초기화와 `operations` 도구 목록이 확인되면 업무 실행으로 이어간다.
+
+로컬 기본 검사의 `ready`와 호스트 연결은 별도 상태다.
+`ready: true`이고 `operations`가 열거되지 않은 경우에는 루트 `.mcp.json`의 존재를 확인한다.
+파일이 없으면 이미 동의한 세팅 범위에서 명시적 준비를 다시 실행하고, 파일이 있으면 새 구성 읽기·실제 연결 결과를 확인한다.
+등록 뒤 전용 Python·필수 실행 패키지의 손상은 실제 연결 실패로 진단하고 setup의 복구 경로로 이어간다.
+임베딩 모델·색인의 준비 상태는 [기억 검색 준비](../installation/environment.md#임베딩-선택과-준비)에서 별도로 확인한다.
 실행기의 표준 출력은 MCP 전달에만 사용하며 시작 실패는 진단 출력으로 구분한다.
 
 호스트는 실제로 열거된 도구와 입력 스키마를 기준으로 행동한다.
@@ -165,9 +179,9 @@ codex plugin add daeri@daeri-marketplace
 setup은 **profile 확인 → 시작 확인 → 리소스 종류·제품·연결 개수 확인 → 임베딩 선택 → YAML 편집 → 적용 확인** 순서다.
 첫 대화 응답은 [DAERI 시작 로고](../../../skills/setup/SKILL.md#시작-로고)와 현재 단계의 질문·진행 안내로 구성한다.
 profile 문자열은 대화 입력, 선택·확인은 질문 도구, 접속 정보·인증값은 [사용자용 YAML](../configuration/profiles.md#사용자용-setup-yaml)로 받는다.
-사용자 입력은 아래 단계 표로 구성하고 기존 설정의 보존·변경은 [YAML 적용 계약](../configuration/profiles.md#사용자용-setup-yaml)을 따른다.
+사용자 입력은 아래 단계 표로 구성하고 기존 설정의 보존·변경은 YAML 적용 계약을 따른다.
 초안이 있으면 그 선택·편집을 재사용하고 파일 작성 완료 응답은 바로 검증으로 이어간다.
-첫 질문과 고정 실행 순서는 [setup Skill](../../../skills/setup/SKILL.md#세팅-순서)에서 직접 제공한다.
+호스트는 [setup Skill](../../../skills/setup/SKILL.md#세팅-순서)로 각 입력을 관리 호출·다음 단계에 연결한다.
 
 | 입력 조건·단계 | 사용자에게 표시할 내용 | 응답 후 처리 |
 |---|---|---|
@@ -211,8 +225,7 @@ profile의 형식 오류는 [입력 규격](../configuration/profiles.md#구현�
 | `groups[].products[].display_name` | 복수 제품이 있는 종류에서 선택할 제품명 |
 | `groups[].products[].recipe_id` | 제품 선택 뒤 YAML 생성에 사용하는 내부 값 |
 
-선택지의 표시명·설명은 해당 필드의 문자열을 그대로 사용한다.
-제품이 하나면 그 제품을 사용하고 여럿이면 복수 선택받는다.
+선택지의 표시명·설명은 해당 필드의 문자열을 그대로 사용하고 제품 선택은 위 단계 표를 따른다.
 요청에서 알려준 개수를 재사용하고 나머지만 “1개”·“2개”·“3개”와 호스트의 입력 경로로 받아 제품별 1 이상 정수로 확정한다.
 형식 오류는 유효한 예시와 함께 해당 제품의 개수를 다시 받는다.
 YAML 안내에는 확정한 종류·제품·개수를 짧게 표시한다.
@@ -265,13 +278,18 @@ Claude Code의 `Read`처럼 파일 내용을 직접 읽는 도구가 있으면 �
 | Skill | Markdown 경로 | 수행 범위 |
 |---|---|---|
 | setup | `skills/setup/SKILL.md` | 환경·리소스 설정, 준비 결과와 대상 profile 안내 |
-| profile | `skills/profile/SKILL.md` | 현재 대화의 기본 profile 선택·전환, 확인한 대상의 연관 자료와 profile 삭제 |
+| profile | `skills/profile/SKILL.md` | 기본 profile 선택·전환, 백업·복원과 확인한 대상의 연관 자료 삭제 |
 | work | `skills/work/SKILL.md` | 선택한 대상의 업무 접수·계획·승인·실행·보고 |
 | list-profiles | `skills/list-profiles/SKILL.md` | 저장한 profile의 목록 요약 |
 
 setup은 환경·연결 관리 요청으로 시작하고 work의 미준비 상태는 setup 안내로 연결한다.
 대화의 기본 대상·목록 조회는 [profile 선택](../configuration/profiles.md#선택과-기본값), 확인 후 연관 자료 정리는 [profile 삭제](../configuration/profiles.md#profile-삭제)를 따른다.
 Skill은 사용자 확인과 관리 호출을 연결하고 실행기는 저장 상태·권한·삭제 절차를 검사한다.
+
+전체 데이터 이동 요청은 profile 관리 진입에서 `profile backup PROFILE FILE` 또는 `profile restore FILE`로 연결한다.
+호스트는 복원 미리보기의 대상·범위·제한을 제시하고 실제 사용자 확인 뒤 같은 파일과 `--confirm TOKEN`으로 실행한다.
+비밀번호의 숨김 터미널 입력·비TTY의 `input_required` 처리와 `--password-file PATH`, 복원 뒤 인증 재등록·새 승인·색인 복구는 [이관·백업·복원](../configuration/profiles.md#이관백업복원) 계약을 따른다.
+암호는 사용자 로컬 입력 경로로 전달하고 결과에는 저장 파일·복원 상태와 필요한 다음 조치를 안내한다.
 
 work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 [work Skill](../../../skills/work/SKILL.md)은 아래 정본의 동작을 현재 MCP의 도구·입력에 연결한다.
@@ -300,7 +318,7 @@ root는 `daeri_worker`의 `create`로 승인된 단계·하위 목표·완료 �
 | Codex | 네이티브 서브에이전트 생성 도구의 기본 작업자를 사용하고 공통 지침의 설치된 절대 경로를 지시로 전달 |
 
 Claude Code의 기본 탐색 위치는 [플러그인 규격](https://code.claude.com/docs/en/plugins-reference#plugin-directory-structure), 플러그인 이름 범위와 도구 제한은 [서브에이전트 규격](https://code.claude.com/docs/en/sub-agents)을 따른다.
-현재 `agents/worker.md`의 도구 목록은 `Read`, `ToolSearch`, `mcp__plugin_daeri_operations__daeri_worker`다.
+현재 `agents/worker.md`는 `Read`, `ToolSearch`, `mcp__plugin_daeri_operations__daeri_worker`를 제공하므로 조회·분석 근거를 반환하고 파일 작성은 root가 담당한다.
 `Read`는 `${CLAUDE_PLUGIN_ROOT}/skills/work/references/worker.md`와 필요한 제품 계약을 읽고, DAERI 업무 자료·실행·완료 기록은 단일 `daeri_worker` 게이트웨이로 처리한다.
 Claude 플러그인 정의는 기본 `agents/` 디렉터리 탐색을 사용한다.
 
@@ -308,6 +326,8 @@ Codex의 생성·후속 지시·대기·종료는 [호스트 서브에이전트 
 Codex의 [공식 플러그인 규격](https://developers.openai.com/plugins/build/plugins)은 Skill·MCP 전달 경로의 근거다.
 현재 Codex 패키지는 기존 호스트의 기본 작업자와 DAERI의 공통 수행 지침을 연결한다.
 기본 작업자가 지시받은 절대 경로를 읽어 두 호스트의 같은 [worker 수행 지침](../../../skills/work/references/worker.md)을 적용한다.
+파일 작성·실행 도구가 제공되는 작업자에게는 해당 도구와 업무별 작업 경로로 파일 작성을 배정할 수 있다.
+root는 작업자의 실제 도구·권한에 맞춰 작성·검증을 분담하고 최종 보고·파일 등록을 처리한다.
 
 worker는 공통 지침에 따라 `get`으로 저장된 할당을 복구하고 `execute/search/read`의 결과에서 다음 행동을 판단한 뒤 `complete`로 근거·제한을 보존한다.
 root는 호스트의 진행·대기 도구와 위임 조회로 상태를 확인하고 반환된 근거를 원 기록과 대조해 최종 보고의 기억 후보를 결정한다.
@@ -369,7 +389,7 @@ root의 위임 발급 → 네이티브 worker 생성 → 공통 지침 읽기 �
 계획 전 기억 조회·기억 없는 첫 업무·검색 실패 안내·업무 후 갱신·갱신 재시도도 확인한다.
 진입 파일·로컬 실행기의 구현·검증 범위는 [최초 구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
 
-설치된 Claude Code 2.1.284의 `claude plugin validate`로 현재 패키지의 agents·skills 구성을 검사해 통과했다.
+Claude Code 2.1.284의 `claude plugin validate`로 agents·skills 구성을 정적 검사해 통과한 근거가 있다.
 저장소 루트 `CLAUDE.md`의 문맥 로딩 경고는 남아 있으며 이 정적 검사와 실제 worker 실행은 구분한다.
 별도 MCP worker 프로세스의 실행·완료·root 보고를 확인한 로컬 통합 시험도 호스트 네이티브 worker의 생성·전달 검증과 구분한다.
 실제 마켓플레이스 등록·설치·Skill 진입·호스트 대화 승인·worker 생성·호스트 worker의 MCP 전달·도구 권한 적용·결과 회수는 미검증이다.

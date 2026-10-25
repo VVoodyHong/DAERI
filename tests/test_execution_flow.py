@@ -151,27 +151,15 @@ def test_timeout_is_not_an_empty_success_and_same_call_never_retries(configured)
 
 
 def table_plan(draft):
-    draft["output"]["table_rules"] = [{"table_id": "comparison", "sources": [
-        {"source_id": "a", "step_id": "read-0", "rows_pointer": "/data/rows", "key_pointers": ["/id"]},
-        {"source_id": "b", "step_id": "read-1", "rows_pointer": "/data/rows", "key_pointers": ["/id"]}],
-        "join_mode": "inner", "coverage": "complete", "allowed_operations": ["copy", "difference"], "max_rows": 100, "ratio_scale": None}]
-    draft["output"]["artifact_rules"] = [{"artifact_id": "csv", "format_id": "csv", "format_contract_ref": "format_csv_v1", "input_kind": "table", "options": {}, "max_bytes": 10000}]
+    draft['output'].update(format='CSV와 자연어 보고', table_rules=[], artifact_rules=[])
 
 
 def comparison_report(first, second):
-    a, b = first["result_ref"], second["result_ref"]
-    def cell(source, ref, column, pointer, value):
-        return {"column_id": column, "value": value, "operation": "copy", "inputs": [{"source_id": source, "record_ref": ref, "pointer": pointer}]}
-    return {"summary": "The current values differ by three", "proposed_task_state": "succeeded",
-        "findings": [{"kind": "derived", "text": "Difference is three", "evidence_refs": [], "table_ids": ["comparison"]}],
-        "tables": [{"table_id": "comparison", "sources": [{"source_id": "a", "record_refs": [a]}, {"source_id": "b", "record_refs": [b]}],
-            "columns": [{"column_id": "id", "label": "ID", "value_type": "text"}, {"column_id": "a", "label": "A", "value_type": "decimal"},
-                {"column_id": "b", "label": "B", "value_type": "decimal"}, {"column_id": "difference", "label": "Difference", "value_type": "decimal"}],
-            "rows": [{"key": ["one"], "cells": [cell("a", a, "id", "/data/rows/0/id", "one"), cell("a", a, "a", "/data/rows/0/amount", "10"),
-                cell("b", b, "b", "/data/rows/0/amount", "7"), {"column_id": "difference", "value": "3", "operation": "difference", "inputs": [
-                    {"source_id": "a", "record_ref": a, "pointer": "/data/rows/0/amount"}, {"source_id": "b", "record_ref": b, "pointer": "/data/rows/0/amount"}]}]}]}],
-        "checks": [{"criterion_id": "read", "status": "met", "method": "Completed both approved key reads", "evidence_refs": [a, b]}],
-        "limitations": [], "uncertain_effects": [], "artifacts": [{"kind": "derived", "artifact_id": "csv", "table_id": "comparison", "label": "Comparison CSV"}], "next_actions": []}
+    refs = [first['result_ref'], second['result_ref']]
+    return {'summary': 'The current values differ by three', 'proposed_task_state': 'succeeded',
+        'findings': [{'kind': 'derived', 'text': 'Difference is three', 'evidence_refs': refs}],
+        'checks': [{'criterion_id': 'read', 'status': 'met', 'method': 'Completed both approved reads', 'evidence_refs': refs}],
+        'limitations': [], 'uncertain_effects': [], 'artifacts': [], 'next_actions': []}
 
 
 def test_two_real_mcp_processes_report_verified_table_and_csv_with_replay(configured):
@@ -182,6 +170,11 @@ def test_two_real_mcp_processes_report_verified_table_and_csv_with_replay(config
     second = engine.call("daeri_capability_execute", execution(saved, {**approved, "task_revision": first["task_revision"]}, draft["steps"][1], call_id="call-2"))["data"]
     args = {"request_id": "report", "task_id": saved["task_id"], "expected_task_revision": second["task_revision"], "plan_id": saved["plan_id"],
         "plan_version": saved["plan_version"], "report": comparison_report(first, second)}
+    output = Path(engine.store.artifact_workspace(saved['task_id'])) / 'comparison.csv'
+    output.write_text('ID,A,B,Difference\none,10,7,3\n')
+    args['report']['artifacts'] = [{'artifact_id': 'csv', 'label': 'Comparison CSV',
+        'local_path': str(output), 'media_type': 'text/csv',
+        'source_refs': [first['result_ref'], second['result_ref']]}]
     stored = engine.call("daeri_result_submit", args)
     assert stored["status"] == "ok", stored
     assert stored["data"]["task_state"] == "succeeded"
@@ -190,6 +183,32 @@ def test_two_real_mcp_processes_report_verified_table_and_csv_with_replay(config
     artifact = engine.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": stored["data"]["artifact_refs"][0]})
     assert artifact["status"] == "ok", artifact
     assert Path(artifact["data"]["managed_file"]["local_path"]).read_text() == "ID,A,B,Difference\none,10,7,3\n"
+
+
+def test_citing_and_reattaching_a_file_preserves_acyclic_sources(configured):
+    engine, profile = configured
+    saved, draft = begin(engine, profile, configure=table_plan)
+    approved = approve(engine, saved)
+    first = engine.call('daeri_capability_execute', execution(saved, approved, draft['steps'][0]))['data']
+    second = engine.call('daeri_capability_execute', execution(saved, {**approved, 'task_revision': first['task_revision']}, draft['steps'][1], call_id='call-2'))['data']
+    report = comparison_report(first, second)
+    path = Path(engine.store.artifact_workspace(saved['task_id'])) / 'answer.txt'
+    path.write_text('Difference is three')
+    report['artifacts'] = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
+                            'media_type': 'text/plain', 'source_refs': [first['result_ref'], second['result_ref']]}]
+    args = {'request_id': 'first-report', 'task_id': saved['task_id'], 'expected_task_revision': second['task_revision'],
+            'plan_id': saved['plan_id'], 'plan_version': saved['plan_version'], 'report': report}
+    original = engine.call('daeri_result_submit', args)
+    assert original['status'] == 'ok', original
+    ref = original['data']['artifact_refs'][0]
+    report['findings'] = [{'kind': 'derived', 'text': '이전에 작성한 파일 확인', 'evidence_refs': [ref]}]
+    report['artifacts'] = [{'kind': 'existing', 'artifact_id': 'answer', 'label': '결과', 'artifact_ref': ref}]
+    args.update(request_id='reattach', expected_task_revision=original['data']['task_revision'])
+    attached = engine.call('daeri_result_submit', args)
+    assert attached['status'] == 'ok', attached
+    fetched = engine.call('daeri_result_get', {'task_id': saved['task_id'], 'record_ref': ref})
+    assert fetched['status'] == 'ok', fetched
+    assert engine.call('daeri_result_submit', args)['status'] == 'ok'
 
 
 def test_cancellation_during_io_keeps_terminal_state_and_removes_unretained_late_data(configured):
@@ -317,15 +336,14 @@ def test_resumed_task_requires_fresh_approval_before_success_report(configured):
 def test_partial_report_cannot_generate_files_from_unapproved_plan(configured, replace_approved_plan):
     engine, profile = configured
     def file_rule(draft):
-        draft["output"]["artifact_rules"] = [{"artifact_id": "report-file", "format_id": "text", "format_contract_ref": "format_text_v1",
-            "input_kind": "report", "options": {}, "max_bytes": 10000}]
+        draft["output"]["format"] = "보고 파일"
     saved, draft = begin(engine, profile, configure=file_rule)
     if replace_approved_plan:
         approved = approve(engine, saved)
         search = engine.call("daeri_memory_search", {"task_id": saved["task_id"], "query": "replacement report"})["data"]
         draft["memory_search_refs"] = [search["memory_search_ref"]]
         draft["previous_plan_id"] = saved["plan_id"]
-        draft["output"]["artifact_rules"][0]["artifact_id"] = "replacement-file"
+        draft["output"]["format"] = "수정 보고 파일"
         replacement = engine.call("daeri_plan_submit", {"request_id": "replacement", "task_id": saved["task_id"],
             "expected_task_revision": approved["task_revision"], "draft": draft})
         assert replacement["status"] == "ok", replacement
@@ -333,7 +351,8 @@ def test_partial_report_cannot_generate_files_from_unapproved_plan(configured, r
     report = {"summary": "No external reads completed", "proposed_task_state": "partial", "findings": [], "tables": [],
         "checks": [{"criterion_id": "read", "status": "unmet", "method": "Still waiting for approval", "evidence_refs": [], "reason": "Not executed"}],
         "limitations": ["Not executed"], "uncertain_effects": [], "next_actions": [],
-        "artifacts": [{"kind": "report", "artifact_id": draft["output"]["artifact_rules"][0]["artifact_id"], "label": "Unapproved file"}]}
+        "artifacts": [{"artifact_id": "report-file", "label": "Unapproved file", "local_path": "/not-created.txt",
+                       "media_type": "text/plain", "source_refs": []}]}
     result = engine.call("daeri_result_submit", {"request_id": "unapproved-file", "task_id": saved["task_id"],
         "expected_task_revision": saved["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": report})
     assert result["status"] == "error", result

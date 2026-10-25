@@ -57,12 +57,12 @@ def exercise_stdio_read(registry, resource):
          "path_prefixes": {"file_path": ["src"]}},
     )
     expected_arguments = {
-        "project_id": "team/service", "ref": "main", "file_path": "src/main.py",
+        "project_id": "team/service", "ref": "main", "file_path": "src/main.py", "limit": 20,
     }
     assert invocation.prepared_request == {
         "tool_name": "get_repository_file", "arguments": expected_arguments,
     }
-    assert invocation.access == {"fields": ["file_path", "project_id", "ref"]}
+    assert invocation.access == {"fields": ["file_path", "limit", "project_id", "ref"]}
     assert profile == original_profile
 
     result = registry.execute(invocation)

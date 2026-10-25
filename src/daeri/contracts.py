@@ -219,38 +219,13 @@ class ResourceOutputRule(InputModel):
     masking: list[MaskingRule]
 
 
-class TableSourceRule(InputModel):
-    source_id: NonEmptyString
-    step_id: NonEmptyString
-    rows_pointer: JsonPointer
-    key_pointers: Annotated[list[JsonPointer], AfterValidator(unique_ids), Field(json_schema_extra={"uniqueItems": True})]
-
-
-class TableRule(InputModel):
-    table_id: NonEmptyString
-    sources: Annotated[list[TableSourceRule], Field(min_length=1)]
-    join_mode: Literal["none", "inner", "full"]
-    coverage: Literal["complete", "selected"]
-    allowed_operations: Annotated[list[Literal["copy", "equal", "sum", "difference", "ratio", "missing"]], AfterValidator(unique_ids), Field(min_length=1, json_schema_extra={"uniqueItems": True})]
-    max_rows: Annotated[int, Field(ge=1, le=10000)]
-    ratio_scale: Annotated[int, Field(ge=0, le=18)] | None
-
-
-class ArtifactRule(InputModel):
-    artifact_id: NonEmptyString
-    format_id: NonEmptyString
-    format_contract_ref: NonEmptyString
-    input_kind: NonEmptyString
-    options: JsonObject
-    max_bytes: Annotated[int, Field(ge=1, le=10485760)]
-
-
 class PlanOutput(InputModel):
     format: NonEmptyString
     destination: NonEmptyString
     resource_rules: list[ResourceOutputRule]
-    table_rules: list[TableRule]
-    artifact_rules: list[ArtifactRule]
+    # Retain old request shapes for idempotent replay, not new result generation.
+    table_rules: list[JsonObject] = Field(default_factory=list, deprecated=True)
+    artifact_rules: list[JsonObject] = Field(default_factory=list, deprecated=True)
 
 
 class InputBinding(InputModel):
@@ -501,6 +476,7 @@ class WorkerAssignment(InputModel):
 class WorkerCall(InputModel):
     step_id: NonEmptyString
     call_id: NonEmptyString
+    capability_id: NonEmptyString = Field(default=None)
     parameters: JsonObject
     bindings: list[BindingSelection] = Field(default_factory=list)
 

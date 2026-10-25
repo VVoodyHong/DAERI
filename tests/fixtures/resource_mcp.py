@@ -17,7 +17,7 @@ async def tools():
     return [Tool(name="get_repository_file", description="fixture " + mode,
                  inputSchema={"type": "object", "properties": {
                      "project_id": {"type": "string"}, "ref": {"type": "string"},
-                     "file_path": {"type": "string"}, "limit": {"type": "integer"}},
+                     "file_path": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
                      "required": ["project_id", "ref", "file_path"], "additionalProperties": False},
                  outputSchema={"type": "object", "properties": {"body": {"type": "string"}},
                                "required": ["body"], "additionalProperties": False})]

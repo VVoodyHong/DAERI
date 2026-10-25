@@ -36,7 +36,7 @@ def executable(path, content):
     path.chmod(0o755)
 
 
-def fake_uv(path, *, fail=0, local_embedding=False):
+def fake_uv(path, *, fail=0, local_embedding=False, runtime_ready=True):
     path.parent.mkdir(parents=True, exist_ok=True)
     executable(path,
         "import json, os, pathlib, sys\n"
@@ -54,7 +54,7 @@ def fake_uv(path, *, fail=0, local_embedding=False):
         f"assert sys.argv[1:] == ['sync', '--managed-python', '--no-config', '--frozen', '--no-dev', '--no-editable', '--project', os.getcwd()] + {['--extra', 'local-embedding'] if local_embedding else []!r}\n"
         "target = pathlib.Path(os.environ['UV_PROJECT_ENVIRONMENT']) / 'bin/python'\n"
         "target.parent.mkdir(parents=True, exist_ok=True)\n"
-        f"target.write_text('#!{sys.executable}\\nimport json, sys\\nif sys.argv[1:3]==[\"-I\",\"-c\"]: sys.exit(0)\\nassert sys.argv[1:]==[\"-I\",\"-m\",\"daeri.cli\",\"check\"]\\nprint(json.dumps(dict(ready=True)))\\n')\n"
+        f"target.write_text('#!{sys.executable}\\nimport json, runpy, sys\\nif sys.argv[1:3]==[\"-I\",\"-c\"]: sys.exit(0)\\nif len(sys.argv)==3 and sys.argv[1]==\"-I\" and sys.argv[2].endswith(\"/register_mcp.py\"): runpy.run_path(sys.argv[2], run_name=\"__main__\"); sys.exit(0)\\nassert sys.argv[1:]==[\"-I\",\"-m\",\"daeri.cli\",\"check\"]\\nprint(json.dumps(dict(ready={runtime_ready!r})))\\nsys.exit({0 if runtime_ready else 1})\\n')\n"
         "target.chmod(0o755)\n")
 
 
@@ -115,11 +115,29 @@ def test_failed_prepare_preserves_old_environment_and_profile_data(installation)
     fake_uv(root / '.runtime/uv.exe', fail=29)
     (root / '.venv').mkdir()
     (root / '.venv/previous-good').write_text('keep')
+    (root / '.mcp.json').write_text('{"mcpServers":{"existing":{}}}\n')
     (home / 'profile.json').write_text('keep profile')
     result = prepare(installation, '--prepare')
     assert result.returncode == 29
     assert (root / '.venv/previous-good').read_text() == 'keep'
     assert (home / 'profile.json').read_text() == 'keep profile'
+    assert (root / '.mcp.json').read_text() == '{"mcpServers":{"existing":{}}}\n'
+    assert not list(root.glob('.venv.prepare.*'))
+    assert not (root / '.daeri-setup.lock').exists()
+
+
+def test_failed_candidate_check_preserves_diagnostic_and_previous_installation(installation):
+    root, _, _, _ = installation
+    fake_uv(root / '.runtime/uv.exe', runtime_ready=False)
+    (root / '.venv').mkdir()
+    (root / '.venv/previous-good').write_text('keep')
+    (root / '.mcp.json').write_text('{"mcpServers":{"existing":{}}}\n')
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert json.loads(result.stderr)['ready'] is False
+    assert (root / '.venv/previous-good').read_text() == 'keep'
+    assert (root / '.mcp.json').read_text() == '{"mcpServers":{"existing":{}}}\n'
     assert not list(root.glob('.venv.prepare.*'))
     assert not (root / '.daeri-setup.lock').exists()
 
@@ -211,15 +229,59 @@ def test_parallel_prepare_is_rejected_before_any_install(installation):
     assert not (root / '.venv').exists()
 
 
-def test_plugin_configs_use_the_same_offline_os_independent_entrypoint():
-    claude_servers = json.loads((ROOT / '.mcp.json').read_text())['mcpServers']
-    codex_servers = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']
-    assert set(claude_servers) == set(codex_servers) == {'operations'}
-    claude, codex = claude_servers['operations'], codex_servers['operations']
-    for server, variable in [(claude, '${CLAUDE_PLUGIN_ROOT}'), (codex, '${PLUGIN_ROOT}')]:
-        assert server['command'] == variable + '/.venv/bin/python.exe'
-        assert server['args'] == ['-I', '-m', 'daeri.server']
-        assert server['env'] == {'__PYVENV_LAUNCHER__': ''}
+def test_plugin_manifests_allow_skill_entry_without_runtime_mcp():
+    for name in ('codex', 'claude'):
+        manifest = json.loads((ROOT / f'.{name}-plugin/plugin.json').read_text())
+        assert manifest['skills'] == './skills/'
+        assert not manifest.get('mcpServers')
+
+
+def test_successful_prepare_registers_the_prepared_runtime(installation):
+    root, _, _, _ = installation
+    fake_uv(root / '.runtime/uv.exe')
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 0, result.stderr
+    assert json.loads((root / '.mcp.json').read_text()) == {'mcpServers': {
+        'operations': {
+            'command': str(root / '.venv/bin/python.exe'),
+            'args': ['-I', '-m', 'daeri.server'],
+            'env': {'__PYVENV_LAUNCHER__': ''},
+        },
+    }}
+
+
+@pytest.mark.parametrize('previous_environment', [False, True])
+def test_failed_mcp_registration_restores_previous_environment(installation, previous_environment):
+    root, _, _, _ = installation
+    fake_uv(root / '.runtime/uv.exe')
+    if previous_environment:
+        (root / '.venv').mkdir()
+        (root / '.venv/previous-good').write_text('keep')
+    (root / '.mcp.json').mkdir()  # An invalid destination blocks atomic publication.
+    result = prepare(installation, '--prepare')
+    assert result.returncode != 0
+    assert result.stdout == ''
+    if previous_environment:
+        assert (root / '.venv/previous-good').read_text() == 'keep'
+    else:
+        assert not (root / '.venv').exists()
+    assert (root / '.mcp.json').is_dir()
+    assert not list(root.glob('.venv.prepare.*'))
+    assert not (root / '.venv.previous').exists()
+    assert not (root / '.daeri-setup.lock').exists()
+    assert not list(root.glob('.mcp.prepare.*'))
+
+
+def test_registration_rejects_missing_runtime_without_creating_config(tmp_path):
+    root = tmp_path / 'unprepared plugin'
+    shutil.copytree(ROOT / 'scripts', root / 'scripts')
+    result = subprocess.run(
+        [sys.executable, '-I', str(root / 'scripts/register_mcp.py')],
+        text=True, capture_output=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert 'DAERI MCP registration failed' in result.stderr
+    assert not (root / '.mcp.json').exists()
 
 
 def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_directory(tmp_path, plugin_environment):
@@ -232,9 +294,15 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
     environment = plugin / '.venv'
     portable = environment / 'bin/python.exe'
     subprocess.run([str(portable), '-I', '-c', 'import pathlib,sys; assert pathlib.Path(sys.prefix) == pathlib.Path(sys.argv[1])', str(environment)], check=True)
-    config = json.loads((ROOT / '.codex-plugin/plugin.json').read_text())['mcpServers']['operations']
-    args = [arg.replace('${PLUGIN_ROOT}', str(plugin)) for arg in config['args']]
-    command = config['command'].replace('${PLUGIN_ROOT}', str(plugin))
+    registered = subprocess.run(
+        [str(portable), '-I', str(plugin / 'scripts/register_mcp.py')],
+        text=True, capture_output=True, timeout=10,
+    )
+    assert registered.returncode == 0, registered.stderr
+    assert registered.stdout == ''
+    config = json.loads((plugin / '.mcp.json').read_text())['mcpServers']['operations']
+    args = config['args']
+    command = config['command']
     env = {'DAERI_DATA_DIR': str(tmp_path / 'data'), 'PYTHONHOME': str(tmp_path / 'foreign-python'),
            'PYTHONPATH': str(tmp_path / 'foreign-packages'), 'UV_NO_PROJECT': 'true',
            'UV_ISOLATED': 'true', 'UV_PROJECT_ENVIRONMENT': str(tmp_path / 'foreign-venv'),
@@ -251,6 +319,66 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
                 assert {'daeri_task_create', 'daeri_plan_submit', 'daeri_approval_request'} <= names
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap behavior')
+@pytest.mark.parametrize('block_registration', [False, True])
+def test_windows_preparation_registers_mcp_or_restores_environment(plugin_environment, tmp_path, block_registration):
+    root = plugin_environment
+    marker = root / '.venv/previous-good'
+    marker.write_text('keep')
+    if block_registration:
+        (root / '.mcp.json').mkdir()
+    private = root / '.runtime/uv.exe'
+    private.parent.mkdir()
+    source = '''public class FakeUv {
+        static void Copy(string source, string target) {
+            System.IO.Directory.CreateDirectory(target);
+            foreach (string file in System.IO.Directory.GetFiles(source))
+                System.IO.File.Copy(file, System.IO.Path.Combine(target, System.IO.Path.GetFileName(file)), true);
+            foreach (string directory in System.IO.Directory.GetDirectories(source))
+                Copy(directory, System.IO.Path.Combine(target, System.IO.Path.GetFileName(directory)));
+        }
+        public static int Main(string[] args) {
+            if (args.Length == 1 && args[0] == "--version") {
+                System.Console.WriteLine("uv 0.11.28"); return 0;
+            }
+            if (args[0] == "venv") {
+                Copy(System.Environment.GetEnvironmentVariable("DAERI_TEST_SOURCE_ENVIRONMENT"), args[args.Length - 1]);
+                System.IO.File.Delete(System.IO.Path.Combine(args[args.Length - 1], "previous-good"));
+                return 0;
+            }
+            return args[0] == "sync" ? 0 : 2;
+        }
+    }'''
+    compiler = (
+        "Add-Type -TypeDefinition '" + source + "' -OutputType ConsoleApplication -OutputAssembly '"
+        + str(private).replace("'", "''") + "'"
+    )
+    subprocess.run(['powershell', '-NoProfile', '-Command', compiler],
+                   check=True, capture_output=True, text=True, timeout=30)
+    result = subprocess.run([
+        'powershell', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned',
+        '-File', str(root / 'scripts/setup.ps1'), '-Prepare',
+    ], env=dict(os.environ, DAERI_DATA_DIR=str(tmp_path / 'data'),
+                DAERI_TEST_SOURCE_ENVIRONMENT=str(root / '.venv')),
+       text=True, capture_output=True, timeout=60)
+    if block_registration:
+        assert marker.read_text() == 'keep'
+        assert result.returncode != 0
+        assert result.stdout == ''
+        assert (root / '.mcp.json').is_dir()
+    else:
+        assert not marker.exists()
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)['ready'] is True
+        config = json.loads((root / '.mcp.json').read_text())['mcpServers']['operations']
+        assert config['command'] == str(root / '.venv/bin/python.exe')
+        assert config['args'] == ['-I', '-m', 'daeri.server']
+    assert not (root / '.venv.previous').exists()
+    assert not list(root.glob('.venv.prepare.*'))
+    assert not list(root.glob('.mcp.prepare.*'))
+    assert not (root / '.daeri-setup.lock').exists()
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap behavior')
@@ -323,6 +451,7 @@ def test_runtime_check_does_not_require_global_uv(installation):
     result = prepare(installation, '--check')
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['ready'] is True
+    assert not (root / '.mcp.json').exists()
 
 
 def test_base_server_and_environment_check_do_not_load_local_embedding_runtime(tmp_path):

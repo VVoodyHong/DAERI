@@ -115,6 +115,44 @@ def test_different_account_profile_is_not_overwritten(tmp_path):
     assert path.read_text() == content
 
 
+@pytest.mark.parametrize('session_settings', [
+    'sso_start_url = https://other.awsapps.com/start\nsso_region = ap-northeast-2\n',
+    'sso_start_url = https://example.awsapps.com/start\nsso_region = eu-west-1\n',
+])
+def test_new_provider_profile_preserves_an_existing_session_with_different_context(tmp_path, session_settings):
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    path = aws / 'config'
+    original = ('[profile unrelated]\nsso_session = daeri-operations\n'
+                '[sso-session daeri-operations]\n' + session_settings)
+    path.write_text(original)
+    client = Client()
+    with pytest.raises(ProviderLoginError):
+        device_login(settings(), client=client, home=tmp_path, emit=lambda _: None,
+                     sleep=lambda _: None, monotonic=lambda: 0)
+    assert client.requests == []
+    assert path.read_text() == original
+    assert not list(aws.glob('sso/cache/*.json'))
+
+
+def test_new_provider_profile_reuses_an_existing_matching_session(tmp_path):
+    aws = tmp_path / '.aws'
+    aws.mkdir()
+    path = aws / 'config'
+    path.write_text('[profile unrelated]\nsso_session = daeri-operations\n'
+                    '[sso-session daeri-operations]\n'
+                    'sso_start_url = https://example.awsapps.com/start\nsso_region = ap-northeast-2\n')
+    result = device_login(settings(start_url=None, sso_region=None), client=Client(), home=tmp_path,
+                          emit=lambda _: None, sleep=lambda _: None, monotonic=lambda: 0)
+    assert result['authenticated'] is True
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(path)
+    assert parser['profile unrelated']['sso_session'] == 'daeri-operations'
+    assert parser['profile operations']['sso_session'] == 'daeri-operations'
+    assert parser['sso-session daeri-operations']['sso_start_url'] == 'https://example.awsapps.com/start'
+    assert parser['sso-session daeri-operations']['sso_region'] == 'ap-northeast-2'
+
+
 def test_expiry_during_poll_delay_prevents_late_token_request(tmp_path):
     clock = [0]
     client = Client()
@@ -165,6 +203,29 @@ def test_provider_login_remains_a_standalone_isolated_script(tmp_path):
     assert result.returncode == 1
     assert json.loads(result.stdout)['error']['code'] == 'AUTHENTICATION_REQUIRED'
     assert result.stderr == ''
+
+
+@pytest.mark.parametrize('source', ['environment', 'service_environment', 'configuration'])
+def test_provider_client_uses_the_region_endpoint_despite_configured_overrides(tmp_path, monkeypatch, source):
+    pytest.importorskip('botocore', reason='Provider SDK is installed only in the Infra recipe environment.')
+    from daeri.provider_login import _client
+    path = tmp_path / 'config'
+    path.write_text('[default]\n' + ('endpoint_url = https://alternate.example.test\n'
+                                     if source == 'configuration' else ''))
+    monkeypatch.setenv('AWS_CONFIG_FILE', str(path))
+    monkeypatch.setenv('AWS_SHARED_CREDENTIALS_FILE', str(tmp_path / 'credentials'))
+    monkeypatch.setenv('AWS_PROFILE', 'default')
+    monkeypatch.setenv('AWS_EC2_METADATA_DISABLED', 'true')
+    for field in ('AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_SSO_OIDC'):
+        monkeypatch.delenv(field, raising=False)
+    if source != 'configuration':
+        field = 'AWS_ENDPOINT_URL' if source == 'environment' else 'AWS_ENDPOINT_URL_SSO_OIDC'
+        monkeypatch.setenv(field, 'https://alternate.example.test')
+    client = _client('ap-northeast-2')
+    try:
+        assert client.meta.endpoint_url == 'https://oidc.ap-northeast-2.amazonaws.com'
+    finally:
+        client.close()
 
 
 def test_existing_quoted_provider_profile_and_sso_session_are_reused(tmp_path):

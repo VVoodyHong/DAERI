@@ -126,7 +126,7 @@ def _check_busy(store, identity):
 
 
 def _managed_path(store, reference, directory=False):
-    pattern = (r'resources/processes/[0-9a-f]{64}|setup/[A-Za-z0-9][A-Za-z0-9_-]{0,63}' if directory else
+    pattern = (r'(?:resources/processes|workspaces)/[0-9a-f]{64}|setup/[A-Za-z0-9][A-Za-z0-9_-]{0,63}' if directory else
                r'(?:profiles|records)/[0-9a-f]{32}\.json|artifacts/[0-9a-f]{32}\.[a-z0-9]{1,8}|resources/[0-9a-f]{64}\.json|config/profiles/[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.yaml')
     if not isinstance(reference, str) or not re.fullmatch(pattern, reference):
         raise StoreError('STORE_UNAVAILABLE', 'The deletion manifest contains an unmanaged path.')

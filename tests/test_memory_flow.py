@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -36,22 +37,38 @@ def remembered(tmp_path, request):
         assert first["status"] == "ok", first
         second = engine.call("daeri_capability_execute", execution(saved, {**approved, "task_revision": first["data"]["task_revision"]}, draft["steps"][1], call_id="call-2"))
         assert second["status"] == "ok", second
+        body = comparison_report(first['data'], second['data'])
+        sources = [first['data']['result_ref'], second['data']['result_ref']]
+        body['artifacts'] = [host_file(engine, saved['task_id'], 'comparison', sources,
+            text='ID,A,B,Difference\none,10,7,3\n', media_type='text/csv', extension='csv')]
         report = engine.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
             "expected_task_revision": second["data"]["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
-            "report": comparison_report(first["data"], second["data"])})
+            "report": body, 'memory_candidates': [{'draft': procedure(), 'source_refs': sources}]})
         assert report["status"] == "ok", report
         yield engine, profile, saved, draft, approved, first["data"], second["data"], report["data"]
     finally:
         engine.close()
 
 
+def procedure():
+    return {'category': 'procedure', 'statement': 'Cache 비교 작업은 두 리소스의 동일 식별자 필드를 대조하고 차이를 검산한다',
+        'applicability': '현재 profile의 Cache 결과 비교', 'instance_ids': ['cache-a', 'cache-b'],
+        'verification_method': '두 하위 MCP의 실제 결과와 호스트가 만든 비교 파일을 대조'}
+
+
+def host_file(engine, task_id, artifact_id, sources, *, text='과거 확인한 비교 절차를 참고했다',
+              media_type='text/plain', extension='txt'):
+    path = Path(engine.store.artifact_workspace(task_id)) / f'{artifact_id}.{extension}'
+    path.write_text(text, encoding='utf-8')
+    return {'artifact_id': artifact_id, 'label': artifact_id, 'local_path': str(path),
+            'media_type': media_type, 'source_refs': sources}
+
+
 def knowledge_args(data):
     engine, profile, saved, draft, approved, first, second, report = data
     return {"request_id": "remember", "task_id": saved["task_id"], "expected_task_revision": report["task_revision"],
         "operation": "store", "source_refs": [report["report_ref"]], "reason": "다음 비교 업무에서 확인한 절차를 재사용",
-        "draft": {"category": "procedure", "statement": "Cache 비교 작업은 두 리소스의 동일 식별자 필드를 대조하고 차이를 검산한다",
-            "applicability": "현재 profile의 Cache 결과 비교", "instance_ids": ["cache-a", "cache-b"],
-            "verification_method": "두 하위 MCP의 실제 결과와 검증표·CSV 생성 결과를 대조"}}
+        "draft": procedure()}
 
 
 def new_task(engine, profile, key="next"):
@@ -99,8 +116,9 @@ def test_long_term_knowledge_remains_without_recreating_expired_source_bodies(re
     task = new_task(engine, profile)
     found = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "Cache 비교"})
     assert found["status"] == "partial", found
-    assert found["data"]["items"][0]["memory_ref"] == reference
-    assert found["data"]["items"][0]["sources"] == []
+    recalled = {item['memory_ref']: item for item in found['data']['items']}
+    assert reference in recalled
+    assert recalled[reference]['sources'] == []
     assert found["data"]["limitations"]
     assert engine.memory.can_export(profile["profile_id"], reference) is True
     old = engine.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": first["result_ref"]})
@@ -115,7 +133,9 @@ def test_verified_artifact_resolves_to_original_observations_for_memory(remember
     result = engine.call("daeri_memory_update", args)
     assert result["status"] == "partial", result
     item = engine.memory.get(profile["profile_id"], result["data"]["memory_ref"])
-    assert {source["record_ref"] for source in item["sources"]} == {first["result_ref"], second["result_ref"]}
+    request_ref = engine.store.get_task(saved['task_id'])['request_ref']
+    assert {source["record_ref"] for source in item["sources"]} == {
+        request_ref, first['result_ref'], second['result_ref']}
 
 
 def test_exportable_past_memory_can_be_included_in_current_report_file(remembered):
@@ -127,8 +147,6 @@ def test_exportable_past_memory_can_be_included_in_current_report_file(remembere
     search = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "Cache 비교"})
     selected = copy.deepcopy(draft)
     selected.update(memory_search_refs=[search["data"]["memory_search_ref"]], memory_refs=[reference], memory_limitations=[])
-    selected["output"]["artifact_rules"] = [{"artifact_id": "report-text", "format_id": "text",
-        "format_contract_ref": "format_text_v1", "input_kind": "report", "options": {}, "max_bytes": 10000}]
     saved = engine.call("daeri_plan_submit", {"request_id": "memory-plan", "task_id": task["task_id"],
         "expected_task_revision": task["task_revision"], "draft": selected})["data"]
     approval = approve(engine, saved)
@@ -136,7 +154,8 @@ def test_exportable_past_memory_can_be_included_in_current_report_file(remembere
     b = engine.call("daeri_capability_execute", execution(saved, {**approval, "task_revision": a["task_revision"]}, selected["steps"][1], call_id="export-b"))["data"]
     body = comparison_report(a, b)
     body["findings"].append({"kind": "memory", "text": "과거 확인한 절차를 참고했다", "evidence_refs": [reference]})
-    body["artifacts"] = [{"kind": "report", "artifact_id": "report-text", "label": "기억을 참고한 보고"}]
+    body['artifacts'] = [host_file(engine, task['task_id'], 'report-text',
+        [a['result_ref'], b['result_ref'], reference])]
     result = engine.call("daeri_result_submit", {"request_id": "memory-report", "task_id": task["task_id"],
         "expected_task_revision": b["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": body})
     assert result["status"] == "ok", result
@@ -159,8 +178,6 @@ def test_current_plan_blocks_one_contributing_memory_source_in_report_file(remem
         memory_refs=[reference], memory_limitations=[],
         completion_criteria=[{"criterion_id": "explain", "description": "과거 비교 절차 설명", "required": True, "step_ids": []}])
     selected["output"]["table_rules"] = []
-    selected["output"]["artifact_rules"] = [{"artifact_id": "memory-report", "format_id": "text",
-        "format_contract_ref": "format_text_v1", "input_kind": "report", "options": {}, "max_bytes": 10000}]
     rule = selected["output"]["resource_rules"][1]
     field = {"segments": [{"key": "data"}, {"key": "rows"}, {"each": True}, {"key": "id"}]}
     if restriction in {"empty", "partial"}:
@@ -189,7 +206,7 @@ def test_current_plan_blocks_one_contributing_memory_source_in_report_file(remem
         "findings": [{"kind": "memory", "text": "두 리소스의 동일 식별자를 대조한다", "evidence_refs": [reference]}],
         "tables": [], "checks": [{"criterion_id": "explain", "status": "met", "method": "과거 절차 근거 확인", "evidence_refs": [reference]}],
         "limitations": [], "uncertain_effects": [], "next_actions": [],
-        "artifacts": [{"kind": "report", "artifact_id": "memory-report", "label": "과거 절차 보고"}]}
+        "artifacts": [host_file(engine, task['task_id'], 'memory-report', [reference])]}
     before = engine.store.list_records(task["task_id"])
     submitted = engine.call("daeri_result_submit", {"request_id": "restricted-report", "task_id": task["task_id"],
         "expected_task_revision": approval["task_revision"], "plan_id": saved["data"]["plan_id"],
@@ -207,7 +224,9 @@ def test_actual_source_bound_memory_and_artifact_share_unbounded_original_retent
     assert update["data"]["expires_at"] is None
     item = engine.memory.get(profile["profile_id"], update["data"]["memory_ref"])
     assert item["retention"] == "source_bound"
-    assert len(item["sources"]) == 2
+    request_ref = engine.store.get_task(saved['task_id'])['request_ref']
+    assert {source['record_ref'] for source in item['sources']} == {
+        request_ref, first['result_ref'], second['result_ref']}
     artifact = engine.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": report["artifact_refs"][0]})
     assert artifact["status"] == "ok", artifact
     assert artifact["data"]["managed_file"]["expires_at"] is None
@@ -235,8 +254,6 @@ def test_actual_engine_blocks_model_only_values_in_report_files(remembered, form
     draft["output"]["table_rules"] = []
     for rule in draft["output"]["resource_rules"]:
         rule["export_fields"] = []
-    draft["output"]["artifact_rules"] = [{"artifact_id": "private-report", "format_id": format_id,
-        "format_contract_ref": f"format_{format_id}_v1", "input_kind": "report", "options": {}, "max_bytes": 10000}]
     planned = engine.call("daeri_plan_submit", {"request_id": "private-plan", "task_id": task["task_id"], "expected_task_revision": task["task_revision"], "draft": draft})
     assert planned["status"] == "ok", planned
     permission = approve(engine, planned["data"])
@@ -246,7 +263,10 @@ def test_actual_engine_blocks_model_only_values_in_report_files(remembered, form
         "findings": [{"kind": "observation", "text": "private 10.00", "evidence_refs": [a["result_ref"]]}],
         "tables": [], "checks": [{"criterion_id": "read", "status": "met", "method": "실제 호출 결과 확인", "evidence_refs": [a["result_ref"], b["result_ref"]]}],
         "limitations": [], "uncertain_effects": [], "next_actions": [],
-        "artifacts": [{"kind": "report", "artifact_id": "private-report", "label": "모델만 볼 수 있는 결과"}]}
+        "artifacts": [host_file(engine, task['task_id'], 'private-report',
+            [a['result_ref'], b['result_ref']], text='private 10.00',
+            media_type='text/plain' if format_id == 'text' else 'application/json',
+            extension='txt' if format_id == 'text' else 'json')]}
     before = engine.store.list_records(task["task_id"])
     submitted = engine.call("daeri_result_submit", {"request_id": "private-report", "task_id": task["task_id"],
         "expected_task_revision": b["task_revision"], "plan_id": planned["data"]["plan_id"], "plan_version": planned["data"]["plan_version"], "report": private_report})

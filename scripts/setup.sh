@@ -107,7 +107,13 @@ if [ "$DAERI_MODE" = --prepare ] || [ "$DAERI_MODE" = --prepare-local-embedding 
     UV_PROJECT_ENVIRONMENT="$DAERI_CANDIDATE" "$DAERI_UV" "$@"
     ln -s python "$DAERI_CANDIDATE/bin/python.exe"
     "$DAERI_CANDIDATE/bin/python.exe" -I -c 'import pathlib,sys; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve()' "$DAERI_CANDIDATE"
-    "$DAERI_CANDIDATE/bin/python.exe" -I -m daeri.cli check
+    if DAERI_CHECK_RESULT=$("$DAERI_CANDIDATE/bin/python.exe" -I -m daeri.cli check); then
+        :
+    else
+        DAERI_CHECK_EXIT=$?
+        printf '%s\n' "$DAERI_CHECK_RESULT" >&2
+        exit "$DAERI_CHECK_EXIT"
+    fi
     if [ -e "$DAERI_ROOT/.venv.previous" ]; then
         printf 'DAERI preparation is incomplete: a previous environment backup already exists; inspect it before retrying.\n' >&2
         exit 1
@@ -117,9 +123,15 @@ if [ "$DAERI_MODE" = --prepare ] || [ "$DAERI_MODE" = --prepare-local-embedding 
         [ ! -e "$DAERI_ROOT/.venv.previous" ] || mv "$DAERI_ROOT/.venv.previous" "$DAERI_ROOT/.venv"
         exit 1
     fi
+    if ! "$DAERI_ROOT/.venv/bin/python.exe" -I "$DAERI_ROOT/scripts/register_mcp.py"; then
+        mv "$DAERI_ROOT/.venv" "$DAERI_CANDIDATE"
+        [ ! -e "$DAERI_ROOT/.venv.previous" ] || mv "$DAERI_ROOT/.venv.previous" "$DAERI_ROOT/.venv"
+        exit 1
+    fi
     DAERI_CANDIDATE=
     # A checked new environment is published; remove only the old program environment.
     rm -rf -- "$DAERI_ROOT/.venv.previous"
+    printf '%s\n' "$DAERI_CHECK_RESULT"
     exit 0
 fi
 

@@ -32,15 +32,18 @@ def inputs():
 
 def test_valid_typed_plan_preserves_engine_dictionary_contract():
     profile, draft = inputs()
-    assert validate_plan(profile, draft, Registry(), []) == ["contract"]
+    draft["output"].pop("table_rules")
+    draft["output"].pop("artifact_rules")
+    assert validate_plan(profile, draft, Registry()) == ["contract"]
     assert draft["steps"][0].get("conditions") is None
 
 
-def test_direct_plan_validation_rejects_null_table_source_as_plan_error():
+@pytest.mark.parametrize("field", ["table_rules", "artifact_rules"])
+def test_new_plans_reject_legacy_result_generation_rules(field):
     profile, draft = inputs()
-    draft["output"]["table_rules"] = [{"table_id": "table", "sources": [None], "join_mode": "none", "coverage": "selected", "allowed_operations": ["copy"], "max_rows": 10, "ratio_scale": None}]
+    draft["output"][field] = [{"legacy": "accepted only for existing request replay"}]
     with pytest.raises(StoreError, match="PLAN_INVALID"):
-        validate_plan(profile, draft, Registry(), [])
+        validate_plan(profile, draft, Registry())
 
 
 @pytest.mark.parametrize("defect", ["unknown_dependency", "mask_overlap", "selector_duplicate", "scope_above_ceiling"])

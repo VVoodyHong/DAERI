@@ -12,45 +12,9 @@ from .storage import StoreError
 _RETRY = {'STORE_UNAVAILABLE', 'RECORD_UNAVAILABLE', 'MEMORY_INDEX_INCOMPLETE'}
 
 
-def _fallback(engine, task, plan, report):
-    if not plan:
-        return []
-    rules = {rule['instance_id']: rule['memory'] for rule in plan['draft']['output']['resource_rules']}
-    criteria = {item['criterion_id']: item for item in plan['draft']['completion_criteria']}
-    verified = {step for check in report.get('checks', []) if check.get('status') == 'met'
-                for step in criteria.get(check['criterion_id'], {}).get('step_ids', [])}
-    resources = {item['instance_id']: item for item in task['profile_snapshot']['resources']}
-    sources, instances, methods = [], set(), set()
-    for call in task['calls']:
-        if len(sources) >= 100:
-            break
-        memory = rules.get(call['instance_id'], {})
-        if (call['step_id'] not in verified or call['call_state'] != 'completed'
-                or call.get('error_code') or not call.get('result_ref')
-                or 'procedure' not in memory.get('categories', []) or memory.get('retention') == 'none'):
-            continue
-        try:
-            evidence = engine._load_evidence(task, call['result_ref'])
-        except StoreError:
-            continue
-        if evidence.get('source_complete') is not True or not evidence.get('provided_paths'):
-            continue
-        sources.append(call['result_ref'])
-        instances.add(call['instance_id'])
-        methods.add(resources[call['instance_id']]['type'] + ' ' + call['capability_id'])
-    if not sources:
-        return []
-    return [{'draft': {'category': 'procedure',
-        'statement': '검증한 수행 방법: ' + ', '.join(sorted(methods)) + '. 승인 범위를 조회하고 완료 조건을 확인했다.',
-        'applicability': '같은 profile과 실제 대상의 동일 기능을 이용한 업무. 재실행 전에 현재 계약과 범위를 확인한다.',
-        'instance_ids': sorted(instances), 'verification_method': '보존된 성공 호출과 완료 검사 대조'},
-        'source_refs': list(dict.fromkeys(sources))[:100]}]
-
-
-def enqueue(engine, task, plan, args, report_ref):
-    candidates = args.get('memory_candidates') or _fallback(engine, task, plan, args['report'])
+def enqueue(engine, task, args, report_ref):
     items = []
-    for candidate in candidates:
+    for candidate in args.get('memory_candidates', []):
         if redact(candidate) != candidate:
             items.append({'state': 'skipped', 'error_code': 'RESULT_VALIDATION_FAILED'})
         else:
@@ -59,7 +23,10 @@ def enqueue(engine, task, plan, args, report_ref):
                        task, automatic=True, validate_only=True)
             except (StoreError, OSError, sqlite3.Error) as error:
                 code = error.code if isinstance(error, StoreError) else 'STORE_UNAVAILABLE'
-                items.append({'state': 'pending' if code in _RETRY else 'skipped', 'error_code': code})
+                item = {'state': 'skipped', 'error_code': code}
+                if code in _RETRY:
+                    item['next_action'] = 'resubmit'
+                items.append(item)
             else:
                 items.append({'state': 'pending', 'candidate': copy.deepcopy(candidate)})
     if not items:
@@ -90,13 +57,10 @@ def _run(engine, task_id, ref):
                 if 'memory_ref' not in item:
                     candidate = item.get('candidate')
                     if candidate is None:
-                        report = engine.store.read_record(task_id, payload['report_ref'])['payload']
-                        candidates = _fallback(engine, task, engine._current_plan(task), report)
-                        if not candidates:
-                            item.update(state='skipped', error_code='RESULT_VALIDATION_FAILED')
-                            _publish(engine, task_id, ref, payload)
-                            continue
-                        candidate = candidates[0]
+                        item.update(state='skipped', error_code=item.get('error_code', 'RESULT_VALIDATION_FAILED'),
+                                    next_action='resubmit')
+                        _publish(engine, task_id, ref, payload)
+                        continue
                     result = update(engine, {'operation': 'store', **candidate,
                         'source_refs': candidate['source_refs'], 'reason': '검증한 보고 후 자동 기억'},
                         task, automatic=True)

@@ -11,41 +11,41 @@ from ..provider_login import PROFILE_NAME_PATTERN, provider_section
 from ..storage import StoreError
 
 
-AWS_READ = {
-    ("ec2", "describe-instances"), ("ec2", "describe-security-groups"),
-    ("ec2", "describe-vpcs"), ("ec2", "describe-subnets"), ("ec2", "describe-volumes"),
-    ("rds", "describe-db-instances"), ("rds", "describe-db-clusters"),
-    ("logs", "describe-log-groups"), ("cloudwatch", "list-metrics"), ("sts", "get-caller-identity"),
-}
-
-
 def _aws(parameters, constraints, scope):
     field = constraints.get("command_field", "cli_command")
     command = parameters.get(field)
+    _guard(parameters, constraints)
+    _guard(parameters, scope)
+    if isinstance(command, list) and command:
+        return {'commands': [_aws_command(value, constraints.get('region')) for value in command]}
+    return _aws_command(command, constraints.get('region'))
+
+
+def _aws_command(command, region):
     if not isinstance(command, str) or any(char in command for char in "\n\r;|&`$<>\\"):
         denied("Only a parsed, approved read operation is supported.")
     try:
         tokens = shlex.split(command)
     except ValueError:
         denied()
-    if len(tokens) < 3 or tokens[0] != "aws" or tuple(tokens[1:3]) not in AWS_READ:
+    if len(tokens) < 3 or tokens[0] != "aws" or any(token.startswith("-") for token in tokens[1:3]):
         denied()
     if any(any(scheme in value.lower() for scheme in ("file:", "http:", "https:")) for value in tokens):
         denied()
-    forbidden = {"--endpoint-url", "--profile", "--debug", "--cli-input-json", "--cli-input-yaml", "--generate-cli-skeleton", "--output", "--query", "--no-verify-ssl", "--ca-bundle"}
+    forbidden = {"--endpoint-url", "--profile", "--debug", "--no-verify-ssl", "--ca-bundle"}
     flags = [token.split("=", 1)[0] for token in tokens[3:] if token.startswith("--")]
     if any(any(option.startswith(flag) for option in forbidden) for flag in flags):
         denied()
-    if any("--region".startswith(flag) and flag != "--region" for flag in flags) or flags.count("--region") != 1:
+    if any("--region".startswith(flag) and flag != "--region" for flag in flags) or flags.count("--region") > 1:
         denied()
-    region = constraints.get("region")
-    if not isinstance(region, str) or tokens.count("--region") != 1:
-        denied("An explicit, configured Infra region is required.")
-    index = tokens.index("--region")
-    if index + 1 >= len(tokens) or tokens[index + 1] != region:
-        denied()
-    _guard(parameters, constraints)
-    _guard(parameters, scope, cover=True)
+    if not isinstance(region, str) or not region:
+        denied("A configured Infra region is required.")
+    for index, token in enumerate(tokens):
+        if token == '--region':
+            if index + 1 >= len(tokens) or tokens[index + 1] != region:
+                denied()
+        elif token.startswith('--region=') and token.split('=', 1)[1] != region:
+            denied()
     return {"service": tokens[1], "operation": tokens[2], "region": region}
 
 
@@ -97,6 +97,9 @@ class AwsReadAdapter(ReadAdapter):
         if connection["transport"] != "stdio":
             return
         env = connection.get("env", {})
+        if any(item['constraints'].get('region', config['target'].get('region')) != config['target'].get('region')
+               for item in config.get('capabilities', [])):
+            raise StoreError('CONTEXT_CHANGED', 'The Infra command region differs from its registered target.')
         allowed = {"AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_API_MCP_PROFILE_NAME", "AWS_API_MCP_TELEMETRY"}
         if (any(key.startswith("AWS_") and key not in allowed for key in env)
                 or any(key in env for key in ("EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR"))

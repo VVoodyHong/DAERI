@@ -1,4 +1,4 @@
-"""Report completion durably learns approved procedures without a second host call."""
+"""Report completion durably saves host-selected knowledge without another host call."""
 
 import copy
 from contextlib import closing
@@ -35,27 +35,30 @@ def completed(engine, *, memory_none=False, provider="keyword_only"):
     first = engine.call('daeri_capability_execute', execution(saved, approved, draft['steps'][0]))['data']
     second = engine.call('daeri_capability_execute', execution(saved,
         {**approved, 'task_revision': first['task_revision']}, draft['steps'][1], call_id='call-2'))['data']
+    report = comparison_report(first, second)
     return profile, {'request_id': 'report', 'task_id': saved['task_id'],
         'expected_task_revision': second['task_revision'], 'plan_id': saved['plan_id'],
-        'plan_version': saved['plan_version'], 'report': comparison_report(first, second)}
+        'plan_version': saved['plan_version'], 'report': report,
+        'memory_candidates': [{'draft': {'category': 'procedure',
+            'statement': 'Cache 값을 비교할 때 동일한 기준의 get 조회 결과를 검산한다.',
+            'applicability': '이 profile의 캐시 비교', 'instance_ids': ['cache-a', 'cache-b'],
+            'verification_method': '실제 완료 조회와 비교 결과 대조'},
+            'source_refs': report['checks'][0]['evidence_refs']}]}
 
 
 @pytest.mark.parametrize('explicit_empty', [False, True])
-def test_report_alone_saves_verified_procedure_without_result_values(tmp_path, explicit_empty):
+def test_report_without_host_candidates_skips_memory(tmp_path, explicit_empty):
     with closing(Engine(tmp_path)) as engine:
         profile, args = completed(engine)
         if explicit_empty:
             args['memory_candidates'] = []
+        else:
+            args.pop('memory_candidates')
         result = engine.call('daeri_result_submit', args)
         assert result['status'] == 'ok', result
-        assert result['data']['memory']['state'] == 'ready'
-        assert len(result['data']['memory']['items']) == 1
-        item = engine.memory.get(profile['profile_id'], result['data']['memory']['items'][0]['memory_ref'])
-        assert item['category'] == 'procedure'
-        assert 'get' in item['statement'] and 'Cache' in item['statement']
-        assert '10.00' not in item['statement'] and '7.00' not in item['statement']
-        assert 'Difference is three' not in item['statement']
-        assert {source['record_ref'] for source in item['sources']} == set(args['report']['checks'][0]['evidence_refs'])
+        assert result['data']['memory'] == {'state': 'skipped', 'items': []}
+        assert engine.store._db.execute('SELECT count(*) FROM memory_heads').fetchone()[0] == 0
+        assert engine.store.get_task(args['task_id']).get('memory_job_refs', []) == []
         replay = engine.call('daeri_result_submit', args)
         assert replay['data']['task_revision'] == result['data']['task_revision']
         assert replay['data']['memory'] == result['data']['memory']
@@ -127,23 +130,43 @@ def test_memory_queue_is_internal_and_cannot_be_read_as_a_result(tmp_path):
         assert hidden['status'] == 'error' and hidden['error']['code'] == 'ACCESS_DENIED'
 
 
-def test_fallback_source_limit_keeps_contributors_and_references_together():
-    from types import SimpleNamespace
-    from daeri.automatic_memory import _fallback
+def test_candidate_validation_outage_requires_resubmission_without_persisting_unchecked_text(tmp_path, monkeypatch):
+    with closing(Engine(tmp_path)) as engine:
+        _, args = completed(engine)
+        statement = args['memory_candidates'][0]['draft']['statement']
+        original = engine.memory.save
+        def unavailable(*args, **kwargs):
+            if kwargs.get('validate_only'):
+                raise StoreError('STORE_UNAVAILABLE', 'temporarily unavailable')
+            return original(*args, **kwargs)
+        monkeypatch.setattr(engine.memory, 'save', unavailable)
+        result = engine.call('daeri_result_submit', args)
+        assert result['status'] == 'ok', result
+        assert result['data']['memory'] == {'state': 'skipped', 'items': [
+            {'state': 'skipped', 'error_code': 'STORE_UNAVAILABLE', 'next_action': 'resubmit'}]}
+        assert engine.store._db.execute('SELECT count(*) FROM memory_heads').fetchone()[0] == 0
+        assert engine.store._db.execute("SELECT count(*) FROM records WHERE kind='memory_pending'").fetchone()[0] == 0
+        for path in tmp_path.joinpath('records').iterdir():
+            assert statement.encode() not in path.read_bytes()
 
-    calls = [{'call_id': 'call-' + str(index), 'step_id': 'step-' + str(index),
-        'instance_id': 'cache-' + str(index), 'capability_id': 'get', 'call_state': 'completed',
-        'error_code': None, 'result_ref': 'result-' + str(index)} for index in range(101)]
-    task = {'calls': calls, 'profile_snapshot': {'resources': [
-        {'instance_id': call['instance_id'], 'type': 'Cache'} for call in calls]}}
-    rule = {'categories': ['procedure'], 'retention': 'long_term'}
-    plan = {'draft': {'purpose': 'Cache 비교', 'output': {'resource_rules': [
-        {'instance_id': call['instance_id'], 'memory': rule} for call in calls]},
-        'completion_criteria': [{'criterion_id': 'all', 'step_ids': [call['step_id'] for call in calls]}]}}
-    engine = SimpleNamespace(_load_evidence=lambda *args: {'source_complete': True, 'provided_paths': ['/data']})
-    candidate = _fallback(engine, task, plan, {'checks': [{'criterion_id': 'all', 'status': 'met'}]})[0]
-    assert len(candidate['source_refs']) == 100
-    assert candidate['draft']['instance_ids'] == sorted('cache-' + str(index) for index in range(100))
+
+def test_legacy_pending_job_without_a_candidate_requires_resubmission(tmp_path):
+    from daeri.automatic_memory import finish_report
+
+    with closing(Engine(tmp_path)) as engine:
+        _, args = completed(engine)
+        result = engine.call('daeri_result_submit', args)
+        assert result['data']['memory']['state'] == 'ready', result
+        task = engine.store.get_task(args['task_id'])
+        legacy = engine.store.write_record(task['task_id'], 'memory_pending', {
+            'report_ref': result['data']['report_ref'],
+            'items': [{'state': 'pending', 'error_code': 'STORE_UNAVAILABLE'}]})
+        task['memory_job_refs'].append(legacy)
+        engine._save(task)
+        summary = finish_report(engine, result['data'])
+        assert summary['items'][-1] == {'state': 'skipped', 'error_code': 'STORE_UNAVAILABLE',
+                                        'next_action': 'resubmit'}
+        assert engine.store._db.execute('SELECT count(*) FROM memory_heads').fetchone()[0] == 1
 
 
 def test_report_replay_reflects_a_later_verified_memory_invalidation(tmp_path):

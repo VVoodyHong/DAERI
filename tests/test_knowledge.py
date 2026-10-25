@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from daeri.knowledge import replay, update
+from daeri.knowledge import replay, source_leaves, update
 from daeri.memory import MemoryService
 from daeri.storage import Store, StoreError
 
@@ -159,7 +159,27 @@ def test_report_and_table_sources_resolve_to_actual_terminal_observations(runtim
     assert [source["record_ref"] for source in item["sources"]] == [leaf]
 
 
-def test_hypothesis_and_cycles_cannot_become_verified_memory(runtime):
+@pytest.mark.parametrize('other_kind', ['hypothesis', 'memory'])
+def test_free_report_sources_follow_observations_without_requiring_a_table_dsl(runtime, other_kind):
+    leaf = runtime.record()
+    report = runtime.record('report', payload={
+        'findings': [{'kind': 'observation', 'text': '실제 필드 의미를 확인했다', 'evidence_refs': [leaf]},
+                     {'kind': other_kind, 'text': '추가 해석은 호스트가 판단한다', 'evidence_refs': []}],
+        'evidence_refs': [leaf]}, provided_paths=[], retained_paths=[], allowed_paths=[])
+    result = update(runtime, arguments(runtime, [report]), runtime.task)
+    item = runtime.memory.get(runtime.profile['profile_id'], result['data']['memory_ref'])
+    assert {source['record_ref'] for source in item['sources']} == {leaf}
+
+
+def test_prior_memory_cannot_become_a_new_observation_through_a_report(runtime):
+    old_memory = runtime.record('memory', payload={'statement': '과거 지식'})
+    report = runtime.record('report', payload={
+        'findings': [{'kind': 'observation', 'text': '새로 확인했다고 주장함', 'evidence_refs': [old_memory]}]})
+    with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
+        update(runtime, arguments(runtime, [report]), runtime.task)
+
+
+def test_reports_without_observations_and_cycles_cannot_become_verified_memory(runtime):
     hypothesis = runtime.record("report", payload={"findings": [{"kind": "hypothesis", "text": "추정 원인", "evidence_refs": []}]})
     with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
         update(runtime, arguments(runtime, [hypothesis]), runtime.task)
@@ -167,6 +187,47 @@ def test_hypothesis_and_cycles_cannot_become_verified_memory(runtime):
     runtime.records[cycle]["payload"]["evidence_refs"] = [cycle]
     with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
         update(runtime, arguments(runtime, [cycle]), runtime.task)
+
+
+@pytest.mark.parametrize('records', [256, 257])
+def test_source_graph_counts_each_record_once_at_the_limit(runtime, records):
+    leaf = runtime.record()
+    final = runtime.record()
+    branches = [runtime.record('report', payload={'evidence_refs': [leaf]})
+                for _ in range(records - 3)]
+    root = runtime.record('report', payload={'evidence_refs': [*branches, final] + ([leaf] if records == 256 else [])})
+    if records == 256:
+        assert set(source_leaves(runtime, runtime.task, [root])) == {leaf, final}
+    else:
+        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
+            source_leaves(runtime, runtime.task, [root])
+
+
+@pytest.mark.parametrize('depth', [32, 33])
+def test_source_graph_depth_includes_the_first_and_terminal_record(runtime, depth):
+    leaf = reference = runtime.record()
+    for _ in range(depth - 1):
+        reference = runtime.record('report', payload={'evidence_refs': [reference]})
+    if depth == 32:
+        assert set(source_leaves(runtime, runtime.task, [reference])) == {leaf}
+    else:
+        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
+            source_leaves(runtime, runtime.task, [reference])
+
+
+@pytest.mark.parametrize('depth', [32, 33])
+def test_source_graph_rechecks_a_shared_subtree_on_a_deeper_path(runtime, depth):
+    leaf = runtime.record()
+    shared = runtime.record('report', payload={'evidence_refs': [leaf]})
+    reference = shared
+    for _ in range(depth - 3):
+        reference = runtime.record('report', payload={'evidence_refs': [reference]})
+    root = runtime.record('report', payload={'evidence_refs': [shared, reference]})
+    if depth == 32:
+        assert set(source_leaves(runtime, runtime.task, [root])) == {leaf}
+    else:
+        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
+            source_leaves(runtime, runtime.task, [root])
 
 
 def test_invalidation_accepts_counterevidence_without_permission_to_store_new_memory(runtime):

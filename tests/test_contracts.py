@@ -380,9 +380,6 @@ def detailed_plan():
     value["output"]["resource_rules"] = [{"instance_id": "resource", "allowed_model_fields": [{"segments": []}],
         "export_fields": [], "retained_fields": [], "masking": [], "memory": {"categories": [], "source_fields": [],
         "context_sources": [], "retention": "none", "allow_model_recall": False}}]
-    value["output"]["table_rules"] = [{"table_id": "table", "sources": [{"source_id": "rows", "step_id": "read", "rows_pointer": "", "key_pointers": []}],
-        "join_mode": "none", "coverage": "selected", "allowed_operations": ["copy"], "max_rows": 10, "ratio_scale": None}]
-    value["output"]["artifact_rules"] = [{"artifact_id": "file", "format_id": "json", "format_contract_ref": "format-json", "input_kind": "json", "options": {}, "max_bytes": 100}]
     return value
 
 
@@ -394,11 +391,6 @@ def detailed_plan():
     (("output", "resource_rules", 0, "allowed_model_fields"), [{"segments": [{"key": "x", "index": 1}]}]),
     (("output", "resource_rules", 0, "masking"), [{"field": {"segments": []}, "action": "execute"}]),
     (("output", "resource_rules", 0, "memory", "allow_model_recall"), 1),
-    (("output", "table_rules", 0, "sources"), [None]),
-    (("output", "table_rules", 0, "sources", 0, "rows_pointer"), "$.rows"),
-    (("output", "table_rules", 0, "max_rows"), True),
-    (("output", "artifact_rules", 0, "options"), None),
-    (("output", "artifact_rules", 0, "max_bytes"), "100"),
 ])
 def test_nested_plan_contract_rejects_bad_shape_in_runtime_and_schema(path, value):
     draft = detailed_plan()
@@ -407,6 +399,17 @@ def test_nested_plan_contract_rejects_bad_shape_in_runtime_and_schema(path, valu
         parent = parent[part]
     parent[path[-1]] = value
     assert_branch_contract("PlanDraft", draft, False)
+
+
+def test_plan_output_accepts_host_authored_outputs_without_generator_rules():
+    output = {"format": "presentation", "destination": "현재 대화", "resource_rules": []}
+    assert validate("PlanOutput", output).model_dump(exclude_unset=True) == output
+
+
+@pytest.mark.parametrize("field", ["table_rules", "artifact_rules"])
+def test_deprecated_output_rules_remain_plain_json_for_stored_request_replay(field):
+    output = {"format": "text", "destination": "현재 대화", "resource_rules": [], field: [{"legacy": [1, "value"]}]}
+    assert validate("PlanOutput", output).model_dump(exclude_unset=True) == output
 
 
 @pytest.mark.parametrize("segment,accepted", [
@@ -457,3 +460,7 @@ def test_condition_schema_matches_scalar_comparison_contract(operator, fields, a
 @pytest.mark.parametrize("source,target,accepted", [("", None, True), ("/rows/0/a~1b", "/arg", True), ("$.rows", "/arg", False), ("/bad~2", "/arg", False), ("/data", "", False)])
 def test_binding_pointer_schema_preserves_root_source_and_nonempty_target(source, target, accepted):
     assert_branch_contract("InputBinding", {"binding_id": "b", "source_step_id": "s", "source_pointer": source, "target_pointer": target}, accepted)
+
+
+def test_worker_call_can_select_a_real_capability_in_an_approved_resource_bundle():
+    assert_branch_contract("WorkerCall", {"step_id": "read", "call_id": "call", "capability_id": "scan_keys", "parameters": {}}, True)

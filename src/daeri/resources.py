@@ -23,12 +23,13 @@ from mcp.client.streamable_http import streamable_http_client
 
 from .adapters import get_adapter
 from .security import redact
-from .storage import StoreError
+from .storage import StoreError, _regular_file
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 _SECRET_NAME = re.compile(r"(?i)(password|passwd|pwd|token|secret|api.?key|authorization|credential|database_uri|redis_url)")
 _GUARDS = {"fixed", "allowed_values", "path_prefixes", "max_values", "sql_field", "tables", "columns", "max_rows", "region", "command_field"}
 _SCOPE = {"equals", "one_of", "path_prefixes", "max_values", "tables", "columns", "max_rows"}
+_NORMALIZATION_CONTRACT = 'daeri-read-normalization-v2'
 
 
 def _json(value):
@@ -131,14 +132,16 @@ def _guards(value, *, scope=False):
 
 def validate_resource(config):
     """Validate local administrator input without connecting or resolving secrets."""
-    allowed = {"instance_id", "type", "adapter", "target", "identity_ref", "connection", "capabilities", "policy"}
-    required = allowed - {"policy"}
+    allowed = {"instance_id", "type", "adapter", "target", "identity_ref", "connection", "capabilities", "policy", "discover_tools"}
+    required = allowed - {"policy", "discover_tools"}
     if not isinstance(config, dict) or set(config) - allowed or not required <= set(config):
         _fail()
     for name in ("instance_id", "type", "identity_ref"):
         if not isinstance(config[name], str) or not _ID.fullmatch(config[name]):
             _fail()
     adapter = get_adapter(config["adapter"])
+    if 'discover_tools' in config and type(config['discover_tools']) is not bool:
+        _fail('Tool discovery requires an explicit boolean.')
     if config["type"] != adapter.resource_type or not isinstance(config["target"], dict) or not config["target"]:
         _fail()
     connection = config["connection"]
@@ -183,7 +186,7 @@ def validate_resource(config):
                 or not {"capability_id", "tool_name", "constraints"} <= set(capability)
                 or not isinstance(capability["capability_id"], str) or not _ID.fullmatch(capability["capability_id"])
                 or not isinstance(capability["tool_name"], str)
-                or capability["tool_name"] not in adapter.read_tools):
+                or not adapter.supports_tool_name(capability["tool_name"])):
             _fail("Only supported, explicitly selected read tools may be registered.")
         ids.append(capability["capability_id"])
         _guards(capability["constraints"])
@@ -241,7 +244,8 @@ class ResourceRegistry:
                 stream.flush()
                 os.fsync(stream.fileno())
         try:
-            self.binding_key = key_path.read_bytes()
+            with _regular_file(key_path) as stream:
+                self.binding_key = stream.read(33)
             if len(self.binding_key) != 32:
                 raise ValueError
         except (OSError, ValueError):
@@ -285,9 +289,8 @@ class ResourceRegistry:
         config = self._resource(profile, instance_id)
         path = self._path(profile, instance_id)
         try:
-            if path.is_symlink():
-                raise ValueError
-            registration = json.loads(path.read_bytes())
+            with _regular_file(path) as stream:
+                registration = json.load(stream)
         except FileNotFoundError:
             raise StoreError("CONNECTION_NOT_READY", "Run explicit resource diagnosis before using this connection.") from None
         except (OSError, ValueError):
@@ -303,6 +306,8 @@ class ResourceRegistry:
                 hashes.add(_hash(equivalent))
         if registration.get("profile_revision") != profile["revision"] or registration.get("config_hash") not in hashes:
             raise StoreError("CONTEXT_CHANGED", "The profile or resource registration changed; run diagnosis again.")
+        if registration.get('normalization_contract') != _NORMALIZATION_CONTRACT:
+            raise StoreError('CONTEXT_CHANGED', 'The resource execution contract changed; run explicit diagnosis and approve a new plan.')
         return config, registration
 
     def list(self, profile):
@@ -311,6 +316,8 @@ class ResourceRegistry:
             try:
                 _, registration = self._registration(profile, resource["instance_id"])
                 capabilities = [{"capability_id": item["capability_id"], "contract_ref": item["contract_ref"], "description": item["description"], "changes_state": False} for item in registration["descriptors"]]
+                bundle = self._bundle(registration)
+                capabilities.append({key: bundle[key] for key in ('capability_id', 'contract_ref', 'description')} | {'changes_state': False})
             except StoreError:
                 capabilities = []
             items.append({"instance_id": resource["instance_id"], "type": resource["type"], "label": resource["instance_id"],
@@ -319,10 +326,23 @@ class ResourceRegistry:
 
     def get(self, profile, instance_id, capability_id):
         _, registration = self._registration(profile, instance_id)
+        if capability_id == '*':
+            return self._bundle(registration)
         for descriptor in registration["descriptors"]:
             if descriptor["capability_id"] == capability_id:
                 return copy.deepcopy(descriptor)
         raise StoreError("NOT_FOUND", "The capability is not registered in this profile.")
+
+    def _bundle(self, registration):
+        members = sorted(registration['descriptors'], key=lambda item: item['capability_id'])
+        references = [{'capability_id': item['capability_id'], 'contract_ref': item['contract_ref']} for item in members]
+        bundle = copy.deepcopy(members[0])
+        bundle.update(capability_id='*', contract_ref='contract_' + _hash(['daeri-read-bundle-v1', references]),
+                      description='Choose any diagnosed read capability on this connection within the approved scope.',
+                      input_schema={'type': 'object'}, output_schema={'type': 'object'}, capability_refs=references)
+        bundle['scope_schema']['x-daeri-access-constraints'] = {}
+        bundle['capability_constraints'] = {item['capability_id']: copy.deepcopy(item['scope_schema']['x-daeri-access-constraints']) for item in members}
+        return bundle
 
     async def _session(self, stack, resource, timeout, credentials):
         connection = self._launch_connection(resource)
@@ -371,9 +391,9 @@ class ResourceRegistry:
             page = await session.list_tools(cursor=cursor)
             result.extend(tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in page.tools)
             pages += 1
-            if len(result) > 512 or pages > 8:
-                raise StoreError("UNSUPPORTED_CONSTRAINT", "The lower tool registry exceeds the bounded discovery limit.")
             cursor = page.nextCursor
+            if len(result) > 512 or (pages == 8 and cursor):
+                raise StoreError("UNSUPPORTED_CONSTRAINT", "The lower tool registry exceeds the bounded discovery limit.")
             if not cursor:
                 break
         if len({item["name"] for item in result}) != len(result):
@@ -401,18 +421,35 @@ class ResourceRegistry:
             if known:
                 raise known from None
             raise StoreError("CONNECTION_NOT_READY", "Resource diagnosis failed; check the executable, authentication, and connection.") from None
+        adapter = get_adapter(config['adapter'])
+        capabilities = copy.deepcopy(config['capabilities'])
+        selected_names = {item['tool_name'] for item in capabilities}
+        selected_ids = {item['capability_id'] for item in capabilities}
+        if config.get('discover_tools', False):
+            for tool in tools:
+                if tool['name'] in selected_names or not adapter.is_read_tool(tool):
+                    continue
+                identifier = tool['name']
+                if not _ID.fullmatch(identifier) or identifier in selected_ids:
+                    raise StoreError('UNSUPPORTED_CONSTRAINT', 'A discovered tool cannot be represented by a unique capability identifier.')
+                capabilities.append({'capability_id': identifier, 'tool_name': tool['name'], 'constraints': {}})
+                selected_ids.add(identifier)
         descriptors, contracts = [], {}
-        for capability in config["capabilities"]:
+        for capability in capabilities:
             tool = next((item for item in tools if item["name"] == capability["tool_name"]), None)
             if tool is None:
                 raise StoreError("NOT_FOUND", "A selected tool is missing from the lower MCP registry.")
+            if not adapter.is_read_tool(tool):
+                raise StoreError('UNSUPPORTED_CONSTRAINT', 'The lower tool has no verified read-only execution contract.')
             _schema(tool["inputSchema"])
             if "outputSchema" in tool:
                 _schema(tool["outputSchema"])
             contracts[capability["capability_id"]] = tool
-            contract_ref = "contract_" + _hash(["daeri-read-normalization-v1", config, capability, tool, binding_hash])
+            contract_ref = "contract_" + _hash([_NORMALIZATION_CONTRACT, config, capability, tool, binding_hash])
             descriptors.append(self._descriptor(config, capability, tool, contract_ref))
-        registration = {"profile_revision": profile["revision"], "config_hash": _hash(config), "binding_hash": binding_hash, "descriptors": descriptors, "contracts": contracts}
+        registration = {"normalization_contract": _NORMALIZATION_CONTRACT,
+                        "profile_revision": profile["revision"], "config_hash": _hash(config), "binding_hash": binding_hash,
+                        "descriptors": descriptors, "contracts": contracts, "capabilities": capabilities}
         path = self._path(profile, instance_id)
         temporary = path.with_name(uuid4().hex + ".tmp")
         try:
@@ -442,12 +479,14 @@ class ResourceRegistry:
                 "metadata_discovery_allowed": True}
 
     def normalize(self, profile, instance_id, capability_id, parameters, scope):
+        if capability_id == '*':
+            _fail('Choose an actual diagnosed capability when executing a read bundle.')
         config, registration = self._registration(profile, instance_id)
         binding_hash, _ = self._binding(config)
         if binding_hash != registration.get("binding_hash"):
             raise StoreError("CONTEXT_CHANGED", "Credentials or provider authentication files changed after diagnosis.")
         descriptor = self.get(profile, instance_id, capability_id)
-        capability = next(item for item in config["capabilities"] if item["capability_id"] == capability_id)
+        capability = next(item for item in registration["capabilities"] if item["capability_id"] == capability_id)
         if not isinstance(parameters, dict) or len(_json(parameters).encode()) > 65536:
             _fail()
         _guards(scope, scope=True)

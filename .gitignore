@@ -12,3 +12,5 @@ build/
 .venv.prepare.*
 .venv.previous/
 .daeri-setup.lock/
+.mcp.json
+.mcp.prepare.*

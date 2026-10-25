@@ -9,8 +9,9 @@
     "args": ["--access-mode=restricted"],
     "env": {},
     "auth_env": ["DATABASE_PASSWORD"],
-    "capabilities": [{"capability_id": "query", "tool_name": "execute_sql", "constraints": {"sql_field": "sql", "tables": ["*"], "columns": ["*"], "max_rows": 100}}],
-    "source": "https://github.com/crystaldba/postgres-mcp"
+    "capabilities": [{"capability_id": "query", "tool_name": "execute_sql", "constraints": {}}],
+    "source": "https://github.com/crystaldba/postgres-mcp",
+    "discover_tools": true
   },
   "cache-redis": {
     "display_name": "Redis",
@@ -23,7 +24,8 @@
     "env": {"REDIS_HOST": "", "REDIS_PORT": "6379", "REDIS_DB": "0", "REDIS_SSL": "true"},
     "auth_env": ["REDIS_PWD"],
     "capabilities": [{"capability_id": "read-key", "tool_name": "get", "constraints": {}}],
-    "source": "https://github.com/redis/mcp-redis"
+    "source": "https://github.com/redis/mcp-redis",
+    "discover_tools": true
   },
   "infra-aws": {
     "display_name": "AWS",
@@ -36,7 +38,8 @@
     "env": {"READ_OPERATIONS_ONLY": "true", "AWS_API_MCP_TELEMETRY": "false", "AWS_PROFILE": "", "AWS_REGION": ""},
     "auth_env": [],
     "capabilities": [{"capability_id": "describe", "tool_name": "call_aws", "constraints": {"command_field": "cli_command", "region": ""}}],
-    "source": "https://awslabs.github.io/mcp/servers/aws-api-mcp-server/"
+    "source": "https://awslabs.github.io/mcp/servers/aws-api-mcp-server/",
+    "discover_tools": true
   },
   "source-gitlab": {
     "display_name": "GitLab",
@@ -49,7 +52,8 @@
     "env": {"MCP_READ_ONLY": "true", "GITLAB_URL": "", "GITLAB_SSL_VERIFY": "true"},
     "auth_env": ["GITLAB_TOKEN"],
     "capabilities": [{"capability_id": "read-file", "tool_name": "gitlab_get_file", "constraints": {}}],
-    "source": "https://github.com/vish288/mcp-gitlab"
+    "source": "https://github.com/vish288/mcp-gitlab",
+    "discover_tools": true
   },
   "document-confluence": {
     "display_name": "Confluence",
@@ -59,10 +63,11 @@
     "version": "0.23.1",
     "executable": "mcp-atlassian",
     "args": [],
-    "env": {"READ_ONLY_MODE": "true", "ENABLED_TOOLS": "confluence_get_page", "CONFLUENCE_URL": "", "CONFLUENCE_USERNAME": ""},
+    "env": {"READ_ONLY_MODE": "true", "CONFLUENCE_URL": "", "CONFLUENCE_USERNAME": ""},
     "auth_env": ["CONFLUENCE_API_TOKEN"],
     "capabilities": [{"capability_id": "read-page", "tool_name": "confluence_get_page", "constraints": {}}],
-    "source": "https://github.com/sooperset/mcp-atlassian"
+    "source": "https://github.com/sooperset/mcp-atlassian",
+    "discover_tools": true
   },
   "issue-jira": {
     "display_name": "Jira",
@@ -72,14 +77,15 @@
     "version": "0.23.1",
     "executable": "mcp-atlassian",
     "args": [],
-    "env": {"READ_ONLY_MODE": "true", "ENABLED_TOOLS": "jira_get_issue,jira_get_project_issues,jira_get_transitions,jira_search", "JIRA_SSL_VERIFY": "true", "JIRA_URL": "", "JIRA_USERNAME": "", "DAERI_JIRA_AUTH_TYPE": "api_token"},
+    "env": {"READ_ONLY_MODE": "true", "JIRA_SSL_VERIFY": "true", "JIRA_URL": "", "JIRA_USERNAME": "", "DAERI_JIRA_AUTH_TYPE": "api_token"},
     "auth_env": ["JIRA_API_TOKEN"],
     "capabilities": [
       {"capability_id": "read-issue", "tool_name": "jira_get_issue", "constraints": {"fixed": {"update_history": false}}},
-      {"capability_id": "list-project-issues", "tool_name": "jira_get_project_issues", "constraints": {"max_values": {"limit": 50}}},
+      {"capability_id": "list-project-issues", "tool_name": "jira_get_project_issues", "constraints": {}},
       {"capability_id": "read-transitions", "tool_name": "jira_get_transitions", "constraints": {}},
-      {"capability_id": "search-issues", "tool_name": "jira_search", "constraints": {"max_values": {"limit": 50}}}
+      {"capability_id": "search-issues", "tool_name": "jira_search", "constraints": {}}
     ],
-    "source": "https://github.com/sooperset/mcp-atlassian"
+    "source": "https://github.com/sooperset/mcp-atlassian",
+    "discover_tools": true
   }
 }

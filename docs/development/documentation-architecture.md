@@ -25,11 +25,11 @@
 | `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md), [profile별 기억·검색·보존](../spec/tasks/memory.md) |
 | `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·기억·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
 | `docs/spec/resources/` | [MCP 재사용·탐색·등록·호출 계약](../spec/resources/contract.md), [리소스 범주와 연결 기준](../spec/resources/initial-adapters.md) |
-| `docs/spec/configuration/` | [profile·연결·인증·로컬 저장](../spec/configuration/profiles.md), 같은 정본의 [사용자용 setup YAML](../spec/configuration/profiles.md#사용자용-setup-yaml) |
+| `docs/spec/configuration/` | [profile·연결·인증·로컬 저장](../spec/configuration/profiles.md), 같은 정본의 [사용자용 setup YAML](../spec/configuration/profiles.md#사용자용-setup-yaml)·[암호화 백업·복원](../spec/configuration/profiles.md#이관백업복원) |
 | `docs/spec/installation/` | [환경·의존성·전달·업데이트](../spec/installation/environment.md) |
 | `docs/spec/hosts/` | [플러그인·Skill·로컬 실행](../spec/hosts/plugins.md), [사용자 대화 승인·응답 확인](../spec/hosts/approval.md) |
-| `docs/plans/` | [최초 구현 범위·순서·완료 기준](../plans/initial-implementation.md) |
-| `docs/development/` | 문서 구조와 읽기 경로, [개발 의존성·실행·모듈 안내](dependencies.md) |
+| `docs/plans/` | [현재 구현 범위·대표 검증·실제 환경의 남은 확인 순서](../plans/initial-implementation.md) |
+| `docs/development/` | 문서 구조와 읽기 경로, [개발 의존성·자동 검사·실행·모듈 안내](dependencies.md) |
 
 업무·구조 명세는 사람이 이해할 동작·책임을, MCP는 필드·타입·enum을 소유한다.
 공개 DTO와 내부 저장 스키마는 구분한다.
@@ -43,6 +43,7 @@
 | 요구·구현 범위 | 기획·개발 → 제품·구조 → 구현 계획·관련 명세 |
 | 승인·실행 | 업무 승인·흐름 → 호스트 승인 → MCP 계획·리소스 |
 | 멀티 에이전트·위임 | 구조 → 호스트 작업자 연결 → 업무의 병렬 실행·승인 범위 → MCP worker → 구현 모듈·검증 |
+| 보고·파일 | 업무의 결과 제공 → MCP 결과 DTO·파일 등록 → profile의 보관·현재 권한 → 구현 모듈·대표 검증 |
 | 기억·검색·보존 | 기억 명세 → profile·업무 보존 → MCP 기억·계획 → 호스트 Skill |
 | 로컬 저장·삭제·복구 | profile의 저장 구조 → 업무·기억 보존 → MCP 조회·멱등 규격 → 환경 이관·구현 계획 |
 | 리소스·MCP | 리소스 계약·범주별 연결 → 공통 MCP·해당 도구 |

@@ -11,6 +11,9 @@ from ..storage import StoreError
 class JiraReadAdapter(ReadAdapter):
     adapter_id = 'jira_read'
     resource_type = 'Issue'
+    discover_annotations = True
+    tool_prefix = 'jira_'
+    read_only_environment = 'READ_ONLY_MODE'
     read_tools = frozenset({'jira_get_issue', 'jira_get_project_issues',
                             'jira_get_transitions', 'jira_search'})
     target_template = {'server': 'https://SET-ME.invalid'}
@@ -79,10 +82,11 @@ class JiraReadAdapter(ReadAdapter):
             raise StoreError('INVALID_INPUT', 'Jira requires an explicit HTTPS server without credentials or query parameters.')
         if env.get('READ_ONLY_MODE') != 'true' or env.get('JIRA_SSL_VERIFY', 'true').lower() not in {'true', '1'}:
             raise StoreError('UNSUPPORTED_CONSTRAINT', 'Jira reads require read-only mode and server certificate verification.')
-        selected = env.get('ENABLED_TOOLS', '').split(',')
-        configured = {item['tool_name'] for item in config.get('capabilities', [])}
-        if not selected or any(name not in self.read_tools for name in selected) or not configured <= set(selected):
-            raise StoreError('UNSUPPORTED_CONSTRAINT', 'Enable the registered Jira read tools for the selected capabilities.')
+        if 'ENABLED_TOOLS' in env:
+            selected = env['ENABLED_TOOLS'].split(',')
+            configured = {item['tool_name'] for item in config.get('capabilities', [])}
+            if not selected or any(name not in self.read_tools for name in selected) or not configured <= set(selected):
+                raise StoreError('UNSUPPORTED_CONSTRAINT', 'Enable the registered Jira read tools for the selected capabilities.')
         kind = env.get('DAERI_JIRA_AUTH_TYPE', 'personal_token' if 'JIRA_PERSONAL_TOKEN' in connection.get('auth_env', {}) else 'api_token')
         expected = 'JIRA_PERSONAL_TOKEN' if kind == 'personal_token' else 'JIRA_API_TOKEN'
         if kind not in {'api_token', 'personal_token'} or set(connection.get('auth_env', {})) != {expected}:
@@ -125,19 +129,4 @@ class JiraReadAdapter(ReadAdapter):
                 denied('Jira reads require an explicit issue or project key.')
         if 'update_history' in parameters and parameters['update_history'] is not False:
             denied('Jira read requests require history updates disabled.')
-        if 'jql' in parameters and (not isinstance(parameters['jql'], str)
-                                    or scope.get('equals', {}).get('jql') != parameters['jql']):
-            raise StoreError('UNSUPPORTED_CONSTRAINT', 'Approve the exact JQL text in equals.jql before searching.')
         return result
-
-    def source_complete(self, value, invocation):
-        if super().source_complete(value, invocation) is False:
-            return False
-        data = value.get('data', value)
-        if isinstance(data, dict) and invocation.operation in {'jira_search', 'jira_get_project_issues'}:
-            if data.get('next_page_token'):
-                return False
-            start, total, issues = data.get('start_at'), data.get('total'), data.get('issues')
-            if type(start) is int and type(total) is int and total >= 0 and isinstance(issues, list):
-                return start == 0 and len(issues) == total
-        return None

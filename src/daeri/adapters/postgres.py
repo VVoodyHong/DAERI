@@ -6,68 +6,8 @@ import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
-from .base import ReadAdapter, _guard, denied, json_text as _json
+from .base import ReadAdapter, json_text as _json
 from ..storage import StoreError
-
-
-def _sql(parameters, constraints, scope):
-    import sqlglot
-    from sqlglot import exp
-
-    field = constraints.get("sql_field", "sql")
-    query = parameters.get(field)
-    if not isinstance(query, str) or len(query) > 32768:
-        denied()
-    _guard(parameters, constraints)
-    _guard(parameters, scope)
-    try:
-        statements = sqlglot.parse(query, read="postgres")
-    except sqlglot.errors.SqlglotError:
-        raise StoreError("UNSUPPORTED_CONSTRAINT", "The SQL request could not be interpreted.") from None
-    if len(statements) != 1 or not isinstance(statements[0], exp.Select):
-        denied("Only one SELECT statement is supported.")
-    tree = statements[0]
-    if (len(list(tree.find_all(exp.Select))) != 1 or tree.args.get("with_")
-            or tree.args.get("into") or tree.args.get("locks")
-            or tree.find(exp.Command) or tree.find(exp.Parameter)):
-        denied("Indirect SQL, locking, and procedural expressions are unsupported.")
-    tables = list(tree.find_all(exp.Table))
-    if len(tables) != 1 or tree.args.get("joins") or not tables[0].db or tables[0].catalog:
-        raise StoreError("UNSUPPORTED_CONSTRAINT", "Use one explicitly schema-qualified base table.")
-    table = tables[0]
-    target = f"{table.db}.{table.name}"
-    if any(allowed != ["*"] and target not in allowed
-           for allowed in (constraints.get("tables", []), scope.get("tables", []))):
-        denied()
-    columns = sorted({column.name for column in tree.find_all(exp.Column) if column.name != "*"})
-    if any(allowed != ["*"] and not set(columns) <= set(allowed)
-           for allowed in (constraints.get("columns", []), scope.get("columns", []))):
-        denied()
-    for star in tree.find_all(exp.Star):
-        if not isinstance(star.parent, exp.Count):
-            if constraints.get("columns") != ["*"] or scope.get("columns") != ["*"]:
-                denied("Wildcard field reads require whole-column access in both connection and approved scope.")
-            columns = ["*"]
-    permitted_functions = (exp.Count, exp.Sum, exp.Avg, exp.Min, exp.Max)
-    if any(not isinstance(function, permitted_functions) for function in tree.find_all(exp.Func)):
-        denied("SQL functions outside the verified aggregate set are unsupported.")
-    if any(column.table and column.table not in (table.name, table.alias) for column in tree.find_all(exp.Column)):
-        denied()
-    maximum = min(constraints.get("max_rows", 0), scope.get("max_rows", 0))
-    if type(maximum) is not int or maximum <= 0:
-        raise StoreError("UNSUPPORTED_CONSTRAINT", "An enforceable SQL row limit is required.")
-    limit = tree.args.get("limit")
-    if limit:
-        literal = limit.expression
-        if not isinstance(literal, exp.Literal) or literal.is_string or not literal.this.isdigit():
-            denied()
-        maximum = min(maximum, int(literal.this))
-    parameters[field] = tree.limit(maximum).sql(dialect="postgres")
-    others = {key: value for key, value in parameters.items() if key != field}
-    other_scope = {key: ({name: value for name, value in values.items() if name != field}
-                         if isinstance(values, dict) else values) for key, values in scope.items()}
-    _guard(others, other_scope, cover=True)
-    return {"tables": [target], "columns": columns, "max_rows": maximum}
 
 
 def _sql_literal(node, path, types):
@@ -112,6 +52,9 @@ class PostgresReadAdapter(ReadAdapter):
         'execute_sql',
         'query',
         'read_query',
+        # postgres-mcp 0.3.0 routes these through its restricted SQL driver.
+        'list_schemas', 'list_objects', 'get_object_details', 'explain_query',
+        'analyze_db_health', 'get_top_queries',
     })
     target_template = {"host": "SET-ME", "port": 5432, "database": "SET-ME", "username": "SET-ME"}
     setup_fields = {
@@ -222,7 +165,10 @@ class PostgresReadAdapter(ReadAdapter):
         return {}
 
     def normalize(self, parameters, constraints, scope):
-        return _sql(parameters, constraints, scope)
+        if any(set(guards) & {'sql_field', 'tables', 'columns', 'max_rows'} for guards in (constraints, scope)):
+            raise StoreError('UNSUPPORTED_CONSTRAINT',
+                             'Legacy SQL semantic limits require an explicit resource contract refresh and a new plan; use DB permissions or supported field constraints.')
+        return super().normalize(parameters, constraints, scope)
 
     def legacy_text(self, text, value_types):
         if len(text) > 262144 or not text.lstrip().startswith(("[", "{")):
@@ -244,14 +190,6 @@ class PostgresReadAdapter(ReadAdapter):
             return value
         except (ValueError, TypeError, SyntaxError, RecursionError, StoreError):
             return text
-
-    def source_complete(self, value, invocation):
-        if super().source_complete(value, invocation) is False:
-            return False
-        data = value.get("data", value)
-        if isinstance(data, list) and len(data) >= invocation.access.get("max_rows", 0):
-            return False
-        return None
 
     def warnings(self, value):
         result = super().warnings(value)

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="480" height="1080" viewBox="0 0 480 1080" role="img" aria-labelledby="title description">
   <title id="title">DAERI 멀티 에이전트 업무 흐름</title>
-  <desc id="description">총괄 에이전트가 요청을 받고 profile 기억과 기능을 확인해 계획을 제시한다. 사용자가 대화에서 승인하면 총괄이 직접 수행하거나 호스트 작업자에게 목표와 단계를 배정한다. 총괄과 작업자는 공통 MCP 실행기를 통해 승인 범위와 누적 예산 안에서 자율 수행한다. 총괄이 근거와 피드백을 통합해 보고와 기억 후보를 제출하면 실행기가 검증된 기억을 자동 저장하고 선택한 임베딩 방식으로 검색 색인을 갱신한다. 다음 업무는 같은 profile의 기억을 검색해 활용한다.</desc>
+  <desc id="description">총괄 에이전트가 요청을 받고 profile 기억과 기능을 확인해 계획을 제시한다. 사용자가 대화에서 승인하면 총괄이 직접 수행하거나 호스트 작업자에게 목표와 단계를 배정한다. 총괄과 작업자는 공통 MCP 실행기를 통해 승인 범위와 누적 예산 안에서 자율 수행한다. 호스트가 실제 근거와 피드백으로 보고·파일을 작성하고 내용을 검증하면 실행기가 출처·권한·무결성을 검사해 등록한다. 총괄이 선별한 기억 후보는 실행기가 검증·저장하고 선택한 임베딩 방식으로 검색 색인을 갱신한다. 다음 업무는 같은 profile의 기억을 검색해 활용한다.</desc>
   <defs>
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
       <path d="M0 0 L8 4 L0 8 Z" fill="#52637a"/>
@@ -40,7 +40,7 @@
       <text x="134" y="484" font-size="18">총괄의 직접 수행</text>
       <text x="340" y="484" font-size="18">작업자 1 … N</text>
       <text x="228" y="666">5. 공통 MCP 실행기</text>
-      <text x="228" y="798">6. 총괄이 근거 통합·보고</text>
+      <text x="228" y="798">6. 보고·파일 작성과 등록</text>
       <text x="228" y="920">7. 실행기가 자동 기억</text>
     </g>
     <g fill="#40536c" font-size="17">
@@ -54,7 +54,7 @@
       <text x="234" y="589" font-size="16">호스트가 작업자의 생성·추론을 담당</text>
       <text x="228" y="694">호출마다 승인·위임·공유 예산 검사</text>
       <text x="228" y="717">어댑터·하위 MCP → 연결 리소스</text>
-      <text x="228" y="827">실제 근거·피드백 → 보고·기억 후보</text>
+      <text x="228" y="827">호스트 작성·검증 → 실행기 등록</text>
       <text x="228" y="948">선별 지식 검증·저장·검색 색인</text>
       <text x="228" y="974">키워드 / 로컬 임베딩 / 회사 API</text>
     </g>

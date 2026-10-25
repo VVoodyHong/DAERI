@@ -5,7 +5,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
+import stat
 import sys
 import threading
 from contextlib import contextmanager, nullcontext
@@ -116,6 +118,21 @@ def _time(value: str | datetime) -> str:
         raise StoreError("INVALID_INPUT", "A timestamp with a timezone is required.") from None
 
 
+@contextmanager
+def _regular_file(path):
+    if path.is_symlink():
+        raise ValueError('A regular file is required.')
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError('A regular file is required.')
+    except BaseException:
+        os.close(descriptor)
+        raise
+    with os.fdopen(descriptor, 'rb') as stream:
+        yield stream
+
+
 class Store:
     def __init__(self, data_dir: Path):
         self.data_dir = Path(data_dir)
@@ -127,10 +144,20 @@ class Store:
                 folder.mkdir(parents=True, exist_ok=True, mode=0o700)
                 folder.chmod(0o700)
             database = self.data_dir / "daeri.sqlite3"
-            if any(Path(f"{database}{suffix}").is_symlink() for suffix in ("", "-wal", "-shm", "-journal")):
-                raise OSError("SQLite files must not be symbolic links.")
-            descriptor = os.open(database, os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
-            os.close(descriptor)
+            for suffix in ("", "-wal", "-shm", "-journal"):
+                try:
+                    mode = Path(f"{database}{suffix}").lstat().st_mode
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(mode):
+                    raise OSError("SQLite paths must be regular files.")
+            descriptor = os.open(database, os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+                                 | getattr(os, "O_NONBLOCK", 0), 0o600)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise OSError("The SQLite database must be a regular file.")
+            finally:
+                os.close(descriptor)
             database.chmod(0o600)
             self._db = sqlite3.connect(database, isolation_level=None, timeout=5, check_same_thread=False)
             self._db.row_factory = sqlite3.Row
@@ -272,13 +299,16 @@ class Store:
         token = uuid4().hex
         name = f"{token}.{extension}"
         staging, destination = self._path(f"staging/{token}.json", "staging"), self._path(f"{folder}/{name}", folder)
+        created, published = False, False
         try:
             descriptor = os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            created = True
             with os.fdopen(descriptor, "wb") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
             staging.rename(destination)
+            published = True
             if os.name != "nt":
                 directory = os.open(destination.parent, os.O_RDONLY)
                 try:
@@ -286,15 +316,21 @@ class Store:
                 finally:
                     os.close(directory)
         except OSError:
+            for prepared, owned in ((staging, created), (destination, published)):
+                if not owned:
+                    continue
+                try:
+                    prepared.unlink(missing_ok=True)
+                except OSError:
+                    pass  # The next storage cleanup retries unpublished private files.
             raise StoreError("STORE_UNAVAILABLE", "A private record could not be prepared.") from None
         return f"{folder}/{name}", len(content), hashlib.sha256(content).hexdigest()
 
     def _read(self, row, error_code: str):
         try:
             path = self._path(row["path"], "profiles" if error_code == "STORE_UNAVAILABLE" else "records")
-            if path.is_symlink():
-                raise ValueError
-            content = path.read_bytes()
+            with _regular_file(path) as stream:
+                content = stream.read()
             if len(content) != row["size"] or hashlib.sha256(content).hexdigest() != row["sha256"]:
                 raise ValueError
             return json.loads(content)
@@ -436,7 +472,12 @@ class Store:
                 self.assert_profile_available(row[0])
             row = self._db.execute("SELECT fingerprint,response FROM requests WHERE scope=? AND request_key=?",
                                    (scope, key)).fetchone()
-            return {"fingerprint": row[0], "response": json.loads(row[1])} if row else None
+            if row is None:
+                return None
+            result = json.loads(row[1])
+            if result == {'restored_request': True}:
+                raise StoreError('CONTEXT_CHANGED', 'The restored request is historical; inspect the task and use a new request ID.')
+            return {"fingerprint": row[0], "response": result}
 
     def request_put(self, scope, key, fingerprint, response, *, profile_id=None) -> None:
         with self.transaction():
@@ -446,8 +487,10 @@ class Store:
             if not existing:
                 self._db.execute("INSERT INTO requests VALUES (?,?,?,?)", (scope, key, fingerprint, _json(response).decode()))
             task_id = scope.partition(':')[2]
-            if isinstance(response, dict) and isinstance(response.get('data'), dict):
-                task_id = response['data'].get('task_id', task_id)
+            if isinstance(response, dict):
+                task_id = response.get('task_id', task_id)
+                if isinstance(response.get('data'), dict):
+                    task_id = response['data'].get('task_id', task_id)
             if profile_id is None:
                 row = self._db.execute('SELECT profile_id FROM tasks WHERE task_id=?', (task_id,)).fetchone()
                 profile_id = row[0] if row else None
@@ -528,6 +571,80 @@ class Store:
             self._db.execute('UPDATE records SET path=?,size=?,sha256=?,kind=? WHERE record_ref=? AND task_id=?',
                 (path, size, digest, 'memory_done' if done else 'memory_pending', record_ref, task_id))
 
+    def artifact_workspace(self, task_id):
+        with self.transaction():
+            task = self.get_task(task_id)
+            reference = 'workspaces/' + hashlib.sha256(task_id.encode()).hexdigest()
+            folder = self.data_dir / reference
+            for directory in (folder.parent, folder):
+                if directory.is_symlink():
+                    raise StoreError('STORE_UNAVAILABLE', 'The task workspace must be a private directory.')
+                directory.mkdir(mode=0o700, exist_ok=True)
+                directory.chmod(0o700)
+            if task.get('profile_id'):
+                self.track_profile_reference(task['profile_id'], 'directory', reference)
+            return str(folder)
+
+    def import_artifact(self, task_id, local_path, media_type, expires_at=None, *, existing_ref=None):
+        workspace = Path(self.artifact_workspace(task_id))
+        source = Path(local_path)
+        try:
+            relative = source.relative_to(workspace)
+            if not source.is_absolute() or not relative.parts or any(part in ('.', '..') for part in relative.parts):
+                raise ValueError
+            current = workspace
+            for part in relative.parts:
+                current = current / part
+                if current.is_symlink():
+                    raise ValueError
+            extension = source.suffix.lstrip('.').lower()
+            stored_extension = extension if re.fullmatch(r'[a-z0-9]{1,8}', extension) else 'bin'
+            name = uuid4().hex
+            staging = self._path(f'staging/{name}.json', 'staging')
+            destination = self._path(f'artifacts/{name}.{stored_extension}', 'artifacts')
+            digest, size = hashlib.sha256(), 0
+            with _regular_file(source) as incoming:
+                with os.fdopen(os.open(staging, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), 'wb') as outgoing:
+                    while chunk := incoming.read(128 * 1024):
+                        digest.update(chunk)
+                        size += len(chunk)
+                        outgoing.write(chunk)
+                    outgoing.flush()
+                    os.fsync(outgoing.fileno())
+            if existing_ref is not None:
+                existing = self.artifact_file(task_id, existing_ref)
+                stored = self._db.execute('SELECT size,sha256 FROM artifact_files WHERE artifact_ref=? AND task_id=?',
+                                          (existing_ref, task_id)).fetchone()
+                if (stored['size'] != size or stored['sha256'] != digest.hexdigest()
+                        or existing['media_type'] != media_type):
+                    raise StoreError('RESULT_VALIDATION_FAILED', 'An artifact ID already contains different file content.')
+                staging.unlink()
+                if expires_at is not None:
+                    self._db.execute('UPDATE records SET expires_at=? WHERE record_ref=? AND (expires_at IS NULL OR expires_at>?)',
+                                     (expires_at, existing_ref, expires_at))
+                return existing_ref
+            staging.rename(destination)
+            if os.name != 'nt':
+                descriptor = os.open(destination.parent, os.O_RDONLY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+        except (OSError, ValueError, TypeError):
+            raise StoreError('INVALID_INPUT', 'Select a regular file inside this task workspace.') from None
+        with self.transaction():
+            task = self.get_task(task_id)
+            ref = self.write_record(task_id, 'artifact', {
+                'format_id': extension or 'file', 'media_type': media_type,
+                'filename': source.name, 'size_bytes': size,
+                '_workspace_source': source.relative_to(self.data_dir).as_posix()}, expires_at)
+            reference = destination.relative_to(self.data_dir).as_posix()
+            self._db.execute('INSERT INTO artifact_files VALUES (?,?,?,?,?)',
+                             (ref, task_id, reference, size, digest.hexdigest()))
+            if task.get('profile_id'):
+                self.track_profile_reference(task['profile_id'], 'file', reference)
+            return ref
+
     def write_artifact(self, task_id, content, format_id, media_type, extension, expires_at=None):
         if (not isinstance(content, bytes) or len(content) > 10 * 1024 * 1024
                 or not isinstance(extension, str) or not re.fullmatch(r"[a-z0-9]{1,8}", extension)):
@@ -553,14 +670,16 @@ class Store:
                 if row is None:
                     raise ValueError
                 path = self._path(row["path"], "artifacts")
-                if path.is_symlink():
-                    raise ValueError
-                content = path.read_bytes()
-                if len(content) != row["size"] or hashlib.sha256(content).hexdigest() != row["sha256"]:
+                digest, size = hashlib.sha256(), 0
+                with _regular_file(path) as stream:
+                    while chunk := stream.read(128 * 1024):
+                        digest.update(chunk)
+                        size += len(chunk)
+                if size != row["size"] or digest.hexdigest() != row["sha256"]:
                     raise ValueError
             except (OSError, ValueError):
                 raise StoreError("RECORD_UNAVAILABLE", "The managed artifact is missing or has changed.") from None
-            return {"artifact_ref": record_ref, **record["payload"], "local_path": str(path.resolve()),
+            return {"artifact_ref": record_ref, **{key: value for key, value in record["payload"].items() if key != '_workspace_source'}, "local_path": str(path.resolve()),
                     "expires_at": record["expires_at"]}
 
     def set_task_expiry(self, task_id, expires_at: str | None) -> None:
@@ -586,6 +705,36 @@ class Store:
                 if metadata != row['metadata']:
                     self._db.execute('UPDATE tasks SET metadata=? WHERE task_id=?', (metadata, row['task_id']))
             self._db.execute("UPDATE records SET blocked=1 WHERE expires_at<=?", (_time(now or datetime.now(UTC)),))
+            # A committed managed copy owns the bytes; clean its unchanged workspace input later.
+            for artifact in self._db.execute('SELECT a.*,r.path record_path,r.size record_size,r.sha256 record_hash FROM artifact_files a JOIN records r ON a.artifact_ref=r.record_ref'):
+                try:
+                    payload = self._read({'path': artifact['record_path'], 'size': artifact['record_size'], 'sha256': artifact['record_hash']}, 'RECORD_UNAVAILABLE')
+                    reference = payload.get('_workspace_source')
+                    if not reference:
+                        continue
+                    prefix = 'workspaces/' + hashlib.sha256(artifact['task_id'].encode()).hexdigest() + '/'
+                    if not reference.startswith(prefix) or '..' in Path(reference).parts:
+                        raise ValueError
+                    source = self.data_dir / reference
+                    if any(parent.is_symlink() for parent in (source, *source.parents)):
+                        raise ValueError
+                    digest = hashlib.sha256()
+                    with _regular_file(source) as stream:
+                        while chunk := stream.read(128 * 1024):
+                            digest.update(chunk)
+                    if digest.hexdigest() == artifact['sha256']:
+                        source.unlink()
+                except (OSError, ValueError, StoreError):
+                    pass
+            for row in self._db.execute('SELECT task_id FROM tasks WHERE expires_at<=?', (_time(now or datetime.now(UTC)),)):
+                workspace = self.data_dir / 'workspaces' / hashlib.sha256(row['task_id'].encode()).hexdigest()
+                if workspace.parent.is_symlink() or workspace.is_symlink():
+                    raise StoreError('STORE_UNAVAILABLE', 'A task workspace has changed.')
+                if workspace.exists():
+                    try:
+                        shutil.rmtree(workspace)
+                    except OSError:
+                        pass
             for artifact in self._db.execute("SELECT a.path FROM artifact_files a JOIN records r ON a.artifact_ref=r.record_ref WHERE r.blocked=1"):
                 try:
                     self._path(artifact[0], "artifacts").unlink(missing_ok=True)

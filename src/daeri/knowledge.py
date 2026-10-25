@@ -50,13 +50,14 @@ def response(data):
 
 
 def source_leaves(engine, task, references):
-    seen, visiting, found = set(), set(), {}
+    seen, visiting, found = {}, set(), {}
 
     def visit(reference, depth=0):
-        require(depth <= 32 and len(seen | visiting) <= 256, "RESULT_VALIDATION_FAILED", "기억 출처의 재귀·건수 한도를 초과했습니다.")
         require(isinstance(reference, str) and reference and reference not in visiting,
                 "RESULT_VALIDATION_FAILED", "출처 참조에 순환이 있거나 유효하지 않습니다.")
-        if reference in seen:
+        require(depth < 32 and len(seen.keys() | visiting | {reference}) <= 256,
+                "RESULT_VALIDATION_FAILED", "기억 출처의 재귀·건수 한도를 초과했습니다.")
+        if seen.get(reference, -1) >= depth:
             return
         visiting.add(reference)
         record = engine._load_evidence(task, reference, mode="model")
@@ -73,15 +74,13 @@ def source_leaves(engine, task, references):
                 for source in payload.get("sources", []):
                     links.extend(source.get("record_refs", []))
             elif kind == "report":
+                # Earlier reports cited validated table IDs instead of direct evidence refs.
                 tables = {value["table_id"]: value for value in payload.get("table_validations", [])}
                 for finding in payload.get("findings", []):
-                    require(finding.get("kind") in {"observation", "derived"}, "RESULT_VALIDATION_FAILED",
-                            "보고의 가설·과거 기억을 새 확인 근거로 사용할 수 없습니다.")
                     citations = list(finding.get("evidence_refs", []))
                     for table_id in finding.get("table_ids", []):
                         require(table_id in tables, "RESULT_VALIDATION_FAILED", "보고에 인용한 검증표의 출처가 없습니다.")
                         citations.extend(tables[table_id].get("source_refs", []))
-                    require(bool(citations), "RESULT_VALIDATION_FAILED", "출처 없는 보고 문장은 새 확인 근거가 아닙니다.")
                     links.extend(citations)
                 for check in payload.get("checks", []):
                     links.extend(check.get("evidence_refs", []))
@@ -92,7 +91,7 @@ def source_leaves(engine, task, references):
             for link in dict.fromkeys(links):
                 visit(link, depth + 1)
         visiting.remove(reference)
-        seen.add(reference)
+        seen[reference] = depth
 
     for reference in references:
         visit(reference)

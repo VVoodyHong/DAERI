@@ -247,7 +247,7 @@ def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_
                 "contract_ref": descriptor["contract_ref"], "scope": {"equals": {"key": "orders"}}, "input_bindings": []}],
                 "budget": {"max_tool_calls": 1, "max_external_requests": None, "max_runtime_ms": 10000, "resource_limits": []},
                 "output": {"format": "json", "destination": "current conversation", "resource_rules": [{"instance_id": "cache-a", **profile["resources"][0]["policy"]}],
-                    "table_rules": [], "artifact_rules": [{"artifact_id": "data", "format_id": "json", "format_contract_ref": "format_json_v1", "input_kind": "json", "options": {}, "max_bytes": 10000}]},
+                    "table_rules": [], "artifact_rules": []},
                 "memory_search_refs": [search["memory_search_ref"]], "memory_refs": [], "memory_limitations": search["limitations"],
                 "completion_criteria": [{"criterion_id": "read", "description": "Read the selected key", "required": True, "step_ids": ["read"]}]}
             saved = (await call("daeri_plan_submit", {"request_id": "wire-plan", "task_id": task["task_id"],
@@ -278,11 +278,14 @@ def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_
                 revision = executed["data"]["task_revision"]
             assert executed["status"] == "ok", executed
             ref = executed["data"]["result_ref"]
+            output = Path(task['artifact_workspace']) / 'key.json'
+            output.write_text(json.dumps(executed['data']['inline_result']))
             report = {"summary": "Read the selected test key", "proposed_task_state": "succeeded",
                 "findings": [{"kind": "observation", "text": "The selected key was returned", "evidence_refs": [ref]}], "tables": [],
                 "checks": [{"criterion_id": "read", "status": "met", "method": "Verified completed MCP key read", "evidence_refs": [ref]}],
                 "limitations": [], "uncertain_effects": [], "next_actions": [],
-                "artifacts": [{"kind": "generated", "artifact_id": "data", "source_ref": ref, "label": "Verified key JSON"}]}
+                "artifacts": [{"artifact_id": "data", "local_path": str(output), "media_type": "application/json",
+                               "source_refs": [ref], "label": "Host key JSON"}]}
             result = await call("daeri_result_submit", {**common, "request_id": "wire-report",
                 "expected_task_revision": revision, "report": report})
             assert result["status"] == "ok", result

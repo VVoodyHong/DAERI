@@ -17,7 +17,7 @@ root의 주체·소유권은 검증한 호출 문맥에서, worker의 제한된 
 | `ContextSelection` | `profile_id` | ID, 선택 | 사용자 로컬 DAERI profile |
 | `ContextSelection` | `department_id` | ID, 선택 | 부처의 등록 ID |
 | `ContextSelection` | `environment_id` | ID, 선택 | 환경의 등록 ID |
-| `DesiredOutput` | `format` | string, 선택 | 원하는 형식; 최종 지원은 등록 형식·계획으로 확인 |
+| `DesiredOutput` | `format` | string, 선택 | 원하는 표현·파일 형식; 호스트가 실제 도구와 계획으로 해소 |
 | `DesiredOutput` | `description` | string, 선택 | 원하는 결과·완료 조건 |
 
 호스트는 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)에 따라 확인한 profile을 전달하고 생략한 맥락은 질문으로 보완한다.
@@ -77,14 +77,16 @@ profile 관련 세 필드는 모두 값이 있거나 모두 null이어야 한다
 | `uncertain_effects` | ID[] | 효과 미확인 call ID |
 | `execution_owner_status` | enum | `self\|other\|unassigned\|recovery_required` |
 | `workers` | WorkerSummary[] | 같은 업무의 위임 메타데이터; 없으면 [] |
+| `artifact_workspace` | string | 호스트가 파일을 작성할 업무 전용 경로 |
 
 `TaskState`는 `planning|awaiting_input|awaiting_approval|paused|running|reconciling|verifying|succeeded|partial|failed|cancelled`다.
 상태 전이는 업무 흐름 정본을 따른다.
 요약의 공개 범위는 위 업무 메타데이터다.
 현재 실행기는 승인 후 `running`에서 조회·확인을 수행하며 `verifying`·`reconciling` 전이는 후속 실행 확장에 사용한다.
 
-`TaskReceipt`는 `task_id`, `task_revision`, `request_ref`, `state`, `context`, `waiting_reason`을 갖는다.
+`TaskReceipt`는 `task_id`, `task_revision`, `request_ref`, `state`, `context`, `waiting_reason`, `artifact_workspace`를 갖는다.
 타입은 TaskSnapshot과 같고 수정으로 질문·답변·맥락 보완 기록을 만들었을 때 선택 필드 `clarification_ref:RecordRef`를 추가한다.
+접수·수정·상세 조회와 해당 요청의 재전달에서 같은 업무의 작업 경로를 제공한다.
 
 `WorkerSummary`는 `delegation_id:ID`, `state:active|completed|revoked`, `step_ids:ID[]`, `plan_ref:PlanRef`, `expires_at:string`, `assignment_ref:RecordRef`, `result_ref:RecordRef|null`을 갖는다.
 위임 기한은 시간대를 포함한 ISO 8601 값이며 할당·결과 본문은 등록 참조로 조회한다.
@@ -146,8 +148,8 @@ profile 해소는 로컬 설정만 읽는다.
 실행 중에는 현재 소유자가 처리하며 다른 유효 소유자가 있으면 `OWNER_CONFLICT`다.
 질문 대기 동안 신규 리소스 호출은 차단하고 이미 보낸 호출의 결과는 보존한다.
 
-질문을 `waiting_reason.message`, 종류를 `input`으로 저장하고 복귀 단계를 연결한 뒤 `awaiting_input`으로 전이한다.
-반복 질문에서도 최초 질문 전의 복귀 단계를 유지한다.
+질문을 `waiting_reason.message`, 종류를 `input`으로 저장하고 `awaiting_input`으로 전이한다.
+반복 질문은 현재 대기 질문을 새 질문으로 바꾸고 입력 대기를 유지한다.
 답변·맥락·결과 보완을 보존하면 요청 맥락 개정을 증가시킨다.
 profile이 해소돼 있으면 `planning`, 미해소이면 `awaiting_input`으로 연결한다.
 변경한 요청 맥락은 새 기억 검색과 수정 계획으로 검토하고 실행 범위를 다시 승인받는다.
@@ -358,6 +360,8 @@ worker 생성·추론·대기는 [호스트](../hosts/plugins.md)가 담당하�
 | `source_refs` | 중복 없는 RecordRef[] | 아니요 | 기본 []; root가 명시적으로 제공할 현재 허용 근거 |
 
 `WorkerCall`의 필수 필드는 `step_id:ID`, `call_id:ID`, `parameters:JsonObject`다.
+선택 필드 `capability_id:ID`는 리소스 읽기 묶음 단계의 실제 도구를 선택하며 해당 단계에서는 필수다.
+단일 기능 단계는 저장한 기능을 사용한다.
 선택 필드 `bindings:BindingSelection[]`의 기본값은 []이며 [바인딩 계약](plans.md#결과-바인딩과-조건)을 따른다.
 실행기는 배정한 단계에서 인스턴스·기능·계약·계획·승인을 해소하고 실제 인수·범위·의존 관계·허용 분기·공유 예산을 검사한다.
 명시적 바인딩의 원 호출 결과도 배정한 `source_refs` 또는 해당 위임의 호출 결과여야 한다.
@@ -413,12 +417,15 @@ profile에 해당 기억의 제공 허용이 없으면 `ACCESS_DENIED`로 반환
 | `plan_ref` | PlanRef | 발급 당시 root의 불변 계획 |
 | `assignment` | WorkerAssignment | 저장한 하위 목표·단계·완료 조건·출처 |
 | `steps` | PlanStep[] | 배정된 현재 계획의 단계 |
-| `contracts` | CapabilityDescriptor[] | 배정 단계의 현재 기능 계약 |
+| `contracts` | CapabilityDescriptor[] | 배정 단계의 현재 계약; 읽기 묶음과 구성 기능의 실제 입력 스키마 포함 |
 | `calls` | WorkerCallSummary[] | 해당 위임의 호출만 포함 |
 | `result_ref` | RecordRef 또는 null | 보존 완료 결과; 완료 전 null |
 | `result` | WorkerResult | 보존 결과가 있을 때만 반환 |
 
 `PlanStep`은 [계획 단계](plans.md), `CapabilityDescriptor`는 [기능 계약](resources.md#capabilitydescriptor)을 따른다.
+같은 인스턴스·기능 계약은 한 번씩 반환한다.
+worker는 제공받은 계약으로 실제 도구·인수를 선택하고 호스트에 제공된 분석 도구로 결과를 검토한다.
+최종 보고·파일의 작성·검증과 등록은 총괄의 [호스트 결과 계약](#호스트-결과와-파일)으로 연결한다.
 `WorkerCallSummary`의 필수 필드는 `call_id:ID`, `step_id:ID`, `call_state:enum`, `result_ref:RecordRef|null`, `error_code:string|null`이다.
 호출 상태는 공통 `CallSummary`와 같다.
 
@@ -571,7 +578,8 @@ API 방식에서 제공 가능한 기억이 0건이면 전송을 생략하고 �
 순환·누락·만료·불명확한 대응은 `RESULT_VALIDATION_FAILED`로 반환한다.
 추가 원자료는 필요한 승인 계획으로 별도 조회한다.
 각 출처 참조에는 하나 이상의 실제 제공 필드와 유효한 말단 근거가 필요하다.
-재귀 해소는 최대 32단계·256개 기록이며 범위 초과·0개 필드·확인 불가는 `RESULT_VALIDATION_FAILED`다.
+출처 그래프는 [공통 출처 검사](common.md#공통-타입)의 한도를 따르며 최종 저장에 기여하는 말단 출처는 최대 100개다.
+범위 초과·0개 필드·확인 불가는 `RESULT_VALIDATION_FAILED`다.
 같은 정책·관찰 시점의 원본 참조·말단 경로를 중복 제거하고 다른 관찰은 각각 유지한다.
 
 모든 기여 필드가 현재 계획·profile의 지식 범주·`source_fields`·모델 제공·보관 조건을 만족해야 후보를 저장한다.
@@ -628,406 +636,200 @@ API·키워드 전용 선택과 벡터 갱신 실패의 구분은 [임베딩 계
 
 ## 결과 DTO
 
-결과 도구의 처리 대상은 로컬에 보존한 근거·보고·관리 산출물이다.
-추가 검증은 먼저 승인된 리소스 호출로 근거를 확보한다.
-설명·이름 문자열과 ID·기록 참조는 비어 있지 않아야 하며 자료 크기는 공통 설정 상한을 적용한다.
-실제 본문·셀 값·키 등 데이터의 빈 문자열은 해당 자료형과 등록 계약이 허용하면 그대로 유지한다.
+보고 내용·분석·계산·파일 형식은 호스트가 사용자 요청과 실제 자료에 맞춰 구성하고 적절한 도구로 검증한다.
+실행기는 승인·근거 참조·현재 제공 권한·보존기한·파일 무결성을 검사해 결과를 보관한다.
+자연어 주장의 정확성과 업무 완료 판단은 호스트의 책임이다.
 
 ### ReportDraft·Finding
 
-| ReportDraft 필드 | 타입 | 제약 |
+| 필드 | 타입 | 의미 |
 |---|---|---|
-| `summary` | string | 요청 해석·수행 결과 요약 |
-| `proposed_task_state` | enum | `succeeded\|partial\|failed\|cancelled` |
-| `findings` | Finding[] | 관찰·파생·과거 기억·가설 구분 |
-| `tables` | TableDraft[] | 검증·보존할 파생 표; 파일이 없어도 제출하며 없으면 [] |
-| `checks` | ReportCheck[] | 계획의 모든 완료 조건을 한 번씩 포함 |
-| `limitations` | string[] | 누락·잘림·실패·마스킹의 영향 |
-| `uncertain_effects` | ID[] | 효과 미확인 call ID |
-| `artifacts` | ArtifactDraft[] | 관리 자료 생성·첨부 |
-| `next_actions` | string[] | 후속 판단 설명; 실제 실행은 해당 승인·실행 경로 적용 |
+| `summary` | 비어 있지 않은 string | 사용자에게 전달할 요약 |
+| `proposed_task_state` | enum | `succeeded`, `partial`, `failed`, `cancelled` |
+| `findings` | Finding[] | 실제 관찰·분석·기억·가설 |
+| `checks` | ReportCheck[] | 승인한 완료 조건별 호스트 판단과 실제 근거 |
+| `limitations` | string[] | 조회 범위·잘림·미확인 사항 |
+| `uncertain_effects` | 중복 없는 ID[] | 실행기가 보존한 미확인 call ID 전체 |
+| `artifacts` | ArtifactDraft[] | 호스트 생성 파일의 등록 또는 기존 파일 첨부 |
+| `next_actions` | string[] | 필요한 후속 행동 |
 
-`findings`부터 `next_actions`까지 각 최상위 배열은 최대 1,000개 항목을 받는다.
-전체 보고 요청에는 [공통 입력 크기](common.md#입력을-구성하는-원칙)를 적용한다.
+요약·상태와 위 배열은 필수이며 각 배열은 최대 1,000개 항목을 받는다.
+보고 전체의 입력 한도는 공통 도구의 보고 크기 조건을 따른다.
+과거 요청의 빈 `tables: []`는 호환 입력으로 해석한다.
+표 내용은 `Finding.text`의 텍스트 또는 호스트가 작성한 파일로 전달한다.
 
-| Finding 필드 | 타입 | 제약 |
-|---|---|---|
-| `kind` | enum | `observation\|derived\|memory\|hypothesis` |
-| `text` | string | 관찰·계산 방법·과거 지식 또는 미확인 가설 |
-| `evidence_refs` | RecordRef[] | 관찰·과거 기억은 최소 하나; 파생 결과는 아래 표 인용과 함께 검사 |
-| `table_ids` | ID[] | 선택; 이번 보고의 검증표 인용, 기본 [] |
-
-관찰·파생·과거 기억·가설의 의미는 [근거 원칙](../tasks/workflow.md#이력과-완료-근거)을 따른다.
-가설은 근거 배열이 비어 있을 수 있으며 미확인 가설로 표시한다.
-`table_ids`는 이번 보고의 `tables`에 제출한 ID만 중복 없이 지정하며 검증에 통과한 표만 근거로 사용한다.
-`derived`는 실제 `evidence_refs` 또는 검증표 중 하나 이상의 근거가 있어야 한다.
-`observation`·`memory`는 표 인용과 함께 실제 관찰·기억 기록 근거를 요구한다.
-`memory`는 현재 계획의 `memory_refs`에 연결한 지식만 가리키며 과거 확인과 현재 관찰을 구분해 표시한다.
-현재 실행·상태 확인이 필요한 완료 조건은 실제 현재 관찰을 근거로 `met` 여부를 판정한다.
+`Finding`은 `kind`, `text`, `evidence_refs`를 갖는다.
+`kind`는 `observation|derived|memory|hypothesis`, `text`는 비어 있지 않은 문자열, 참조는 중복 없는 RecordRef 목록이다.
+관찰은 실제 요청·보완·로컬 검사·호출 결과에 연결한다.
+분석은 실제 근거를 연결하고 기억은 현재 계획에 선택한 유효 개정에 연결한다.
+가설은 추가 확인이 필요한 내용으로 표시한다.
 
 ### ReportCheck
 
-| 필드 | 타입 | 필수 | 제약 |
-|---|---|---|---|
-| `criterion_id` | ID | 예 | 저장 완료 조건 ID; 조건마다 고유 |
-| `status` | enum | 예 | `met\|unmet\|unknown\|not_applicable` |
-| `method` | string | 예 | 실제 확인 방법·범위 |
-| `evidence_refs` | RecordRef[] | 예 | 사용한 등록 근거 |
-| `table_ids` | ID[] | 아니요 | 이번 보고의 검증표 ID; 중복 없이 지정하며 기본 [] |
-| `reason` | string | 조건부 | `unmet\|unknown\|not_applicable`이면 필수 |
+| 필드 | 타입 | 조건 |
+|---|---|---|
+| `criterion_id` | ID | 현재 계획의 완료 조건; 조건마다 한 번 |
+| `status` | enum | `met`, `unmet`, `unknown`, `not_applicable` |
+| `method` | 비어 있지 않은 string | 실제 수행·검증 방법 |
+| `evidence_refs` | 중복 없는 RecordRef[] | 완료 판단에 사용한 근거 |
+| `reason` | string | 선택; `unmet`, `unknown`, `not_applicable`에는 비어 있지 않은 값 |
 
-`reason`을 명시하면 모든 상태에서 문자열이어야 하며 필수 상태에서는 공백을 제외한 설명이 필요하다.
-`met`는 필요한 근거와 보존한 검증 결과가 있어야 한다.
-이번 보고의 검증표도 해당 완료 조건의 방법·범위·완전성을 실제 충족하면 근거로 사용할 수 있다.
-원격 변경 성공·현재 상태 확인은 실제 호출·관찰 근거를 요구한다.
-`not_applicable`은 `required=false`이거나 승인 분기가 false임을 등록 관찰로 확인했을 때만 허용한다.
-필수 조건을 제외하려면 해당 조건의 모든 단계에서 현재 계획의 `eq`·`in` 분기 중 하나 이상이 false임을 확인해야 한다.
-실행기는 바인딩의 출처 단계·리소스·기능 계약과 실제 허용 스칼라 값을 대조한다.
-여러 인용 관찰이 있으면 같은 비교가 모두 false여야 한다.
-적용 제외의 근거는 값이 실제 해소된 현재 계획 또는 적법하게 승계한 관찰의 `eq`·`in` 비교다.
-명시 승계한 관찰도 [단계 대응·승계 기준](plans.md#planstep)을 충족해야 한다.
-이유만 적어 필수 조건을 면제하거나 다른 완료 조건과 모순되면 검증 실패다.
+`met`에는 실제 근거가 필요하고 완료 조건의 단계들이 인용한 호출의 승인 대상·기능·범위와 대응해야 한다.
+리소스 읽기 묶음의 경우 실제 선택 도구도 호출 이력에 보존한다.
+외부 작업의 수행 사실은 실제 호출·관찰 기록으로 확인하고 과거 기억은 수행 방법을 판단하는 자료로 활용한다.
+필수 조건의 적용 제외는 승인한 모든 관련 분기가 실제 허용 관찰에서 false임을 확인해야 한다.
 
-### 결과 형식과 생성기
+호스트는 표본·단건·전수 조사 등 요청한 목적에 맞춰 충분한 관찰 범위를 판단한다.
+원본 전체성·잘림·다음 페이지 정보는 이 판단에 사용하는 자료다.
+예를 들어 최근 5건을 요청한 업무는 해당 표본을 확인해 완료할 수 있고, 전수 조사에서는 호스트가 필요한 후속 페이지를 조회·대조한다.
 
-사용자에게는 요청에 맞는 텍스트·표·구조화 응답을 대화로 제공하고 필요한 파일을 함께 제공한다.
-출력 형식은 등록된 로컬 생성기를 교체·추가해 확장한다.
-표는 내용의 구조, JSON·CSV·DB 파일 등은 그 내용을 전달하는 형식이며 내부 저장 엔진과 별개다.
+### 호스트 결과와 파일
 
-호스트는 [로컬 등록 목록](resources.md#daeri_resource_list)의 `output_formats`에서 실제 가능한 형식과 입력·옵션·준비 상태를 확인한다.
-파일별 형식·계약·입력 종류·옵션·최대 크기는 [ArtifactRule](plans.md#예산보고완료-조건)로 승인받는다.
-실행기는 검증한 자료·출처·정해진 관리 위치를 생성기에 제공하고 생성기는 파일만 만들어 반환한다.
-생성기의 실행 범위는 제공받은 자료를 지정 관리 위치의 파일로 변환하는 로컬 처리다.
+호스트는 현재 사용할 수 있는 파일·실행·MCP 도구로 필요한 텍스트·표·JSON·CSV·문서·스프레드시트 등을 작성한다.
+지원 형식은 해당 도구의 실제 기능에 따라 정한다.
+파일을 보존할 때에는 TaskReceipt·TaskSnapshot의 `artifact_workspace`에 작성하고 아래 등록 정보를 제출한다.
 
-첫 구현에는 준비된 `text`, `json`, `csv` 생성기를 등록한다.
-`text`는 텍스트·보고, `json`은 구조화 자료·표·보고, `csv`는 검증표 입력을 받는다.
-초기 옵션은 빈 객체이며 형식별 불변 계약 참조와 실제 허용 입력을 등록 목록에서 확인한다.
-새 형식은 같은 계약으로 확장한다.
-DB 파일 생성기도 검증한 구조화 자료로 새 관리 파일을 만드는 방식으로 확장한다.
-운영 DB 쓰기·기존 파일 덮어쓰기·외부 게시에는 별도 리소스 기능과 해당 변경 승인이 필요하다.
-입력 종류는 초기 `text`, `json`, `table`, `report`를 사용하되 추가 종류의 스키마·출처·검증 방법을 등록할 수 있다.
-지원 여부는 등록 계약·준비 상태·입력 종류로 판정하고 조건 불일치 시 검증 실패와 가능한 대안을 반환한다.
-
-생성기는 등록된 옵션 스키마와 크기 한도를 검사하고 실제 형식·미디어 타입·확장자·바이트 수를 반환한다.
-실제 형식·확장자·미디어 타입·크기와 승인 계약이 일치해야 파일을 등록한다.
-모든 생성기에 공통 제공·기한·비밀 제거 정책을 적용한다.
-파일은 관리 참조로 보존하며 현재 허용된 로컬 파일 위치는 `daeri_result_get`으로 제공한다.
-바이너리 파일은 `managed_file`의 경로·메타데이터로 전달한다.
-
-보고 텍스트 파일은 요약·관찰·검증표·완료 조건 검사·제한·후속 행동을 읽을 수 있는 문장으로 만든다.
-JSON 보고 파일은 이번 요청에서 검증한 보고의 구조를 유지하고 입력 본문은 `artifacts`를 뺀 보고 자료다.
-둘 다 기여 출처의 현재 내보내기 허용을 다시 검사한다.
-
-자유 문장의 일부가 어느 원본 필드에서 왔는지 자동으로 증명할 수 없으므로 첫 버전은 보수적으로 검사한다.
-보고·검사·표의 근거, 선택한 기억·요청 자료와 업무에서 실제 제공한 호출 결과를 함께 확인한다.
-각 원본에서 모델에 제공한 필드 전체가 현재 내보내기 범위에 포함돼야 텍스트·JSON 보고 파일을 만든다.
-기여 경로나 제공 정책이 불명확하면 파일 생성을 거부하고 필요한 자료 범위를 좁힌 계획을 안내한다.
+실행기는 일반 파일·경로·심볼릭 링크를 검사하고 바이트를 스트리밍으로 관리 영역에 복사한다.
+실제 크기·SHA-256·파일 이름·미디어 타입과 출처를 등록하고 입력 파일의 내용은 변환 없이 보존한다.
+미디어 타입·내용·계산·레이아웃의 일치는 호스트가 선택한 도구로 확인한다.
+등록이 완료된 작업용 원본 중 복사 당시와 같은 내용은 다음 저장소 정리에서 제거한다.
+실패한 보고의 원본과 등록 후 수정한 작업 파일은 작업 영역에 남고 업무 기한·profile 삭제에 따라 정리한다.
 
 ### ArtifactDraft
 
-모든 산출물은 현재 계획의 `artifact_id`에 대응하는 `ArtifactRule`에서 형식·옵션을 해소한다.
-한 보고의 `artifacts`에서 ID는 고유하며 계획의 ID 하나는 산출물 하나에 대응한다.
-이미 보존한 ID는 같은 내용·형식이면 기존 참조를 재사용하고 다르면 거부한다.
-추가 파일은 새 ID로 계획을 승인받고 기존 파일·기한은 원 등록 값을 유지한다.
-동일 요청 재전달은 기존 산출물 참조를 반환한다.
-
-| 형태 | 필수 필드·타입 | 제약 |
-|---|---|---|
-| 생성 | `kind="generated"`, `artifact_id:ID`, `source_ref:RecordRef`, `label:string` | 허용 보존 자료의 형식 변환 |
-| 기존 첨부 | `kind="existing"`, `artifact_id:ID`, `artifact_ref:RecordRef`, `label:string` | 해당 업무의 산출물 형식·기한 유지 |
-| 파생 표 | `kind="derived"`, `artifact_id:ID`, `table_id:ID`, `label:string` | 이번 보고의 검증표를 등록 형식으로 출력 |
-| 보고 파일 | `kind="report"`, `artifact_id:ID`, `label:string` | 이번 요청의 검증한 보고 본문을 파일로 제공 |
-
-생성은 원본 계약의 입력 종류, 파생 표는 `table`, 보고 파일은 `report` 입력을 받는 생성기를 사용한다.
-파생 표 파일의 `table_id`는 이번 보고의 `tables`에 제출한 표를 선택하며 검증에 통과한 내용만 생성기에 전달한다.
-보고 파일 입력은 이번 보고의 `artifacts`를 제외한 본문·근거이며 출처 참조는 비순환이어야 한다.
-기존 첨부의 등록 형식·실제 미디어 타입은 승인한 형식과 일치해야 하며 바꾸려면 생성으로 처리한다.
-`label`은 표시 이름이다.
-입력 자료는 등록 참조에서 읽고 실제 파일 위치는 실행기의 관리 영역에서 정한다.
-
-생성·첨부에는 [제공·보존 정책](../tasks/workflow.md#결과-제공과-전달)을 적용한다.
-원문 HTML·수식·스크립트는 데이터로 취급하고 형식별 무해화 규칙을 적용한다.
-
-파일 참조에는 원문 대신 기여 출처 참조를 연결한다.
-생성 파일은 변환한 원자료, 파생 파일은 검증표의 실제 원출처, 보고 파일은 제공 검사를 통과한 맥락·근거를 연결한다.
-기존 파일 첨부는 최초 기여 출처·원 승인·기존 기한을 승계한다.
-저장된 보고의 형식 변환과 기존 파일의 재첨부에도 현재 출처·내보내기 검사를 적용한다.
-새 지식의 근거로 쓰는 파일은 실제 원출처까지 해소돼야 한다.
-
-### 파생 표와 셀 검증
-
-`TableDraft`는 필수 `table_id:ID`, `sources:TableSource[]`, `columns:TableColumn[]`, `rows:TableRow[]`를 가진다.
-한 보고의 `tables`에서 `table_id`는 고유하며 현재 계획의 같은 ID인 `TableRule`과 일치해야 한다.
-현재 계획의 [TableRule](plans.md#파생-표의-허용-범위)로 결합·키·허용 연산·완전성·행 한도를 검사한다.
-표는 파일 없이도 검증·보존하며 파일 생성 여부와 무관하게 같은 출처·제공·가림·현재 권한·보존 검사를 적용한다.
-호스트는 결과 후보·근거를 제출하고 실행기가 검증 결과·원본 완전성·기한을 해소한다.
-
-| 타입 | 필수 필드·타입 |
+| 입력 종류 | 필수 필드 |
 |---|---|
-| `TableSource` | `source_id:ID`, `record_refs:RecordRef[]` |
-| `TableColumn` | `column_id:ID`, `label:string`, `value_type:enum` |
-| `TableRow` | `key:JsonValue[]`, `cells:TableCell[]` |
-| `TableCell` | `column_id:ID`, `value:string/boolean/null`, `operation:TableOperation`, `inputs:SourceCell[]` |
-| `SourceCell` | `source_id:ID`, `record_ref:RecordRef`, `pointer:JsonPointer` |
+| 호스트 생성 파일 | `artifact_id:ID`, `label:string`, `local_path:string`, `media_type:string`, `source_refs:RecordRef[]` |
+| 기존 파일 | `kind:"existing"`, `artifact_id:ID`, `label:string`, `artifact_ref:RecordRef` |
 
-`source_id`는 계획의 소스와 일대일로 대응하며 소스마다 중복 없는 `record_refs`를 하나 이상 둔다.
-소스 하나의 `record_refs`와 셀 하나의 `inputs`는 각각 최대 1,000개다.
-출처 기록은 현재 업무의 실제 결과 또는 명시적으로 승계한 결과만 사용한다.
-실행기는 같은 소스의 기록이 승인 단계·인스턴스·기능 계약·조회 조건에 대응하는지 검사한다.
-여러 기록을 합칠 때 동일 조회 식별·고유한 키·확인된 페이지 완전성을 검사한다.
-초기 로컬 처리 상한은 소스당 10,000행이며 결과 행 수는 승인한 더 작은 한도를 적용한다.
-`SourceCell.pointer`는 해당 기록의 기능 결과 본문에서 실제 스칼라 값 하나를 가리켜야 한다.
+생성 파일의 `kind:"file"`은 선택이며 생략하면 같은 의미다.
+ID·표시명은 비어 있지 않은 문자열이고 한 보고 안의 ID는 고유하다.
+`local_path`는 해당 업무 작업 영역 안의 실제 일반 파일을 가리키는 절대 경로다.
+`media_type`은 길이 255 이내의 미디어 타입이며 `source_refs`는 하나 이상의 중복 없는 실제 기여 출처다.
+기존 파일은 같은 업무에 등록된 파일의 형식·기한·출처를 이어받는다.
+같은 파일 ID는 기존 바이트·미디어 타입을 유지하며 다른 내용은 새 ID로 등록한다.
 
-열 ID는 고유하며 ID·표시 이름에는 공백을 제외한 문자가 하나 이상 있어야 한다.
-`value_type`은 `text`, `decimal`, `boolean`이다.
-각 행에는 모든 열의 셀이 정확히 하나씩 있고 키는 원본과 같은 타입의 null 아닌 스칼라 배열이다.
-셀은 그 행의 키에 대응하는 실제 원본 행에서만 값을 가져온다.
-문자열 비교는 원래 값·대소문자·시간대·단위·자료형을 유지한다.
-
-`decimal` 값은 부호·정수부·선택 소수부를 가진 10진 문자열로 전송한다.
-허용 문법은 `-?(0|[1-9]\d*)(\.\d+)?`이며 유효숫자 최대 38자리·소수부 최대 18자리다.
-원본 숫자는 등록된 계약의 정확한 10진 표현을 사용한다.
-산술 입력은 정확한 정수 또는 결과 계약이 `decimal` 타입임을 확인한 10진 값이다.
-정밀도 보존 실패·한도 초과는 검증 실패다.
-10진 비교·산술은 문자열 순서가 아닌 정확한 수치로 처리하고 `1.0`과 `1.00`, `-0`과 `0`을 같은 값으로 정규화한다.
-
-`TableOperation`은 아래 단일 연산과 실제 원본 셀 참조로 구성한다.
-
-| 연산 | 입력과 검증 |
-|---|---|
-| `copy` | 원본 셀 하나; 타입·값 대응 확인, 실제 null도 복사 가능 |
-| `equal` | 같은 타입의 셀 두 개; 정확한 동등 비교로 boolean 생성 |
-| `sum` | 같은 단위 숫자 셀 하나 이상; 정확한 합계 |
-| `difference` | 같은 단위 숫자 셀 두 개; 첫 값에서 둘째 값을 뺌 |
-| `ratio` | 숫자 셀 두 개; 첫 값을 둘째 값으로 나눔, 분모 0 거부 |
-| `missing` | 입력 []; `full` 결합에서 해당 소스 행의 부재를 확인한 경우만 null |
-
-`ratio` 셀의 추가 필수 필드는 `scale:NonNegativeInt`다.
-`scale`의 적용 대상은 `ratio`이며 `missing`의 추가 필드는 아래에 정의한다.
-scale은 계획의 `ratio_scale`과 같고 최대 18이며, 해당 자리에서 가장 가까운 값으로 반올림하고 정확히 중간이면 짝수 쪽을 택한다.
-단위·시간대의 업무상 대응은 원래 자료 표현과 계획 설명·등록 계약의 근거로 확인한다.
-셀 재계산은 해당 연산의 수치 정확성을 확인하고 업무 의미는 호스트가 근거와 대조한다.
-산술은 정확히 표현 가능한 실제 숫자 값에 적용하며 null·가림·누락은 각각의 상태를 유지한다.
-합계·차이는 같은 단위의 입력을 사용하며 단위 불일치는 검증 실패다.
-등록 단위가 없으면 단위의 업무상 대응을 자동 검증하지 못했다는 제한을 남긴다.
-
-`missing` 셀에는 추가 필수 `missing_source_id:ID`로 부재를 확인할 소스를 지정한다.
-부재 판정에는 해당 소스의 승인 범위·전체 페이지 완전성이 필요하다.
-값이 실제 null인 셀은 `copy`로 표현해 행 자체가 없는 경우와 구분한다.
-
-실행기는 승인한 결합키로 원자료의 키 집합을 만들고 `inner|full|none`의 예상 결과와 제출 행을 대조한다.
-`complete`는 승인한 조회 범위에서 모든 원소스의 확인된 전체성과 예상 키의 정확한 일치를 요구한다.
-전체성의 근거는 모든 기여 기록의 `source_complete=true`다.
-`selected`는 유효한 일부 키만 허용하고 보고에 선택 결과임을 표시한다.
-원격 집계의 `copy`·행 안의 `sum` 검산은 실제 셀 값·연산을 확인한다.
-원격 집계 전체성은 기능의 완전성 근거로, 원인 분석은 관찰·가설 구분으로 검토한다.
-
-출력 값뿐 아니라 결합키·부재·행 포함 판정에 쓰인 필드도 기여 출처다.
-모든 기여 필드의 원출처·내보내기 허용·가림·현재 권한을 해소해야 검증을 통과한다.
-보존기한은 업무 보고·표와 모든 기여 원자료의 유한 기한 중 가장 이른 값이며, 모두 무기한일 때만 null이다.
-보고에는 각 원자료의 실제 의미·관찰 시점·완전성과 그 차이를 제한으로 표시한다.
-
-검증 통과 시 실행기가 `TableValidation`을 생성해 보존할 표와 연결한다.
-필수 필드는 `table_ref:RecordRef`, `table_id:ID`, `source_refs:RecordRef[]`, `row_count:NonNegativeInt`, `coverage:enum`, `checks:string[]`, `limitations:string[]`, `expires_at:string|null`이다.
-`coverage`는 실제 확인한 `complete|selected`이며 `checks`에는 형식·출처·결합·산술·제공·기한 검사 결과를 남긴다.
-검증 실패는 `RESULT_VALIDATION_FAILED`로 반환한다.
-유효 표·산출물 참조와 검증 결과는 실행기의 검사·보존 성공 뒤 발급한다.
-
-파생 표를 파일로 생성하면 `ArtifactValidation`으로 파일과 검증표의 연결을 기록한다.
-필수 필드는 `artifact_ref:RecordRef`, `artifact_id:ID`, `table_id:ID`, `table_ref:RecordRef`이며 보존한 표 검증 결과에 참조로 연결한다.
-파일 생성의 형식·크기·제공·기한 검사는 그대로 적용한다.
-
-CSV는 검증한 표에서만 만들고 UTF-8·쉼표·헤더와 [RFC 4180](https://www.rfc-editor.org/rfc/rfc4180)의 인용·개행 규칙을 적용한다.
-숫자·boolean은 정규화한 문자열, null은 빈 셀로 내보내며 null·빈 문자열의 구분은 보존한 구조화 표에서 확인한다.
-문자열의 수식 시작 기호·탭·개행은 [CSV 주입 방지](https://owasp.org/www-community/attacks/CSV_Injection)에 맞춰 내보낼 때 무해화하고 변환 여부를 검증 기록에 남긴다.
-
-가상 허용 사례는 유일키가 있는 두 결과를 결합해 각각의 수치와 차이를 검산하는 것이다.
-중복 키·다른 행의 셀 참조·누락 행·0 나눗셈·가려진 결합키·완전성 없는 부재 주장·만료 출처는 거부 사례다.
-첫 구현은 실제 로컬 SQLite 기록을 이용해 위 허용·거부 경계와 파일 생성을 검증했다.
+자유 파일은 보고 근거·선택 기억·요청·실제 제공한 호출 자료에 현재 내보내기 허용을 적용한다.
+모델에 제공한 원출처 필드 전체가 내보내기 허용 범위 안에 있어야 하며 파생 자료는 말단 출처까지 대조한다.
+파일의 말단 기여 출처는 보고 근거에도 연결해 이후 조회·기억 검증에 사용한다.
+파일 기한은 업무와 기여 출처의 가장 이른 유한 기한을 승계한다.
+파일 경로·해시·출처 검사는 파일 내용의 사실성·계산 정확성을 독립적으로 증명하는 검사와 구분한다.
 
 ## daeri_result_submit
 
-보고 초안을 실제 기록·완료 조건·제공 범위와 대조해 보존한다.
-업무 상태는 실제 기록·완료 조건 검증 결과로 판정한다.
+호스트가 작성·검증한 보고와 파일을 등록하고 선별한 지식의 자동 저장을 함께 요청한다.
 
-| 입력 필드 | 타입 | 필수 | 제약 |
+| 입력 필드 | 타입 | 필수 | 조건 |
 |---|---|---|---|
-| `request_id` | ID | 예 | 보고 재전달 키 |
-| `task_id` | ID | 예 | 보고 저장 권한이 있는 업무 |
-| `expected_task_revision` | TaskRevision | 예 | 중복 검사 뒤 개정 비교 |
-| `plan_id` | ID 또는 null | 예 | 현재 불변 계획 |
-| `plan_version` | PlanVersion 또는 null | 예 | 저장 버전 일치 |
-| `report` | ReportDraft | 예 | 위 결과 DTO |
-| `memory_candidates` | MemoryCandidate[] | 아니요 | 최대 20개; 생략·[]이면 검증된 수행 메타데이터에서 기본 후보 생성 |
+| `request_id` | ID | 예 | 같은 보고의 멱등 키 |
+| `task_id` | ID | 예 | 현재 업무 |
+| `expected_task_revision` | TaskRevision | 예 | 현재 개정 |
+| `plan_id` | ID 또는 null | 예 | 현재 계획; 계획 전 실패·취소는 null |
+| `plan_version` | PlanVersion 또는 null | 예 | 현재 계획 개정과 함께 지정 |
+| `report` | ReportDraft | 예 | 호스트의 보고·완료 판단·파일 등록 |
+| `memory_candidates` | MemoryCandidate[] | 아니요 | 최대 20개; 생략·[]는 새 기억 저장 생략 |
 
-`MemoryCandidate`는 필수 `draft:MemoryDraft`, `source_refs:RecordRef[]`와 선택 `memory_ref:RecordRef`를 갖는다.
-출처는 중복 없는 1~100개이며 `draft`는 위 [기억 초안](#daeri_memory_update)과 같은 타입이다.
-새 지식은 `memory_ref`를 생략하고 기존 지식 정정에는 현재 개정 참조를 연결한다.
-
-후보가 없으면 보고의 `met` 완료 검사에 대응하는 실제 호출 중 완료·오류 없음·전체성 확인 조건을 갖춘 출처를 최대 100개 모아 수행 절차 후보 하나를 구성한다.
-본문은 리소스 범주·기능과 실제 확인한 수행 사실로 구성하고 원문·수치·SQL·전체 보고는 출처 자료로 관리한다.
-생성·저장 모두 현재 승인 계획의 기억 범위와 현재 제한·출처 검사를 통과해야 한다.
-
-새 보고의 계획은 현재 `active_plan_ref`와 일치해야 한다.
-이전 근거는 `carried_evidence_refs`로 현재 계획에 명시 승계해 마감 검사에 사용한다.
-원 계획·승인 연결과 현재 제공 범위를 유지한다.
-
-저장 계획·승인·외부 호출 이력이 전혀 없는 업무의 `failed|cancelled` 보고에서 두 계획 필드를 함께 null로 사용할 수 있다.
-`tables`, `checks`, `artifacts`, `uncertain_effects`는 빈 배열이며 허용된 요청·보완 자료와 실제 계획 검사 실패 또는 취소 이유를 보존한다.
-`failed`는 실제 실패한 `local_check`를 연결해 계획 검사 실패로 보고한다.
-현재 실패 근거는 업무·요청 키가 연결된 실제 `PLAN_INVALID`의 `local_check` 기록을 사용한다.
-입력 형식 오류·관리 CLI의 준비 실패를 업무 근거로 등록하는 경로는 확장 범위다.
-`cancelled`는 이미 취소된 업무에서만 허용하며 기존 계획 이력이 있으면 현재 계획을 참조한다.
-계획 전 보고의 `validation.completion`은 `unknown`이다.
+`MemoryCandidate`의 필수 필드는 `draft:MemoryDraft`, `source_refs:RecordRef[]`이며 정정 대상의 `memory_ref:RecordRef`는 선택이다.
+출처는 1~100개의 고유 참조로 지정하고 초안은 [기억 입력](#daeri_memory_update)의 필드·16KiB 조건을 따른다.
+호스트는 실제 업무에서 재사용할 규칙·구조·절차·교훈을 선별해 같은 보고에 연결한다.
+실행기는 승인한 업무 흐름에서 후보의 현재 출처·정책을 검사하고 정본 저장·색인·재시도를 자동 처리한다.
+자동 기억의 실패는 보존한 보고·업무 종료를 유지하고 실제 처리 상태로 반환한다.
 
 ### 검증과 상태 반영
 
-`paused`에서는 새 보고 제출·산출물 생성을 `TASK_STATE_INVALID`로 거부한다.
-기존 요청의 재전달·기록 열람과 이미 시작된 호출의 기록 보존은 현재 제공 권한 안에서 처리한다.
+실행기는 현재 업무 소유권·개정·계획 참조와 실제 승인 이력을 확인한다.
+활성 업무의 파일 등록·성공 보고에는 현재 유효한 승인이 필요하다.
+종료 업무의 후속 보고·파일 등록은 현재 계획의 실제 승인 이력과 현재 자료 제공 조건을 검사하고 기존 종료 상태를 유지한다.
+성공 보고는 진행 중·미확인 호출이 해소돼야 하며 실제 미확인 효과를 보고 전체와 대조한다.
+보고가 인용한 근거는 현재 업무에 귀속되거나 승인한 재계획으로 승계한 기록이어야 한다.
+현재 권한·실제 대상·마스킹·기한을 다시 검사하고 허구·만료·차단 참조를 거부한다.
 
-종료 업무의 추가 보고·첨부도 최초 종료 때 확정한 유한 기한 또는 무기한 조건을 유지하며 기여 출처의 더 이른 유한 기한을 승계한다.
-만료 후 새 보고 본문·산출물 보존은 요청 ID와 관계없이 `RECORD_EXPIRED`로 반환한다.
+모든 완료 조건은 한 번씩 판단하고 필수 조건의 `met|not_applicable` 및 미확인 효과 없음이 성공 상태의 입력 조건이다.
+실행기는 근거 연결을 검사하고 호스트의 의미 판단은 `completion_assessed_by:"host"`로 표시한다.
+호스트는 요청 목적에 맞는 확인 범위·제한과 완료 판단을 함께 보고한다.
 
-실행기는 입력·업무·계획·참조 소유, 완료 조건과 호출·근거·제공 범위를 검사한다.
-다른 업무에서 만들어진 기억은 현재 계획의 선택 참조·현재 권한·내보내기 허용·기한을 검사한 뒤 인용한다.
-리소스 없는 분석은 등록 요청 자료와 해석·계산 근거에 연결한다.
-외부 실행은 실제 호출 기록으로 검증하고 자연어 의미는 호스트가 근거와 대조한다.
+계획 전에는 실제 로컬 검사 실패·취소 사유를 근거로 `failed|cancelled`를 보존한다.
+이때 완료 검사·산출물·미확인 효과는 빈 목록이다.
+일시중지 상태는 재개 뒤 결과를 제출하고 취소 보고는 실제 취소 상태와 연결한다.
 
-`uncertain_effects`는 실제 보존한 같은 업무의 미확인 call ID 집합과 정확히 일치해야 한다.
-초안과 실제 기록의 모순·필수 근거 부족 등 검증 실패 시 현재 상태를 유지하고 `RESULT_VALIDATION_FAILED`로 반환한다.
-
-진행 중 호출·미확인 단계·미해소 외부 확인 대상이 있거나 현재 계획의 검증된 승인 이력이 없으면 `succeeded`를 거부한다.
-근거 승계·제공 범위 확대는 해당 계획의 승계 검사·현재 권한·실제 승인 조건을 충족해야 한다.
-다른 업무 확인은 신규 확인 결과를 근거로 쓰고 원 업무·호출·승인 연결을 유지한다.
-
-불확실성과 발생한 변경을 포함한 `partial|failed` 보고는 상태 조건에 맞춰 저장할 수 있다.
-새 표·파일이 포함되면 현재 계획의 실제 승인을 검사하며 없으면 `APPROVAL_REQUIRED`로 거부한다.
-활성 업무는 현재 유효한 승인, 종료 업무의 추가 보고는 동일 계획의 실제 승인 이력이 필요하다.
-`cancelled` 주장은 이미 취소된 업무에서만 허용한다.
-종료 업무의 새 보고는 기존 종료 상태를 유지하고 업무 취소는 취소 도구로 처리한다.
-
-과거 승인 연결·현재 제공 권한·[보고 보존 원칙](../tasks/workflow.md#이력과-완료-근거)을 검사해 로컬 근거를 처리한다.
-
-실행기는 표를 검증하고 그 결과로 같은 보고의 표 인용·완료 조건을 대조한 뒤 보고·파일을 검증한다.
-각 생성 파일의 크기는 해당 산출물의 승인 상한 이내여야 한다.
-셀·결합·완료 근거·파일 크기 중 하나라도 실패하면 새 표·보고·파일의 등록을 함께 취소한다.
-검증 통과 시 표·검증 결과·보고·산출물 참조·업무 상태·요청 기록과 기억 처리 대기를 원자적으로 보존한다.
-보고 확정 뒤 [자동 기억 처리](../tasks/memory.md#업무-후-갱신과-정정)를 수행하며 업무 개정·종료 상태를 유지하고 별도 기억 상태를 갱신한다.
-보존 실패는 기존 상태를 유지하고 저장소·등록 기록을 확인해 복구한다.
-동일 요청 재전달은 기존 보고·산출물 참조를 반환하고 연결된 기억 대기를 재시도한다.
-총괄의 다음 동일 profile `daeri_memory_search`도 대기 처리를 재시도한다.
-
-완료 조건의 단계 참조는 인용한 실제 호출 또는 검증표의 기여 단계와 대응해야 한다.
-직접 호출과 표의 출처 모두 [단계 대응·승계 기준](plans.md#planstep)을 적용한다.
-필수 조건의 `met`는 해당 단계에 대응하고 요구 범위·전체성을 확인한 직접 관찰 또는 검증표를 근거로 한다.
-초기 구현은 직접 호출 기록을 `met`의 근거로 쓰는 경우에도 `source_complete=true`를 요구한다.
-전체성 확인이 없는 기능 결과는 관찰·부분 보고로 남기고 해당 완료 검사는 `unknown`으로 표시한다.
-보고 검증은 구조·출처·검산·허용을 확인하고 자유 문장의 자연어 의미는 호스트가 실제 근거와 대조한다.
+파일 복사·보고 등록·업무 상태·자동 기억 대기의 공개는 같은 저장 트랜잭션으로 연결한다.
+실패한 공개의 미등록 복사본은 다음 정리에서 제거하고 원래 입력 파일은 보존한다.
+같은 요청은 저장한 보고·파일을 현재 권한으로 재조회한다.
+과거 보고·표·파일과 저장한 요청의 재전달은 기존 자료를 읽는 호환 경로로 유지한다.
 
 ### 출력 data
 
 | 필드 | 타입 | 의미 |
 |---|---|---|
-| `task_id`, `task_revision` | ID, TaskRevision | 보존 업무·개정 |
-| `report_ref` | RecordRef | 보고 참조 |
-| `table_validations` | TableValidation[] | 파일 여부와 무관한 검증표 참조·검증 결과; 해당 표가 없으면 [] |
-| `artifact_refs` | RecordRef[] | 생성·첨부 산출물 |
-| `artifact_validations` | ArtifactValidation[] | 파생 표 파일과 검증표의 연결; 해당 파일이 없으면 [] |
-| `task_state` | enum | 실제 `succeeded\|partial\|failed\|cancelled` |
-| `validation` | ReportValidation | 구조·근거·조건 결과 |
-| `delivery_status` | enum | 현재 `not_confirmed`; 전달 확인·실패 갱신은 확장 범위 |
-| `memory` | MemoryProcessing | 자동 기억·색인 처리 상태 |
+| `task_id`, `task_revision` | ID, TaskRevision | 업무·개정 |
+| `report_ref` | RecordRef | 보존 보고 |
+| `task_state` | TaskState | 최종 상태 |
+| `artifact_refs` | RecordRef[] | 등록·첨부 파일 |
+| `validation` | object | 구조·근거 연결·호스트 완료 판단 |
+| `delivery_status` | enum | 현재 `not_confirmed` |
+| `memory` | object | 자동 기억의 실제 처리 결과 |
 
-`MemoryProcessing`은 `state`와 `items`를 갖는다.
-전체 상태는 `ready|pending|partial|skipped`, 각 항목의 상태는 `ready|pending|skipped`다.
-항목은 처리한 `memory_ref` 또는 확인한 `error_code`를 함께 제공할 수 있다.
-대기는 재시도할 항목, 부분 상태는 완료·대기·생략이 섞인 결과, 생략은 실제 저장할 항목이 없는 결과다.
-기억 처리 실패는 보존한 보고의 성공 응답·종료 상태를 유지하고 이 별도 상태로 표시한다.
-내부 후보·대기 기록은 업무 목록·본문 조회의 공개 참조에서 제외하며 직접 조회는 `ACCESS_DENIED`다.
+`validation`은 `structure:"passed"`, `evidence:"passed"`, `completion:"met|unmet|unknown"`,
+`completion_assessed_by:"host"`, `checks:ReportCheck[]`, `issues:string[]`를 갖는다.
+과거 보고에는 당시의 표·산출물 검증 메타데이터가 남아 있을 수 있다.
 
-| ReportValidation 필드 | 타입 | 의미 |
-|---|---|---|
-| `structure` | enum `passed` | 구조 검사 통과 |
-| `evidence` | enum `passed` | 보존에 필요한 근거 구조 통과 |
-| `completion` | enum `met\|unmet\|unknown` | 필수 조건 충족 여부 |
-| `checks` | ReportCheck[] | 실행기가 대조한 조건 결과 |
-| `issues` | string[] | 미충족·미확인·제한 |
-
-`evidence=passed`는 보존에 필요한 근거 구조 검사 결과다.
-업무 완료 여부는 `completion`과 실제 업무 상태로 확인한다.
-업무가 `partial|failed|cancelled`여도 보고를 정상 보존하면 도구는 `status=ok`다.
+`memory.state`는 `ready|pending|partial|skipped`이며 항목별 처리 상태·기억 참조·오류 코드를 제공한다.
+각 항목의 필수값은 `state:ready|pending|skipped`이고 실제 처리에 따라 `memory_ref`, `error_code`, `next_action:"resubmit"`을 제공한다.
+후보가 없으면 `skipped`와 빈 항목 목록이다.
+검증된 후보의 일시 저장·색인 장애는 지속 대기로 재시도한다.
+검증 전 장애와 본문 없는 과거 대기는 `next_action:"resubmit"`으로 호스트의 새 후보 제출을 안내한다.
+자동 후처리는 보고가 확정한 업무 상태·개정을 유지하고 기억·색인의 현재 상태만 갱신한다.
 
 ## daeri_result_get
 
-보존 요청·답변·승인 응답·worker 할당·완료 결과·호출 결과·보고·표·산출물에서 현재 허용 자료를 읽는다.
-입력 참조는 해당 업무에 등록한 로컬 기록과 대조한다.
+보존 요청·답변·승인 응답·worker 할당·완료 결과·호출 결과·보고·파일과 과거 표에서 현재 허용 자료를 읽는다.
 
-| 입력 필드 | 타입 | 필수 | 제약 |
+| 입력 필드 | 타입 | 필수 | 조건 |
 |---|---|---|---|
-| `task_id` | ID | 예 | 현재 열람 가능한 업무 |
-| `record_ref` | RecordRef | 예 | 해당 업무의 등록 기록 |
-| `cursor` | Cursor | 아니요 | 이전 응답의 연속 조회 참조 |
-| `limit_bytes` | PositiveInt | 아니요 | 기본 65,536바이트, 최대 1 MiB |
+| `task_id` | ID | 예 | 열람 가능한 업무 |
+| `record_ref` | RecordRef | 예 | 해당 업무에 등록한 기록 |
+| `cursor` | Cursor | 아니요 | 이전 응답의 연속 조회 |
+| `limit_bytes` | integer | 아니요 | 기본 65,536바이트, 1~1,048,576 |
 
-등록 기록의 종류·소유와 [현재 제공·보존 조건](../tasks/workflow.md#이력과-완료-근거)을 매 페이지 검사한다.
-자료가 삭제·만료됐으면 해당 오류와 `data=null`을 반환한다.
-만료한 본문·산출물은 `RECORD_EXPIRED`이고 추적 참조·검증 이력은 별도로 조회할 수 있다.
-계획 전 요청·검사 기록도 허용 범위에서 읽는다.
-계획 본문과 최신 확인 상태는 `daeri_plan_get`으로, 특정 과거 승인 요청·실제 응답은 이 도구의 `approval` 기록으로 읽는다.
-과거 승인 기록에도 현재 제공·마스킹·보존 조건을 적용한다.
-현재 실행 가능 여부는 현재 승인·권한·상태로 별도 판정한다.
-`memory_search`·`memory_update` 기록은 검색 조건·상태·개정 참조 등 허용 메타데이터만 읽는다.
-현재 기억 본문은 `daeri_memory_search`로 권한·기한을 다시 검사해 조회한다.
-결과 조회는 기존 실행 권한·개정을 유지하며 마스킹 설명·참조도 현재 제공 범위로 검사한다.
+각 페이지에서 기록 귀속·현재 제공·마스킹·기한·무결성을 검사한다.
+신규 실행은 업무의 고정 구성을 사용하고, 보존 결과는 관련 연결·실제 대상·현재 정책을 대조한다.
+동일 설정 재저장·기본 맥락 변경·무관한 연결 추가 뒤에도 현재 권한이 유지되는 자료는 열람한다.
+대상 변경·리소스 삭제·허용 필드 축소·기억 무효화로 제공 조건이 달라지면 관련 파생 보고·파일도 차단한다.
+
+계획은 `daeri_plan_get`, 기억 본문은 현재 권한으로 `daeri_memory_search`에서 읽는다.
+검색·갱신 기록은 허용된 상태·개정 참조 등 메타데이터를 제공한다.
 
 | data 필드 | 타입 | 의미 |
 |---|---|---|
-| `task_id`, `task_revision` | ID, TaskRevision | 조회 업무·개정 |
-| `record_kind` | enum | `request\|clarification\|local_check\|memory_search\|memory_update\|worker_assignment\|worker_result\|approval\|call_result\|report\|table\|artifact` |
-| `payload` | JsonValue | 허용 JSON·텍스트·표; 없으면 null |
-| `next_cursor` | Cursor 또는 null | 후속 조회 참조 |
-| `has_more` | boolean | 허용 보존 자료의 후속 조각 |
-| `redactions` | string[] | 현재 []; 별도 마스킹 설명의 확장 필드 |
-| `evidence_refs` | RecordRef[] | 현재 제공 가능한 근거 참조 |
-| `integrity` | enum | 현재 정상 조회는 `intact`; `incomplete\|unavailable`은 부분 복구 확장용 |
-| `coverage` | object | 아래 필수 필드 |
-| `managed_file` | ArtifactFile 또는 null | 허용된 파일 산출물의 실제 위치·형식; 그 밖에는 null |
+| `task_id`, `task_revision` | ID, TaskRevision | 업무·개정 |
+| `record_kind` | enum | 요청·검사·승인·호출·보고·파일 등 등록 종류; 과거 `table` 포함 |
+| `payload` | JsonValue | 현재 허용 본문; 파일은 null |
+| `next_cursor` | Cursor 또는 null | 연속 조회 |
+| `has_more` | boolean | 허용 본문의 후속 조각 |
+| `redactions` | string[] | 현재 [] |
+| `evidence_refs` | RecordRef[] | 현재 제공 가능한 기여 출처 |
+| `integrity` | enum | 정상 `intact` |
+| `coverage` | object | `source_complete:boolean|null`, `returned_scope:string`, `missing_scope:string[]` |
+| `managed_file` | ArtifactFile 또는 null | 관리 파일의 실제 위치·메타데이터 |
 
-`ArtifactFile`의 필수 필드는 `artifact_ref:RecordRef`, `format_id:string`, `media_type:string`, `size_bytes:NonNegativeInt`, `local_path:string`, `expires_at:string|null`이다.
-`local_path`는 실행기가 생성·등록한 사용자 영역 파일의 절대 경로다.
-현재 내보내기 허용·마스킹·기한·실제 파일 무결성을 확인한 뒤 제공하고 호스트가 지원하는 로컬 파일 링크로 전달한다.
-경로 제공에는 실제 파일 전체가 현재 필드 제공 조건을 충족해야 한다.
-새 마스킹 파일이 필요하면 승인 범위의 결과 제출 경로로 생성한다.
-바이너리 파일은 `payload=null`이며 `managed_file`과 허용 메타데이터로 전달한다.
-호스트의 파일 링크 지원·전달 실패는 실제 환경에서 검증한다.
-보존·삭제의 관리 범위는 실행기에 등록된 원본 파일이며 사용자가 받은 사본은 사용자가 관리한다.
+`ArtifactFile`은 `artifact_ref`, `format_id`, `media_type`, `size_bytes`, `local_path`, `expires_at`을 갖고 새 등록 파일은 `filename`도 제공한다.
+`format_id`는 등록 파일의 보존 형식을 식별하는 메타데이터다.
+파일을 직접 읽을 수 있는 경로는 현재 내보내기 허용과 해시를 확인한 뒤 호스트의 파일 링크로 전달한다.
+사용자에게 전달한 사본의 수명은 해당 사본의 관리 경로를 따른다.
 
-`coverage`는 `source_complete:boolean|null`, `returned_scope:string`, `missing_scope:string[]`를 갖는다.
-원본 완전성을 판단할 수 없으면 `source_complete=null`이다.
-표 payload는 열·행을 가진 JSON object, 텍스트는 string이다.
-
-`limit_bytes`는 허용 payload의 직렬화 바이트 상한이다.
-문자열은 UTF-8 문자 경계로, JSON은 가장 큰 배열의 원소 경계로 나누고 나머지 객체 구조를 각 페이지에 유지한다.
-커서는 업무·기록·위치·현재 제공 본문의 서명에 바인딩한다.
-연속 조회의 `limit_bytes`는 허용 범위에서 조정할 수 있다.
-변경한 크기에 전체 원본이 한 페이지로 들어가면 커서를 생략해 첫 페이지부터 조회한다.
-만료·변조·다른 기록 커서는 `CURSOR_INVALID`다.
-단일 JSON 항목 하나가 상한에 들어가지 않으면 `RESULT_TRUNCATED`로 반환하며 더 큰 `limit_bytes`로 재조회한다.
-
-정상 페이지 분할은 `has_more=true`, `status=ok`다.
-확인된 원격 잘림은 보존한 부분과 원인을 `partial`로 반환한다.
-현재 저장 파일의 유실·무결성 실패는 `RECORD_UNAVAILABLE`, `data=null`이며 부분 파일 복구는 후속 범위다.
-원격 조회 누락·잘림은 `RESULT_TRUNCATED`, 보존 손실은 `RECORD_UNAVAILABLE`로 구분한다.
-확인된 원격 잘림은 최초 실행·같은 호출의 재전달·보존 결과 조회에서도 유지하고 `missing_scope`에 제한을 표시한다.
-정상적인 일부 업무 보고 자체의 조회와 그 근거가 된 잘린 원본 조회는 구분한다.
-
-업무가 `partial`이어도 보존 보고가 온전하면 조회 도구는 `status=ok`다.
-부분·오류의 응답 형식과 `isError`는 공통 규격을 따른다.
+문자열은 UTF-8 문자 경계, JSON은 가장 큰 배열의 항목 경계로 나눈다.
+커서는 업무·기록·위치·현재 본문 서명과 연결하고 잘못된 커서는 `CURSOR_INVALID`다.
+단일 항목이 반환 한도를 초과하면 `RESULT_TRUNCATED`로 더 큰 한도를 안내한다.
+정상 분할은 `has_more:true`·`status:ok`다.
+알려진 원격 잘림은 `partial`·`RESULT_TRUNCATED`, 만료는 `RECORD_EXPIRED`, 파일 유실·변조는 `RECORD_UNAVAILABLE`로 구분한다.
+업무가 부분 완료여도 보존 보고 자체가 온전하면 그 조회는 `status:ok`다.
 
 ## 전달과 검증 경계
 
-호스트 전달 증거의 한계와 재전달은 [결과 전달 원칙](../tasks/workflow.md#결과-제공과-전달)을 따른다.
-저장별 역할·공개·정리는 [로컬 저장 구조](../configuration/profiles.md#로컬-저장-구조)를 따른다.
-로컬 업무·저장·입력 검사와 하위 MCP 프로세스를 통한 승인·조회·보고·파일·기억 갱신의 검증 범위는 [최초 구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
-별도 MCP worker 프로세스의 실행·완료와 root의 보고·파일 통합은 실제 호스트가 네이티브 worker를 생성·연결하는 검증과 구분한다.
-실제 호스트 대화·사용자 의도 해석과 사내 리소스의 권한·네트워크는 별도 사용자 환경에서 검증한다.
+파일 내용 작성·계산·의미 판단은 호스트와 선택한 도구가 담당한다.
+실행기가 검증한 것은 승인·근거 연결·현재 권한·기한·무결성이며 호스트 전달 성공은 실제 증거로 확인한다.
+저장별 정본·공개·정리는 [로컬 저장](../configuration/profiles.md#로컬-저장-구조),
+실제 stdio·호스트·회사·OS 검증 범위는 [구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
+
+담당 구현은 [입력 DTO](../../../src/daeri/contracts.py), [업무·결과 연결](../../../src/daeri/engine.py), [worker 게이트웨이](../../../src/daeri/workers.py), [보고 검사](../../../src/daeri/results.py), [기억 출처 검사](../../../src/daeri/knowledge.py), [자동 기억 처리](../../../src/daeri/automatic_memory.py)다.
+[호스트 파일·출처 검사](../../../tests/test_host_results.py), [업무 통합·재전달](../../../tests/test_execution_flow.py), [worker 권한·묶음 선택](../../../tests/test_workers.py), [자동 기억·복구](../../../tests/test_automatic_memory.py)가 대표 검증이다.

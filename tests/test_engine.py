@@ -4,6 +4,7 @@ import pytest
 
 from daeri.engine import Engine
 from daeri.storage import Store
+from test_execution_flow import configured, begin, approve, execution, resource
 
 
 @pytest.mark.parametrize("code,action", [
@@ -35,6 +36,42 @@ def create(engine, profile, key="create-1", text="운영 절차를 설명해줘"
     })
     assert result["status"] == "ok", result
     return result["data"]
+
+
+@pytest.mark.parametrize("source_count,accepted", [(255, True), (256, False)])
+def test_derived_result_reads_count_the_root_in_the_source_graph_limit(runtime, source_count, accepted):
+    engine, profile = runtime
+    task = create(engine, profile)
+    with engine.store.transaction():
+        sources = [engine.store.write_record(task["task_id"], "local_check", {"outcome": "passed"})
+                   for _ in range(source_count)]
+        ref = engine.store.write_record(task["task_id"], "report", {"evidence_refs": sources})
+    result = engine.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": ref})
+    assert result["status"] == ("ok" if accepted else "error"), result
+    if not accepted:
+        assert result["error"]["code"] == "RESULT_VALIDATION_FAILED"
+
+
+@pytest.mark.parametrize("intermediate_count,accepted", [(29, True), (30, False)])
+def test_derived_result_reads_check_shared_sources_at_the_deeper_path(runtime, monkeypatch, intermediate_count, accepted):
+    from itertools import count
+    from uuid import UUID
+
+    engine, profile = runtime
+    task = create(engine, profile)
+    # The shallow source sorts before the deeper branch on every run.
+    identities = count(1)
+    monkeypatch.setattr("daeri.storage.uuid4", lambda: UUID(int=next(identities)))
+    with engine.store.transaction():
+        leaf = engine.store.write_record(task["task_id"], "local_check", {"outcome": "passed"})
+        root = shared = engine.store.write_record(task["task_id"], "report", {"evidence_refs": [leaf]})
+        for _ in range(intermediate_count):
+            root = engine.store.write_record(task["task_id"], "report", {"evidence_refs": [root]})
+        ref = engine.store.write_record(task["task_id"], "report", {"evidence_refs": [shared, root]})
+    result = engine.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": ref})
+    assert result["status"] == ("ok" if accepted else "error"), result
+    if not accepted:
+        assert result["error"]["code"] == "RESULT_VALIDATION_FAILED"
 
 
 def draft(search_ref):
@@ -393,3 +430,235 @@ def test_same_local_user_can_respond_from_another_connection_without_taking_owne
         assert fetched["execution_owner_status"] == "other"
     finally:
         other.close()
+
+
+def test_task_exposes_a_workspace_for_host_generated_files(runtime):
+    engine, profile = runtime
+    task = create(engine, profile)
+    from pathlib import Path
+    workspace = Path(task["artifact_workspace"])
+    assert workspace.is_absolute() and workspace.is_dir()
+    fetched = engine.call("daeri_task_get", {"task_id": task["task_id"]})
+    assert fetched["data"]["task"]["artifact_workspace"] == str(workspace)
+
+
+def test_new_plan_does_not_store_deprecated_empty_generator_rules(runtime):
+    engine, profile = runtime
+    saved = plan(engine, create(engine, profile))
+    fetched = engine.call("daeri_plan_get", {"task_id": saved["task_id"], "plan_id": saved["plan_id"]})
+    assert set(fetched["data"]["plan"]["draft"]["output"]) == {"format", "destination", "resource_rules"}
+
+
+def test_new_plan_rejects_legacy_table_generation_rules(runtime):
+    engine, profile = runtime
+    task = create(engine, profile)
+    search = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "출력"})
+    value = draft(search["data"]["memory_search_ref"])
+    value["output"]["artifact_rules"] = [{"artifact_id": "report", "format_id": "text", "format_contract_ref": "format_text_v1", "input_kind": "report", "options": {}, "max_bytes": 1000}]
+    result = engine.call("daeri_plan_submit", {"request_id": "legacy-output", "task_id": task["task_id"], "expected_task_revision": task["task_revision"], "draft": value})
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "PLAN_INVALID"
+
+
+def test_stored_legacy_plan_request_replays_without_revalidating_generators(runtime):
+    import hashlib
+    import json
+    engine, profile = runtime
+    saved = plan(engine, create(engine, profile))
+    task = engine.store.get_task(saved["task_id"])
+    header = task["plans"][0]
+    legacy = engine.store.read_record(task["task_id"], header["body_ref"])["payload"]["draft"]
+    legacy["output"]["table_rules"] = [{"table_id": "old-table", "sources": [], "join_mode": "none"}]
+    legacy["output"]["artifact_rules"] = []
+    args = {"request_id": "stored-legacy", "task_id": task["task_id"], "expected_task_revision": 1, "draft": legacy}
+    fingerprint = hashlib.sha256(json.dumps(args, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+    # Recreate a persisted v1 plan and its successful idempotency entry.
+    with engine.store.transaction():
+        header["body_ref"] = engine.store.write_record(task["task_id"], "plan", {"draft": legacy})
+        engine._save(task)
+        engine.store.request_put("daeri_plan_submit:" + task["task_id"], args["request_id"], fingerprint, {"status": "ok", "data": saved, "error": None})
+    replayed = engine.call("daeri_plan_submit", args)
+    assert replayed["status"] == "ok", replayed
+    assert replayed["data"]["plan_id"] == saved["plan_id"]
+    fetched = engine.call("daeri_plan_get", {"task_id": task["task_id"], "plan_id": saved["plan_id"]})
+    assert fetched["data"]["plan"]["draft"]["output"]["table_rules"] == legacy["output"]["table_rules"]
+
+
+def _finished_read_report(engine, profile):
+    saved, value = begin(engine, profile)
+    approved = approve(engine, saved)
+    references = []
+    for index, step in enumerate(value["steps"]):
+        approved["task_revision"] = engine.store.get_task(saved["task_id"])["task_revision"]
+        observed = engine.call("daeri_capability_execute", execution(saved, approved, step, call_id=f"read-{index}"))
+        assert observed["status"] == "ok", observed
+        references.append(observed["data"]["result_ref"])
+    report = {"summary": "승인된 조회 결과를 확인했다", "proposed_task_state": "succeeded", "findings": [], "tables": [],
+        "checks": [{"criterion_id": "read", "status": "met", "method": "호스트가 요청과 관찰을 대조했다", "evidence_refs": references}],
+        "limitations": [], "uncertain_effects": [], "artifacts": [], "next_actions": []}
+    stored = engine.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
+        "expected_task_revision": engine.store.get_task(saved["task_id"])["task_revision"],
+        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": report})
+    assert stored["status"] == "ok", stored
+    return saved["task_id"], stored["data"]["report_ref"], references[0]
+
+
+def _save_profile(engine, profile):
+    return engine.store.put_profile(profile["name"], **{key: profile[key] for key in
+        ("core_context", "resources", "retention_days", "long_term_memory_days", "memory_policy", "embedding")})
+
+
+def test_archived_call_survives_new_capabilities_on_the_same_resource(configured):
+    import copy
+    engine, profile = configured
+    saved, value = begin(engine, profile)
+    approved = approve(engine, saved)
+    observed = engine.call("daeri_capability_execute", execution(saved, approved, value["steps"][0]))["data"]
+    engine.call("daeri_task_cancel", {"request_id": "cancel", "task_id": saved["task_id"], "expected_task_revision": observed["task_revision"]})
+    updated = copy.deepcopy(profile)
+    extra = copy.deepcopy(updated["resources"][0]["capabilities"][0])
+    extra["capability_id"] = "another-read"
+    updated["resources"][0]["capabilities"].append(extra)
+    _save_profile(engine, updated)
+    result = engine.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": observed["result_ref"]})
+    assert result["status"] == "ok", result
+    assert result["data"]["payload"]["data"]["rows"][0]["amount"] == "10.00"
+
+
+@pytest.mark.parametrize("change", ["same", "context", "unrelated_resource"])
+def test_archived_report_remains_readable_after_unrelated_profile_reconfiguration(configured, change):
+    import copy
+    engine, profile = configured
+    task_id, report_ref, call_ref = _finished_read_report(engine, profile)
+    updated = copy.deepcopy(profile)
+    if change == "context":
+        updated["core_context"] = ["새 기본 설명"]
+    elif change == "unrelated_resource":
+        extra = copy.deepcopy(updated["resources"][0])
+        extra["instance_id"] = "cache-c"
+        updated["resources"].append(extra)
+    _save_profile(engine, updated)
+    for ref in (report_ref, call_ref):
+        result = engine.call("daeri_result_get", {"task_id": task_id, "record_ref": ref})
+        assert result["status"] == "ok", result
+
+
+@pytest.mark.parametrize("change", ["target", "model_policy", "removed"])
+def test_archived_report_rechecks_its_actual_sources_under_current_permissions(configured, change):
+    import copy
+    engine, profile = configured
+    task_id, report_ref, _ = _finished_read_report(engine, profile)
+    updated = copy.deepcopy(profile)
+    if change == "target":
+        updated["resources"][0]["target"]["host"] = "other.invalid"
+        updated["resources"][0]["connection"]["env"]["REDIS_HOST"] = "other.invalid"
+    elif change == "model_policy":
+        updated["resources"][0]["policy"]["allowed_model_fields"] = []
+    else:
+        updated["resources"].pop(0)
+        if updated["memory_policy"]:
+            updated["memory_policy"]["instance_ids"] = ["cache-b"]
+    _save_profile(engine, updated)
+    result = engine.call("daeri_result_get", {"task_id": task_id, "record_ref": report_ref})
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "ACCESS_DENIED", result
+
+
+@pytest.fixture
+def bundle_runtime(tmp_path):
+    import json
+    from daeri.resources import ResourceRegistry
+    from test_resource_autonomy import lower_fixture
+    item = resource()
+    item["discover_tools"] = True
+    item["capabilities"][0]["constraints"] = {}
+    item["connection"]["args"] = ["-I", str(lower_fixture(tmp_path))]
+    item["connection"]["env"]["FIXTURE_TOOLS"] = json.dumps([["get", True], ["scan_keys", True], ["set", False]])
+    store = Store(tmp_path / "data")
+    profile = store.put_profile("service", resources=[item])
+    ResourceRegistry(store).diagnose(profile, "cache-a")
+    store.close()
+    engine = Engine(tmp_path / "data")
+    yield engine, profile
+    engine.close()
+
+
+def bundle_plan(engine, profile, *, scope=None):
+    bundle = engine.registry.get(profile, "cache-a", "*")
+    def configure(value):
+        value["steps"][0].update(capability_id="*", contract_ref=bundle["contract_ref"], scope={} if scope is None else scope)
+    return begin(engine, profile, max_calls=4, configure=configure)
+
+
+def test_approved_resource_bundle_allows_host_tool_choice_and_preserves_both_identities(bundle_runtime):
+    engine, profile = bundle_runtime
+    saved, value = bundle_plan(engine, profile)
+    approved = approve(engine, saved)
+    references = []
+    for index, (capability, parameters) in enumerate([("get", {"key": "orders"}), ("scan_keys", {"pattern": "orders:*"})]):
+        args = execution(saved, approved, value["steps"][0], call_id=f"choose-{index}")
+        args.update(capability_id=capability, parameters=parameters,
+            expected_task_revision=engine.store.get_task(saved["task_id"])["task_revision"])
+        result = engine.call("daeri_capability_execute", args)
+        assert result["status"] == "ok", result
+        assert result["data"]["inline_result"]["data"]["tool"] == capability
+        assert result["data"]["actual_capability_id"] == capability
+        call = engine.store.get_task(saved["task_id"])["calls"][-1]
+        assert call["capability_id"] == "*"
+        assert call["contract_ref"] == saved["contract_refs"][0]
+        assert call["actual_capability_id"] == capability
+        assert call["actual_contract_ref"] == engine.registry.get(profile, "cache-a", capability)["contract_ref"]
+        body = engine.store.read_record(saved["task_id"], result["data"]["result_ref"])["payload"]
+        assert body["capability_id"] == "*" and body["actual_capability_id"] == capability
+        assert engine.call("daeri_capability_execute", args)["data"]["result_ref"] == result["data"]["result_ref"]
+        references.append(result["data"]["result_ref"])
+    report = {"summary": "호스트가 필요한 두 조회 도구를 골라 확인했다", "proposed_task_state": "succeeded", "findings": [],
+        "checks": [{"criterion_id": "read", "status": "met", "method": "현재 관찰 대조", "evidence_refs": references}],
+        "limitations": [], "uncertain_effects": [], "artifacts": [], "next_actions": []}
+    final = engine.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
+        "expected_task_revision": engine.store.get_task(saved["task_id"])["task_revision"],
+        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": report})
+    assert final["status"] == "ok", final
+    _save_profile(engine, profile)
+    reread = engine.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": final["data"]["report_ref"]})
+    assert reread["status"] == "ok", reread
+
+
+@pytest.mark.parametrize("capability", ["set", "*", "invented"])
+def test_resource_bundle_cannot_select_a_mutating_or_unknown_tool(bundle_runtime, capability):
+    engine, profile = bundle_runtime
+    saved, value = bundle_plan(engine, profile)
+    approved = approve(engine, saved)
+    args = execution(saved, approved, value["steps"][0])
+    args["capability_id"] = capability
+    result = engine.call("daeri_capability_execute", args)
+    assert result["status"] == "error", result
+    assert engine.store.get_task(saved["task_id"])["calls"] == []
+
+
+def test_resource_bundle_applies_explicit_scope_to_each_selected_tool(bundle_runtime):
+    engine, profile = bundle_runtime
+    saved, value = bundle_plan(engine, profile, scope={"equals": {"key": "orders"}})
+    approved = approve(engine, saved)
+    args = execution(saved, approved, value["steps"][0], key="other")
+    args["capability_id"] = "get"
+    denied = engine.call("daeri_capability_execute", args)
+    assert denied["error"]["code"] == "SCOPE_VIOLATION", denied
+    args["parameters"] = {"key": "orders"}
+    assert engine.call("daeri_capability_execute", args)["status"] == "ok"
+
+
+def test_resource_bundle_change_requires_a_new_plan_before_dispatch(bundle_runtime):
+    import json
+    engine, profile = bundle_runtime
+    saved, value = bundle_plan(engine, profile)
+    approved = approve(engine, saved)
+    registration_path = engine.registry._path(profile, "cache-a")
+    registration = json.loads(registration_path.read_text())
+    registration["descriptors"] = [item for item in registration["descriptors"] if item["capability_id"] != "scan_keys"]
+    registration_path.write_text(json.dumps(registration))
+    args = execution(saved, approved, value["steps"][0])
+    args["capability_id"] = "get"
+    result = engine.call("daeri_capability_execute", args)
+    assert result["error"]["code"] == "CONTRACT_CHANGED", result
+    assert engine.store.get_task(saved["task_id"])["calls"] == []

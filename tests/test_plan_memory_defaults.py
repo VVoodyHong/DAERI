@@ -64,6 +64,21 @@ def test_existing_profile_memory_ceiling_constrains_default_recall_and_categorie
     assert planning.resolve_memory_defaults(profile, draft)['output']['resource_rules'][0]['memory'] == NONE
 
 
+@pytest.mark.parametrize('restriction', [
+    {'categories': ['lesson']}, {'instance_ids': []}, {'model_allowed': False},
+    {'retain_allowed': False}, {'long_term_allowed': False},
+])
+def test_explicit_memory_cannot_exceed_the_displayed_profile_ceiling(restriction):
+    profile, draft = configured()
+    profile['memory_policy'] = {'categories': ['procedure'], 'instance_ids': ['resource'],
+        'model_allowed': True, 'retain_allowed': True, 'long_term_allowed': True, **restriction}
+    draft['output']['resource_rules'][0]['memory'] = {
+        'categories': ['procedure'], 'source_fields': [ROOT], 'context_sources': [],
+        'retention': 'long_term', 'allow_model_recall': True}
+    with pytest.raises(StoreError, match='PLAN_INVALID'):
+        planning.validate_plan(profile, draft, Registry())
+
+
 def test_explicit_exclusion_of_memory_is_kept_in_the_plan():
     profile, draft = configured()
     draft['output']['resource_rules'][0]['memory'] = deepcopy(NONE)

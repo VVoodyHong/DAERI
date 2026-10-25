@@ -2,6 +2,8 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime, timedelta
@@ -323,6 +325,53 @@ def test_missing_or_corrupt_body_never_returns_success(store, tmp_path, damage):
         store.read_record(task["task_id"], ref)
 
 
+@pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='POSIX special files')
+@pytest.mark.parametrize('kind,expected', [
+    ('profile', 'STORE_UNAVAILABLE'), ('record', 'RECORD_UNAVAILABLE'),
+    ('artifact', 'RECORD_UNAVAILABLE'), ('workspace', 'ready'),
+])
+def test_replaced_special_files_never_block_storage_reads_or_startup(store, kind, expected):
+    task = task_for(store)
+    if kind == 'profile':
+        path = store.data_dir / store._db.execute('SELECT path FROM profiles').fetchone()[0]
+        reference = ''
+    elif kind == 'record':
+        reference = store.write_record(task['task_id'], 'request', {'text': 'original'})
+        path = store.data_dir / store._db.execute('SELECT path FROM records').fetchone()[0]
+    elif kind == 'artifact':
+        reference = store.write_artifact(task['task_id'], b'original', 'text', 'text/plain', 'txt')
+        path = Path(store.artifact_file(task['task_id'], reference)['local_path'])
+    else:
+        path = Path(store.artifact_workspace(task['task_id'])) / 'answer.txt'
+        path.write_bytes(b'original')
+        reference = store.import_artifact(task['task_id'], str(path), 'text/plain')
+    path.unlink()
+    os.mkfifo(path)
+    script = '''
+from pathlib import Path
+import sys
+from daeri.storage import Store, StoreError
+store = Store(Path(sys.argv[1]))
+try:
+    if sys.argv[2] == 'profile':
+        store.get_profile('alpha')
+    elif sys.argv[2] == 'record':
+        store.read_record('task-one', sys.argv[3])
+    elif sys.argv[2] == 'artifact':
+        store.artifact_file('task-one', sys.argv[3])
+except StoreError as error:
+    print(error.code)
+else:
+    print('ready')
+finally:
+    store.close()
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(store.data_dir), kind, reference],
+                            capture_output=True, text=True, timeout=3, check=True)
+    assert result.stdout.strip() == expected
+    assert path.exists()
+
+
 def test_expiry_blocks_before_cleanup_and_is_never_extended(store, tmp_path, monkeypatch):
     task = task_for(store)
     now = datetime.now(UTC)
@@ -480,6 +529,35 @@ def test_database_and_sidecar_symlinks_are_rejected_before_opening(tmp_path, nam
         instance = Store(data)
         instance.close()
     assert outside.read_bytes() == b""
+
+
+@pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='POSIX special files')
+@pytest.mark.parametrize('suffix', ['', '-wal', '-shm', '-journal'])
+def test_sqlite_special_files_are_rejected_without_blocking_or_replacing_them(tmp_path, suffix):
+    data = tmp_path / 'data'
+    instance = Store(data)
+    instance.put_profile('keep', core_context=['preserve'])
+    instance.close()
+    path = data / ('daeri.sqlite3' + suffix)
+    path.unlink(missing_ok=True)
+    os.mkfifo(path)
+    script = '''
+from pathlib import Path
+import sys
+from daeri.storage import Store, StoreError
+try:
+    store = Store(Path(sys.argv[1]))
+except StoreError as error:
+    print(error.code)
+else:
+    store.close()
+    print('opened')
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(data)],
+                            capture_output=True, text=True, timeout=3, check=True)
+    assert result.stdout.strip() == 'STORE_UNAVAILABLE'
+    assert path.exists() and not path.is_file()
+    assert 'preserve' in next((data / 'profiles').glob('*.json')).read_text()
 
 
 @pytest.mark.parametrize("damage", ["missing_db", "empty_db", "missing_profile_table", "missing_expiry_column"])

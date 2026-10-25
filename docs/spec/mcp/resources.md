@@ -8,7 +8,6 @@
 ## `daeri_resource_list`
 
 현재 열람 권한과 업무의 고정 profile에 속한 로컬 등록 인스턴스·기능 요약을 조회한다.
-로컬 실행기에 등록된 산출물 형식도 함께 제공한다.
 계획 전 로컬 등록 정보 조회에 사용한다.
 profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구한다.
 
@@ -22,7 +21,8 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 | `limit` | integer | 아니요 | 기본 20, 범위 1~100 |
 
 `types`를 생략하면 접근 가능한 모든 유형을 대상으로 한다.
-기본 범주는 DB·Cache·Infra·Source·Document·Issue·Log·Mail이며 새 범주를 등록할 수 있다.
+현재 내장 연결의 범주는 DB·Cache·Infra·Source·Document·Issue다.
+범주 ID는 등록 어댑터에서 결정하며 새 범주는 해당 어댑터·카탈로그 등록으로 확장한다.
 빈 배열은 거부한다.
 현재 목록 커서는 업무·유형 필터·인스턴스 및 기능 요약의 서명에 연결한다.
 다른 조건에 재사용하거나 등록부 변경으로 유효성을 잃으면 `CURSOR_INVALID`로 반환한다.
@@ -34,7 +34,6 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 |---|---|---|---|
 | `task_id`, `task_revision` | string, integer | 예 | 업무 ID와 현재 개정 번호 |
 | `instances` | InstanceSummary[] | 예 | 권한 필터를 거친 인스턴스 |
-| `output_formats` | OutputFormatDescriptor[] | 예 | 현재 사용자·호스트의 로컬 산출물 형식 등록부 |
 | `next_cursor` | string 또는 null | 예 | 다음 목록 페이지 참조 |
 | `has_more` | boolean | 예 | 같은 조회에서 추가 페이지가 있는지 여부 |
 
@@ -42,41 +41,14 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 `type`은 등록된 리소스 범주 ID를 사용한다.
 `CapabilitySummary`는 `capability_id: string`, `contract_ref: string`, `description: string`, `changes_state: boolean`을 갖는다.
 두 객체의 필드는 모두 필수이며 비어 있는 기능 배열도 허용한다.
+준비된 인스턴스에는 개별 도구와 리소스 읽기 묶음 `*`의 요약을 함께 제공한다.
+미진단·변경·사용 불가 등록은 해당 인스턴스를 유지하고 `capability_summaries: []`로 표시한다.
+실제 인증·연결의 준비 상태는 관리 진단과 실행 경계에서 확인한다.
 
 등록된 인스턴스가 없으면 `instances: []`, `has_more: false`, `next_cursor: null`인 `ok` 응답이다.
 요약의 `changes_state`는 효과 설명이며 실제 호출은 승인·권한·재시도 계약으로 검사한다.
 목록 페이지는 등록 인스턴스 목록의 분할 상태다.
 실제 리소스 데이터의 완전성은 기능 실행 결과에서 확인한다.
-
-### `OutputFormatDescriptor`
-
-설치한 생성기의 검증된 형식 계약을 공통 등록 목록으로 제공한다.
-형식과 생성기의 역할은 [결과 형식·생성기](tasks.md#결과-형식과-생성기)가 정본이다.
-아래 필드는 모두 필수다.
-
-| 필드 | 타입 | 의미 |
-|---|---|---|
-| `format_id` | string | 등록부 안에서 고유한 형식 ID |
-| `contract_ref` | RecordRef | 입력·옵션·생성 의미에 연결한 불변 계약 참조 |
-| `description` | string | 형식의 목적·생성 제약 |
-| `media_type` | string | 생성 파일의 미디어 유형 |
-| `extensions` | string[] | 허용한 파일 확장자 |
-| `input_kinds` | string[] | 생성기가 받는 입력 종류 |
-| `options_schema` | JsonObject | 허용 옵션의 로컬 검증 스키마 |
-| `available` | boolean | 현재 사용자·호스트에서 생성할 준비가 됐는지 여부 |
-| `unavailable_reason` | string 또는 null | 준비 미완료 이유; 사용 가능하면 null |
-
-`input_kinds`는 초기 `text`, `json`, `table`, `report`를 사용하되 등록 계약으로 확장할 수 있다.
-생성 가능 여부는 각 등록 형식의 `input_kinds`·옵션 스키마·준비 상태로 판정한다.
-`available: false`이면 비어 있지 않은 사유를 제공한다.
-형식 변경은 계획 수정으로, 설치는 환경 준비 경로로 처리한다.
-`options_schema`는 검증된 로컬 스키마에서 해소하고 옵션은 데이터로 검사한다.
-
-현재 형식 등록부는 실행기에 포함한 [세 생성기](tasks.md#결과-형식과-생성기)이며 전체 목록을 각 페이지의 `output_formats`에 동일하게 반환한다.
-`types`·`limit`의 적용 대상은 리소스 인스턴스 목록이다.
-리소스가 없어도 형식 목록을 반환한다.
-동적 형식 등록과 등록부별 크기·개정·커서 검사는 생성기 확장의 범위다.
-형식을 사용한 자료의 원격 접근·내보내기·보존은 각 실행·출력 정책으로 검사한다.
 
 ## `daeri_capability_get`
 
@@ -89,7 +61,7 @@ profile 미해소 시 `CONTEXT_REQUIRED`로 반환해 profile 선택을 요구�
 |---|---|---|---|
 | `task_id` | string | 예 | 업무 ID |
 | `instance_id` | string | 예 | 열람 가능한 등록 인스턴스 |
-| `capability_id` | string | 예 | 그 인스턴스의 등록 기능 |
+| `capability_id` | string | 예 | 그 인스턴스의 등록 기능 또는 읽기 묶음 `*` |
 
 반환 `data`는 필수 `task_id: string`, `task_revision: integer`, `descriptor: CapabilityDescriptor`를 갖는다.
 대상 부재·열람 권한 부족은 각각의 오류로 반환한다.
@@ -144,14 +116,16 @@ metric을 지원하는 등록 계약에서 `metric_id`는 같은 기능 안에�
 `verification.supported: false`이면 두 배열은 비고 true이면 등록된 확인 기능을 하나 이상 지정한다.
 
 `continuation.consistency`는 `snapshot`, `live`, `unspecified` 중 하나다.
-페이지 미지원이면 세 pointer와 `validity`는 null이다.
-페이지 지원이면 세 pointer와 `validity`는 비어 있지 않은 문자열이다.
+`continuation.supported: false`이면 세 pointer와 `validity`는 null이다.
+`continuation.supported: true`이면 세 pointer와 `validity`는 비어 있지 않은 문자열이다.
+이 값은 실행기의 후속 값 연결 지원이며 하위 도구가 제공하는 페이지 인수와 구분한다.
 pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [공통 필드 경로](common.md#필드-경로와-선택)를 따른다.
 입력 pointer의 기준은 `parameters`, 출력 pointer의 기준은 정규화한 기능 결과 객체다.
 출력의 후속 값을 입력에 연결하는 허용 방식은 [계획 규격](plans.md)의 `input_bindings`에 둔다.
 
 세 스키마는 최상위 객체인 JSON Schema이며 서버가 검증한 등록부에서 제공한다.
 `input_schema`는 진단한 하위 도구의 계약이고 `output_schema`는 호스트에 제공할 결과, `scope_schema`는 실행기가 해석하는 승인 조건을 정의한다.
+`scope_schema.x-daeri-access-constraints`에는 해당 도구의 관리자 제한을 함께 제공한다.
 하위 출력이 객체가 아니거나 스키마가 없어도 검증한 정규화 계약으로 연결할 수 있다.
 참조 해소·정규화·등록 조건은 [리소스 계약](../resources/contract.md#도구-등록)을 따른다.
 
@@ -162,6 +136,34 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 실행 목적은 등록 기능의 허용 목적·효과·현재 계획에 대응해야 한다.
 `metadata_discovery_allowed`는 등록 메타데이터 노출 여부이며 원격 탐색은 별도 승인된 기능 실행으로 처리한다.
 제품별 실제 권한과 변환 후 범위 검사는 [실제 요청 정규화·판정](../resources/contract.md#실제-요청-정규화와-범위-판정)을 따른다.
+
+### 리소스 읽기 묶음
+
+`capability_id: "*"`는 해당 연결에서 현재 진단한 읽기 기능 전체를 승인할 때 사용한다.
+`CapabilityDescriptor`의 공통 필드에 다음 필드를 추가한다.
+
+| 필드 | 타입 | 내용 |
+|---|---|---|
+| `capability_refs` | object[] | ID순으로 정렬한 구성 기능의 `capability_id`, `contract_ref` 쌍 |
+| `capability_constraints` | object | 구성 기능 ID별 관리자 제한 |
+
+묶음 `contract_ref`는 구성 기능의 ID·계약 참조에 연결한 지문이다.
+각 개별 참조에는 설정·인증 바인딩·도구 스키마·정규화 계약이 연결되므로 구성이나 의미가 달라지면 묶음도 달라진다.
+`effects.changes_state=false`, 지원 목적은 `collect`·`verify`다.
+
+묶음의 `scope_schema`는 공통 승인 조건을 설명한다.
+`scope: {}`를 승인하면 고정 대상의 현재 계정 읽기 권한·관리자 제한·자료 제공 정책 안에서 호스트가 필요한 도구와 질의·필터·페이지를 선택한다.
+명시한 조건은 실제 선택 도구에도 적용하며 실제 대상이나 자료 범위를 넓히려면 수정 계획을 승인받는다.
+묶음의 `input_schema`·`output_schema`는 일반 객체 설명이고, 실제 호출은 선택한 개별 도구의 스키마·읽기 효과·범위 검사로 처리한다.
+
+계획과 위임은 묶음의 `*`·계약 참조에 연결하고 실행 입력의 `capability_id`로 실제 기능을 고른다.
+worker는 [호출 입력](tasks.md#daeri_worker)의 선택 필드 `call.capability_id`를 사용하며 묶음 단계에서는 실제 기능을 지정해야 한다.
+worker의 배정 조회는 묶음과 구성원의 실제 설명·입출력 스키마를 `contracts`에 함께 반환한다.
+개별 기능을 승인한 기존 단계는 동일한 기능으로 실행한다.
+
+하위 목록·스키마의 처리 범위는 [등록 조건](../resources/initial-adapters.md#등록-설정과-진단)을 따른다.
+개별 스키마와 묶음·worker 계약 응답의 크기는 하위 실행 결과의 수신 상한과 별개다.
+이 계약 응답 전체의 바이트 상한은 현재 미설정이며 대량 도구의 실제 호스트 문맥 수용은 별도 확인 대상이다.
 
 ## `daeri_capability_execute`
 
@@ -175,8 +177,9 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 | `expected_task_revision` | integer | 예 | 1 이상, 새 호출 시작 시 현재 업무 개정과 일치 |
 | `plan_id`, `plan_version` | string, integer | 예 | 불변 계획 ID와 1 이상의 버전 |
 | `step_id`, `call_id`, `approval_id` | string | 예 | 계획 단계·호출 멱등 키·승인 참조 |
-| `instance_id`, `capability_id` | string | 예 | 저장된 계획 단계와 일치 |
-| `contract_ref` | string | 예 | 저장된 단계와 현재 등록 계약의 참조 |
+| `instance_id` | string | 예 | 저장된 계획 단계의 리소스 |
+| `capability_id` | string | 예 | 실행할 실제 등록 읽기 기능; 묶음 실행에서도 `*` 대신 실제 ID 지정 |
+| `contract_ref` | string | 예 | 승인한 단계의 개별 또는 묶음 계약 참조 |
 | `parameters` | object | 예 | 해당 기능 `input_schema`로 검증 |
 | `bindings` | BindingSelection[] | 아니요 | 승인한 후속 값 연결; `binding_id` 고유 |
 | `reconcile_of_call_id` | string | 확장 시 조건부 | `purpose=reconcile` 단계에서 확인할 원 호출 |
@@ -187,6 +190,8 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 재전달과 개정 비교 순서는 [MCP 공통](common.md#업무-개정과-멱등-요청)을 따른다.
 
 새 호출의 단계·목적·분기·의존 관계는 [계획 규격](plans.md)으로 검사한다.
+묶음 단계는 현재 구성 지문과 선택한 구성원의 실제 계약을 확인하며 묶음 변경은 `CONTRACT_CHANGED`로 새 계획을 요구한다.
+묶음 밖의 기능·변경 도구·다른 리소스는 `SCOPE_VIOLATION`이며 개별 단계는 기존 기능 일치를 요구한다.
 상태·권한·승인·실제 대상 검사와 예약·의도 보존·dispatch는 [실행 제어](../tasks/workflow.md#실행-검사와-기록)를 따른다.
 기억을 전제로 하는 새 dispatch에도 [현재 기억 검사](../tasks/memory.md#계획-전-조회와-활용)를 적용하며 전제가 무효이면 `PLAN_INVALID`로 수정 계획을 요구한다.
 
@@ -209,7 +214,7 @@ pointer는 등록 계약에서 허용한 단일 필드 위치를 가리키며 [�
 source는 같은 업무의 현재 계획 또는 `carried_evidence_refs`로 승계한 이전 계획의 허용 단계 기록이어야 한다.
 서버가 저장한 출처 결과와 현재 제공 권한을 검사해 연결 값을 해소한다.
 
-`partial`·`pending`에서도 실제 관찰·보존한 확정 필드만 scope 안에서 사용할 수 있다.
+`partial`·`pending`에서도 실제 관찰·보존한 확정 필드를 현재 scope 안에서 사용할 수 있다.
 호스트가 같은 target에 다른 값을 제출하면 `BINDING_INVALID`로 거부한다.
 출력 계약을 통과한 보존 원본 중 현재 제공이 허용된 필드만 연결하고 입력 스키마와 승인 `scope`로 검사한다.
 기본값·후속 값·하위 MCP 인수 변환을 적용한 실제 요청의 대상·연산도 최종 범위 검사에 포함한다.
@@ -252,6 +257,7 @@ profile이 달라도 원 인스턴스·실제 대상·권한 문맥의 바인딩
 | `call_state` | string | 예 | `completed`, `blocked`, `failed`, `pending`, `unknown` |
 | `external_effect` | string | 예 | `none`, `confirmed`, `unknown` |
 | `result_ref` | string 또는 null | 예 | 보존된 결과의 불투명 참조 |
+| `actual_capability_id`, `actual_contract_ref` | string | 신규 호출 | 실제 선택한 개별 기능과 실행 계약; 이전 기록에서는 생략 가능 |
 | `inline_result` | object 또는 null | 예 | 제공이 허용된 기능 결과 |
 | `usage` | Usage | 예 | 이 호출과 내부 요청의 소비·예약 |
 | `budget_remaining` | BudgetRemaining | 예 | 기존 실행을 포함해 계산한 잔여량 |
@@ -269,6 +275,12 @@ profile이 달라도 원 인스턴스·실제 대상·권한 문맥의 바인딩
 출력 오류 뒤의 재시도·예약 정산·근거 채택은 실제 원격 상태와 해당 실행 계약으로 판정한다.
 URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공한다.
 `external_effect: "none"`은 업무 대상 변경이 없다는 뜻이며 읽기의 부수 효과는 기능 계약에 남긴다.
+현재 내장 읽기 호출은 동기식이며 `external_effect: "none"`·`reconciliation: null`을 반환한다.
+`pending` 접수·변경 효과·원 호출 확인 결과는 위 확장 계약과 과거 저장 상태를 표현하는 공통 DTO다.
+
+저장 호출·조회 근거의 `capability_id`·`contract_ref`는 승인한 단계의 값이다.
+묶음 실행에서는 `*`·묶음 지문을 유지하고 `actual_capability_id`·`actual_contract_ref`로 실제 도구를 함께 추적한다.
+단계 의존·바인딩·근거 승계·worker 실행은 같은 승인 단계에 연결하면서 실제 도구의 출력 스키마와 원본을 검사한다.
 
 | 하위 타입 | 필드와 타입 |
 |---|---|
@@ -284,6 +296,8 @@ URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공�
 예산 항목은 [계획 규격](plans.md)의 `max_tool_calls`, `max_external_requests`, `max_runtime_ms`, `resource_limits`와 대응한다.
 측정한 내부 페이지·재시도의 외부 요청 수는 `external_requests`로 기록하고 미측정 값은 null로 유지한다.
 현재 하위 전송의 측정 범위는 [호출·출력 계약](../resources/initial-adapters.md#호출출력실패)을 따른다.
+현재 읽기 구현의 `metrics`는 빈 목록, 전송한 호출의 `external_requests`는 null이며 전송 전에 차단한 호출은 0이다.
+`retry_safety`는 업무 대상 변경이 없는 읽기 효과와 같은 호출 ID의 저장 상태 재전달을 설명하며 `automatic_retry_allowed: false`다.
 
 `runtime_ms`는 DAERI가 이 호출에 사용한 대기·실행 관리 시간을 표시한다.
 원격 작업의 실제 실행 시간이나 종료 보장은 별도 근거로 표시한다.
@@ -291,22 +305,16 @@ URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공�
 현재 한 호출은 남은 업무 실행 시간과 60초 중 작은 값을 예약한다.
 실행 완료 시 실제 경과 시간을 소비로 기록하고 미사용 예약을 반환한다.
 
-`resolution`은 `resolved`, `pending`, `unknown` 중 하나다.
-원 호출의 상태·외부 효과 enum은 위 표를 따르며 반환 시의 보존 값이다.
-`original_task_revision`은 공통 `TaskRevision`이다.
-`resolved`에는 등록된 확정 근거와 `none|confirmed`인 원 호출의 효과 상태가 필요하다.
-원 호출이 `completed|failed`로 끝났음을 확인해야 `resolved`가 될 수 있다.
-`pending|unknown`은 일부 효과의 관찰 여부와 함께 확인 대기 상태를 유지한다.
-
-확인 도구의 `ok`는 확인 처리 완료다.
-원 작업의 성공·실패·취소·변경 없음은 원 호출 결과로 구분한다.
+확장 `resolution`은 `resolved`·`pending`·`unknown`이며 원 호출의 상태·효과는 반환 시 보존 값이다.
+`resolved`는 확정 근거·`none|confirmed`인 효과·`completed|failed`인 종료 상태를 요구하고 나머지는 확인 대기를 유지한다.
+`original_task_revision`은 공통 `TaskRevision`이며 확인 도구의 `ok`와 원 작업의 성공·실패는 각각의 결과로 구분한다.
 
 ### 결과와 오류
 
 | 상황 | `status` · `call_state` · 오류 |
 |---|---|
 | 정상 완료 | `ok` · `completed` · null |
-| 비동기 접수 | `pending` · `pending` · null |
+| 확장 계약의 비동기 접수 | `pending` · `pending` · null |
 | 확정된 원격 실패 | `error` · `failed` · `EXTERNAL_EXECUTION_FAILED` |
 | 단절·시간 초과 등으로 결과 미확인 | `error` · `unknown` · `EXTERNAL_OUTCOME_UNKNOWN` |
 | 출력 정규화·스키마 실패, 실행 결과는 확인됨 | `error` · 실제 확인 상태 · `RESULT_VALIDATION_FAILED` |
@@ -314,8 +322,8 @@ URL·파일 경로는 검증한 원본 근거의 허용 내용으로만 제공�
 | 하위 결과의 2 MiB 수신 처리 상한 초과 | `error` · `failed` · `RESULT_TRUNCATED`; 본문 null |
 | 조회 뒤 결과·메타데이터 저장 실패 | `error` · `unknown` · `RESULT_PERSIST_FAILED`; 결과 참조 null |
 
-도구·호출·업무의 완료와 외부 효과는 구분하며 접수만 확인한 변경의 효과는 `unknown`이다.
-확정 실패보다 효과 미확인이 우선하고 실제 상태 확인은 새 승인된 확인 호출로 수행한다.
+현재 읽기의 조회 결과 미확인은 원 호출의 `unknown` 상태로 유지한다.
+확장 계약의 변경·비동기 처리는 실제 효과와 완료를 별도로 기록하고 등록된 확인 기능으로 원 호출에 연결한다.
 검사·저장 실패와 후속 행동은 [공통 오류](common.md#오류와-다음-행동)를 따른다.
 
 실행 의도 보존 전의 검사 실패는 `data=null`이며 호출 기록은 의도 보존에 성공한 뒤 발급한다.
@@ -332,5 +340,8 @@ dispatch 전 저장 실패는 `STORE_UNAVAILABLE`이며 요청 전송을 중단�
 ## 구현과 검증 경계
 
 등록 계약·정규화·읽기 실행·범위·누적 예산·재전달·실패·잘림을 로컬 하위 MCP 프로세스로 검증했다.
+담당 구현은 [리소스 등록부](../../../src/daeri/resources.py)와 [실행기](../../../src/daeri/engine.py)다.
+[리소스 자율 조회](../../../tests/test_resource_autonomy.py), [묶음 도구 선택·근거·재전달](../../../tests/test_engine.py), [worker 선택](../../../tests/test_workers.py)에서 공통 경계를 확인한다.
 실제 사내 리소스의 권한·연결과 호스트 대화는 [구현 검증 경계](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)를 따른다.
-제품별 조회 완전성과 성공 근거에 사용할 조건은 [최초 어댑터의 완전성](../resources/initial-adapters.md#조회-완전성)에서 확인한다.
+제품별 조회 범위·후속 페이지·잘림 표시는 [최초 어댑터의 완전성](../resources/initial-adapters.md#조회-완전성)에서 확인한다.
+호스트가 요청에 필요한 조회 충분성과 업무 완료를 판단한다.

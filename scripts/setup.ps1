@@ -119,15 +119,30 @@ try {
         Copy-Item -LiteralPath (Join-Path $DaeriCandidate 'Scripts/python.exe') -Destination $CandidatePython
         & $CandidatePython -I -c 'import pathlib,sys; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve()' $DaeriCandidate
         if ($LASTEXITCODE -ne 0) { $DaeriExitCode = $LASTEXITCODE; throw 'DAERI preparation is incomplete: portable Python prefix check failed.' }
-        & $CandidatePython -I -m daeri.cli check
-        if ($LASTEXITCODE -ne 0) { $DaeriExitCode = $LASTEXITCODE; throw 'DAERI preparation is incomplete: candidate runtime check failed.' }
+        $DaeriCheckResult = & $CandidatePython -I -m daeri.cli check
+        if ($LASTEXITCODE -ne 0) {
+            $DaeriExitCode = $LASTEXITCODE
+            [Console]::Error.WriteLine(($DaeriCheckResult -join [Environment]::NewLine))
+            throw 'DAERI preparation is incomplete: candidate runtime check failed.'
+        }
         if (Test-Path -LiteralPath $DaeriEnvironment) { Move-Item -LiteralPath $DaeriEnvironment -Destination $DaeriPrevious }
-        try { Move-Item -LiteralPath $DaeriCandidate -Destination $DaeriEnvironment; $DaeriCandidate = $null }
+        try { Move-Item -LiteralPath $DaeriCandidate -Destination $DaeriEnvironment }
         catch {
             if (Test-Path -LiteralPath $DaeriPrevious) { Move-Item -LiteralPath $DaeriPrevious -Destination $DaeriEnvironment }
             throw 'DAERI preparation is incomplete: environment activation failed; the previous environment was restored.'
         }
+        try {
+            & (Join-Path $DaeriEnvironment 'bin/python.exe') -I (Join-Path $PSScriptRoot 'register_mcp.py')
+            if ($LASTEXITCODE -ne 0) { throw 'DAERI preparation is incomplete: MCP registration failed.' }
+        }
+        catch {
+            Move-Item -LiteralPath $DaeriEnvironment -Destination $DaeriCandidate
+            if (Test-Path -LiteralPath $DaeriPrevious) { Move-Item -LiteralPath $DaeriPrevious -Destination $DaeriEnvironment }
+            throw
+        }
+        $DaeriCandidate = $null
         if (Test-Path -LiteralPath $DaeriPrevious) { Remove-Item -LiteralPath $DaeriPrevious -Recurse -Force }
+        Write-Output $DaeriCheckResult
         $DaeriExitCode = 0
     }
     else {

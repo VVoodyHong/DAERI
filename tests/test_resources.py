@@ -1,7 +1,10 @@
 """Actual lower MCP transport and fail-closed scope contract tests."""
 
+import asyncio
 import copy
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,6 +43,41 @@ def scope():
             "path_prefixes": {"file_path": ["src"]}, "max_values": {"limit": 50}}
 
 
+@pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='POSIX special files')
+@pytest.mark.parametrize('kind', ['binding-key', 'registration'])
+def test_resource_special_files_fail_without_blocking_engine_or_registry_reads(registry, kind):
+    selected = profile()
+    path = (registry.directory / '.binding-key' if kind == 'binding-key'
+            else registry._path(selected, 'source-one'))
+    path.unlink(missing_ok=True)
+    os.mkfifo(path)
+    script = '''
+import json,sys
+from pathlib import Path
+from daeri.engine import Engine
+from daeri.resources import ResourceRegistry
+from daeri.storage import Store, StoreError
+try:
+    if sys.argv[2] == 'binding-key':
+        engine = Engine(Path(sys.argv[1]))
+        engine.close()
+    else:
+        store = Store(Path(sys.argv[1]))
+        try:
+            ResourceRegistry(store).get(json.loads(sys.argv[3]), 'source-one', 'read-file')
+        finally:
+            store.close()
+except StoreError as error:
+    print(error.code)
+else:
+    print('opened')
+'''
+    result = subprocess.run([sys.executable, '-c', script, str(registry.store.data_dir), kind,
+                             json.dumps(selected)], capture_output=True, text=True, timeout=3, check=True)
+    assert result.stdout.strip() == 'STORE_UNAVAILABLE'
+    assert path.exists() and not path.is_file()
+
+
 def test_diagnosis_registers_only_selected_tool_and_actual_call(registry):
     p = profile()
     registry.diagnose(p, "source-one")
@@ -51,6 +89,27 @@ def test_diagnosis_registers_only_selected_tool_and_actual_call(registry):
     assert "team/service" in result["result"]["body"]
     assert "remove-this" not in str(result)
     assert result["external_requests"] is None
+
+
+@pytest.mark.parametrize('last_page', [8, 9])
+def test_tool_discovery_stops_before_requesting_a_ninth_page(registry, last_page):
+    from mcp.types import ListToolsResult
+
+    class Session:
+        requests = 0
+
+        async def list_tools(self, cursor=None):
+            self.requests += 1
+            return ListToolsResult(tools=[], nextCursor=str(self.requests)
+                                   if self.requests < last_page else None)
+
+    session = Session()
+    if last_page == 8:
+        assert asyncio.run(registry._tools(session)) == []
+    else:
+        with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+            asyncio.run(registry._tools(session))
+    assert session.requests == 8
 
 
 @pytest.mark.parametrize("parameters", [
@@ -74,13 +133,13 @@ def test_cold_registration_does_not_connect_implicitly(registry):
         registry.normalize(profile(), "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, scope())
 
 
-def test_scope_must_cover_every_transmitted_field(registry):
+def test_scope_only_constrains_explicit_fields(registry):
     p = profile()
     registry.diagnose(p, "source-one")
     narrow = scope()
     del narrow["path_prefixes"]
-    with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, narrow)
+    invocation = registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, narrow)
+    assert invocation.prepared_request["arguments"]["file_path"] == "src/main.py"
 
 
 @pytest.mark.parametrize('origin', ['fixed', 'default'])
@@ -134,7 +193,7 @@ def test_connection_only_source_recipe_requires_approved_project_revision_and_pa
         registry.normalize(p, 'source-one', 'read-file', parameters, scope())
     registry.diagnose(p, 'source-one')
     invocation = registry.normalize(p, 'source-one', 'read-file', parameters, scope())
-    assert invocation.prepared_request['arguments'] == parameters
+    assert invocation.prepared_request['arguments'] == parameters | {'limit': 20}
     assert 'team/service' in registry.execute(invocation)['result']['body']
     for field, value in [('project_id', 'other/service'), ('ref', 'other'),
                          ('file_path', 'private/config')]:
@@ -142,14 +201,13 @@ def test_connection_only_source_recipe_requires_approved_project_revision_and_pa
             registry.normalize(p, 'source-one', 'read-file', parameters | {field: value}, scope())
     missing = scope()
     del missing['equals']['project_id']
-    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
-        registry.normalize(p, 'source-one', 'read-file', parameters, missing)
+    assert registry.normalize(p, 'source-one', 'read-file', parameters, missing).prepared_request['arguments'] == parameters | {'limit': 20}
 
 
 @pytest.mark.parametrize('recipe,inputs,allowed,denied,approved', [
     ('db-postgres', {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'},
      {'sql': 'SELECT order_id FROM public.orders'}, {'sql': 'SELECT password FROM private.users'},
-     {'tables': ['public.orders'], 'columns': ['order_id'], 'max_rows': 10}),
+     {'equals': {'sql': 'SELECT order_id FROM public.orders'}}),
     ('document-confluence', {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
      {'page_id': '123'}, {'page_id': '456'}, {'equals': {'page_id': '123'}}),
 ])
@@ -159,12 +217,10 @@ def test_connection_only_db_and_document_recipes_keep_task_read_scope(registry, 
     constraints = resource['capabilities'][0]['constraints']
     actual = copy.deepcopy(allowed)
     interpret(resource['adapter'], actual, constraints, approved)
-    if recipe == 'db-postgres':
-        assert actual['sql'].endswith('LIMIT 10')
+    assert actual == allowed
     with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
         interpret(resource['adapter'], denied, constraints, approved)
-    with pytest.raises(StoreError):
-        interpret(resource['adapter'], copy.deepcopy(allowed), constraints, {})
+    assert interpret(resource['adapter'], copy.deepcopy(allowed), constraints, {})['fields'] == sorted(allowed)
 
 
 def test_profile_revision_or_schema_change_requires_new_diagnosis(registry):
@@ -226,98 +282,34 @@ def test_registration_has_no_cross_profile_reuse(registry):
         registry.get(other, "source-one", "read-file")
 
 
-def test_select_enforces_actual_table_columns_and_row_limit():
-    arguments = {"sql": "SELECT order_id, SUM(amount) FROM public.orders GROUP BY order_id"}
-    policy = {"sql_field": "sql", "tables": ["public.orders"], "columns": ["order_id", "amount"], "max_rows": 100}
-    access = interpret("sql_read", arguments, policy, {"tables": ["public.orders"], "columns": ["order_id", "amount"], "max_rows": 20})
-    assert access == {"tables": ["public.orders"], "columns": ["amount", "order_id"], "max_rows": 20}
-    assert arguments["sql"].endswith("LIMIT 20")
-
-
-@pytest.mark.parametrize('sql,columns', [
-    ('SELECT id FROM other_schema.new_table', ['id']),
-    ('SELECT * FROM other_schema.new_table', ['*']),
-    ('SELECT t.* FROM other_schema.new_table AS t', ['*']),
-    ('SELECT COUNT(*) FROM information_schema.tables', []),
+@pytest.mark.parametrize('sql', [
+    'SELECT id FROM other_schema.new_table',
+    'SELECT * FROM public.orders JOIN public.users USING (id)',
+    "WITH x AS (SELECT date_trunc('day', created_at) AS day FROM public.orders) SELECT day FROM x",
+    'SELECT COUNT(*) FROM information_schema.tables',
 ])
-def test_db_whole_access_reads_any_table_and_records_actual_columns(sql, columns):
+def test_db_queries_are_forwarded_without_a_second_sql_grammar_or_row_limit(sql):
     arguments = {'sql': sql}
-    constraints = {'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
-    access = interpret('postgres_read', arguments, constraints,
-                       {'tables': ['*'], 'columns': ['*'], 'max_rows': 20})
-    assert access == {'tables': ['information_schema.tables' if 'information_schema' in sql else 'other_schema.new_table'],
-                      'columns': columns, 'max_rows': 20}
-    assert arguments['sql'].endswith('LIMIT 20')
+    assert interpret('postgres_read', arguments, {}, {}) == {'fields': ['sql']}
+    assert arguments['sql'] == sql
 
 
-@pytest.mark.parametrize('whole_at', ['connection', 'plan'])
-@pytest.mark.parametrize('sql', [
-    'SELECT amount FROM public.orders', 'SELECT order_id FROM private.orders',
-    'SELECT * FROM public.orders',
+@pytest.mark.parametrize('policy', [
+    {'tables': ['public.orders'], 'columns': ['order_id'], 'max_rows': 20},
+    {'tables': ['*'], 'columns': ['*'], 'max_rows': 100},
 ])
-def test_db_whole_access_does_not_override_the_other_scope(whole_at, sql):
-    whole = {'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
-    narrow = {'tables': ['public.orders'], 'columns': ['order_id'], 'max_rows': 10}
-    constraints, scope = (whole, narrow) if whole_at == 'connection' else (narrow, whole)
-    allowed = {'sql': 'SELECT order_id FROM public.orders'}
-    assert interpret('postgres_read', allowed, constraints, scope)['max_rows'] == 10
-    with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
-        interpret('postgres_read', {'sql': sql}, constraints, scope)
+def test_legacy_semantic_limits_require_contract_migration(policy):
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        interpret('postgres_read', {'sql': 'SELECT * FROM public.orders'}, policy, {})
 
 
-@pytest.mark.parametrize('sql', [
-    'DELETE FROM public.orders', 'SELECT * FROM public.orders FOR UPDATE',
-    'SELECT pg_sleep(1) FROM public.orders', 'SELECT * FROM public.orders; SELECT * FROM public.users',
-])
-def test_db_whole_access_keeps_read_only_sql_boundaries(sql):
-    whole = {'tables': ['*'], 'columns': ['*'], 'max_rows': 10}
-    with pytest.raises(StoreError):
-        interpret('postgres_read', {'sql': sql}, whole, whole)
-
-
-def test_db_whole_table_scope_does_not_grant_columns_to_aggregate_only_access():
-    aggregate = {'tables': ['*'], 'columns': [], 'max_rows': 10}
-    assert interpret('postgres_read', {'sql': 'SELECT COUNT(*) FROM public.orders'}, aggregate, aggregate) == {
-        'tables': ['public.orders'], 'columns': [], 'max_rows': 10}
-    with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
-        interpret('postgres_read', {'sql': 'SELECT id FROM public.orders'}, aggregate, aggregate)
-
-
-@pytest.mark.parametrize('field,values', [('tables', ['*', 'public.orders']), ('columns', ['*', 'id'])])
-def test_db_whole_access_cannot_be_mixed_with_an_explicit_list(field, values):
-    resource = config()
-    resource.update(type='DB', adapter='postgres_read', target={'database': 'service'})
-    resource['connection']['env'] = {}
-    resource['capabilities'] = [{'capability_id': 'query', 'tool_name': 'execute_sql',
-                                 'constraints': {'tables': ['*'], 'columns': ['*'], 'max_rows': 10, field: values}}]
-    with pytest.raises(StoreError, match='INVALID_INPUT'):
-        validate_resource(resource)
-
-
-def test_sql_exact_query_scope_preserves_approved_filter():
+def test_sql_exact_query_scope_preserves_explicit_approved_filter():
     allowed = "SELECT order_id FROM public.orders WHERE order_id = 1"
-    constraints = {"tables": ["public.orders"], "columns": ["order_id"], "max_rows": 10}
-    approved = {"equals": {"sql": allowed}, "tables": ["public.orders"], "columns": ["order_id"], "max_rows": 10}
-    query = {"sql": allowed}
-    interpret("sql_read", query, constraints, approved)
-    assert "WHERE order_id = 1" in query["sql"]
-    with pytest.raises(StoreError, match="SCOPE_VIOLATION"):
-        interpret("sql_read", {"sql": "SELECT order_id FROM public.orders"}, constraints, approved)
-
-
-@pytest.mark.parametrize("sql", [
-    "DELETE FROM public.orders", "SELECT order_id FROM public.orders; DELETE FROM public.orders",
-    "SELECT * FROM public.orders", "SELECT password FROM public.orders", "SELECT order_id FROM private.orders",
-    "SELECT pg_sleep(2) FROM public.orders", "SELECT nextval('seq') FROM public.orders",
-    "WITH x AS (DELETE FROM public.orders RETURNING *) SELECT * FROM x",
-    "SELECT order_id INTO public.copy FROM public.orders", "SELECT order_id FROM public.orders FOR UPDATE",
-    "SELECT order_id FROM public.orders UNION SELECT secret FROM private.accounts",
-    "SELECT order_id FROM public.orders JOIN private.accounts ON true",
-])
-def test_sql_cannot_escape_read_scope(sql):
-    with pytest.raises(StoreError):
-        interpret("sql_read", {"sql": sql}, {"tables": ["public.orders"], "columns": ["order_id", "amount"], "max_rows": 100},
-                  {"tables": ["public.orders"], "columns": ["order_id", "amount"], "max_rows": 20})
+    arguments = {'sql': allowed}
+    interpret('postgres_read', arguments, {}, {'equals': {'sql': allowed}})
+    assert arguments == {'sql': allowed}
+    with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
+        interpret('postgres_read', {'sql': 'SELECT order_id FROM public.orders'}, {}, {'equals': {'sql': allowed}})
 
 
 def test_infra_command_is_parsed_and_keeps_explicit_region():
@@ -327,7 +319,6 @@ def test_infra_command_is_parsed_and_keeps_explicit_region():
 
 
 @pytest.mark.parametrize("command", [
-    "aws ec2 terminate-instances --region ap-northeast-2", "aws sts assume-role --region ap-northeast-2",
     "aws ec2 describe-instances --region us-east-1", "aws ec2 describe-instances --region ap-northeast-2; echo nope",
     "aws ec2 describe-instances --region ap-northeast-2 --endpoint-url=https://other.test",
     "aws ec2 describe-instances --region ap-northeast-2 --profile other",
@@ -344,11 +335,9 @@ def test_infra_command_cannot_change_operation_target_or_local_files(command):
         interpret("aws_read", {"cli_command": command}, {"region": "ap-northeast-2"}, {"equals": {"cli_command": command}})
 
 
-def test_cache_keys_are_literal_and_document_queries_are_not_inferred():
-    with pytest.raises(StoreError):
-        interpret("redis_read", {"key": "session:*"}, {}, {"equals": {"key": "session:*"}})
-    with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        interpret("document_read", {"cql": "space=PRIVATE"}, {}, {"equals": {"cql": "space=PRIVATE"}})
+def test_cache_patterns_and_document_queries_are_lower_mcp_inputs():
+    assert interpret('redis_read', {'key': 'session:*'}, {}, {}) == {'fields': ['key']}
+    assert interpret('document_read', {'cql': 'space=PRIVATE'}, {}, {}) == {'fields': ['cql']}
 
 
 def test_schema_external_reference_is_rejected_before_any_call():
@@ -511,7 +500,7 @@ def test_db_runtime_secret_environment_masks_password_and_derived_uri(registry, 
     current = profile(resource)
     registry.diagnose(current, 'primary-db')
     invocation = registry.normalize(current, 'primary-db', 'query', {'sql': 'SELECT * FROM public.orders'},
-                                    {'tables': ['*'], 'columns': ['*'], 'max_rows': 10})
+                                    {})
     result = registry.execute(invocation)
     assert result['result']['data']['body'] == '[REDACTED]|[REDACTED]|[REDACTED]'
     assert result['result']['data']['count'] == 1

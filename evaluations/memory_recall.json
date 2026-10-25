@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "memories": [
+    {
+      "id": "db_pool",
+      "statement": "E_CONN_001은 연결 풀의 가용 세션이 소진됐을 때 관찰했다. 활성 세션 수와 최대 연결 수를 비교하고 반환되지 않은 세션을 확인한다.",
+      "applicability": "합성 결제 서비스의 트래픽 증가 구간에서 발생한 데이터베이스 접속 장애",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "db_lock",
+      "statement": "SQLSTATE 55P03은 잠금 획득 대기가 제한 시간을 넘긴 경우다. 대기 쿼리와 잠금을 보유한 트랜잭션을 함께 확인하고 동일 자원에 접근하는 순서를 비교한다.",
+      "applicability": "합성 주문 처리의 동시 갱신 충돌을 진단할 때",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "billing_old",
+      "statement": "BILL-1042 일별 매출은 서울 현지 시각 자정으로 나눈다는 초기 설명을 받았다. OBSOLETE_ONLY_9162는 이 개정의 합성 확인 식별자다.",
+      "applicability": "합성 정산 서비스의 초기 집계 설명",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "billing_current",
+      "statement": "BILL-1042의 사용자 정정으로 일별 매출 집계 경계는 UTC 자정으로 확정됐다. 서울 현지 시각으로 변환하는 작업은 화면 표시 단계에서 수행한다.",
+      "applicability": "합성 정산 서비스에서 일 단위 금액을 비교하거나 재현할 때",
+      "profile": "primary",
+      "access": "allowed",
+      "replaces": "billing_old"
+    },
+    {
+      "id": "deploy_rollback",
+      "statement": "DEPLOY-217에서 이전 릴리스로 롤백한 뒤에는 결제 생성과 취소의 smoke test를 수행했다. 배포 식별자와 두 요청의 성공 결과를 함께 대조했다.",
+      "applicability": "합성 서비스의 릴리스 복구 결과를 검증할 때",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "cache_ttl",
+      "statement": "CACHE-308의 상품 캐시는 값 갱신이 끝난 시점부터 600초의 TTL을 부여한다. 재시도 횟수는 만료 기준 시각에 영향을 주지 않는다.",
+      "applicability": "합성 상품 조회의 캐시 유효 기간을 확인할 때",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "report_counts",
+      "statement": "RPT-512에서 주문 건수는 고유 order_id 수로 계산했다. 상세 품목 행 수와 주문 건수를 별도 지표로 표시한다.",
+      "applicability": "합성 판매 보고서의 집계 단위를 해석할 때",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "source_revision",
+      "statement": "SRC-406의 구성 파일 비교는 브랜치 별칭 대신 확인한 commit 식별자를 기준으로 수행했다. 검증 근거에는 비교한 두 개정의 식별자를 남겼다.",
+      "applicability": "합성 저장소의 설정 변경 원인을 재현할 때",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "inventory_review",
+      "statement": "INV-903의 장비 재고 점검은 자산 번호별 실물 확인 결과와 담당자 확인을 대조한다. 확인 시각을 남긴 목록을 다음 점검의 출발점으로 사용했다.",
+      "applicability": "합성 연구실의 분기 자산 점검",
+      "profile": "primary",
+      "access": "allowed"
+    },
+    {
+      "id": "foreign_sentinel",
+      "statement": "FOREIGN_ONLY_7341은 다른 profile에 저장한 합성 창고의 재고 실사 절차 식별자다. 검증된 체크리스트와 담당자 대조 결과를 연결한다.",
+      "applicability": "합성 물류 서비스의 별도 운영 환경",
+      "profile": "other",
+      "access": "allowed"
+    },
+    {
+      "id": "revoked_sentinel",
+      "statement": "REVOKED_ONLY_6284는 같은 profile에서 회상 권한을 철회한 합성 기록의 식별자다. 이전에 확인한 야간 처리 순서와 점검 결과를 연결한다.",
+      "applicability": "합성 배치 처리의 과거 운영 절차",
+      "profile": "primary",
+      "access": "revoked"
+    }
+  ],
+  "queries": [
+    {
+      "id": "identifier_connection_error",
+      "group": "identifier",
+      "text": "E_CONN_001 해결 순서",
+      "expected": ["db_pool"]
+    },
+    {
+      "id": "identifier_billing_issue",
+      "group": "identifier",
+      "text": "BILL-1042 집계 기준",
+      "expected": ["billing_current"]
+    },
+    {
+      "id": "identifier_lock_code",
+      "group": "identifier",
+      "text": "SQLSTATE 55P03 대응",
+      "expected": ["db_lock"]
+    },
+    {
+      "id": "paraphrase_connection_pressure",
+      "group": "paraphrase",
+      "text": "접속자가 늘면서 DB에 새로 들어가려는 요청이 계속 거절돼. 무엇부터 봐야 할까?",
+      "expected": ["db_pool"]
+    },
+    {
+      "id": "paraphrase_transaction_wait",
+      "group": "paraphrase",
+      "text": "쿼리가 끝나지 않고 서로 기다리는 것 같아. 원인을 좁히려면?",
+      "expected": ["db_lock"]
+    },
+    {
+      "id": "paraphrase_daily_timezone",
+      "group": "paraphrase",
+      "text": "하루 매출을 어느 나라 시간으로 끊어야 하지?",
+      "expected": ["billing_current"]
+    },
+    {
+      "id": "paraphrase_release_recovery",
+      "group": "paraphrase",
+      "text": "서비스를 예전 버전으로 되돌렸어. 정상 복구됐는지는 뭘 해봐야 알 수 있지?",
+      "expected": ["deploy_rollback"]
+    },
+    {
+      "id": "multiple_database_evidence",
+      "group": "multi_evidence",
+      "text": "연결 풀 부족과 잠금 대기가 함께 나타나면 어떤 근거를 각각 확인해야 해?",
+      "expected": ["db_pool", "db_lock"]
+    },
+    {
+      "id": "correction_billing_revision",
+      "group": "correction",
+      "text": "BILL-1042 시간대가 수정된 뒤의 기준을 알려줘.",
+      "expected": ["billing_current"]
+    },
+    {
+      "id": "correction_current_daily_boundary",
+      "group": "correction",
+      "text": "일별 집계 경계가 바뀌었다는데 현재 적용할 규칙은 뭐야?",
+      "expected": ["billing_current"]
+    },
+    {
+      "id": "unrelated_lunch_planning",
+      "group": "unrelated",
+      "text": "사내 체육대회 도시락 메뉴를 정해줘.",
+      "expected": []
+    },
+    {
+      "id": "isolation_foreign_profile",
+      "group": "isolation",
+      "text": "FOREIGN_ONLY_7341",
+      "expected": []
+    },
+    {
+      "id": "isolation_revoked_access",
+      "group": "isolation",
+      "text": "REVOKED_ONLY_6284",
+      "expected": []
+    },
+    {
+      "id": "isolation_obsolete_revision",
+      "group": "isolation",
+      "text": "OBSOLETE_ONLY_9162",
+      "expected": []
+    }
+  ]
+}

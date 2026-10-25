@@ -23,6 +23,8 @@ from .policy import (as_pointer, disclosure, effective_resource_policy, leaves,
                      pointer_get, pointer_path, pointer_set, project)
 
 TERMINAL = {"succeeded", "partial", "failed", "cancelled"}
+CALL_METADATA = ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at",
+                 "actual_capability_id", "actual_contract_ref")
 
 
 def identifier(prefix):
@@ -234,6 +236,7 @@ class Engine:
         if waiting and "record_ref" in waiting:
             waiting["message"] = self.store.read_record(task["task_id"], waiting.pop("record_ref"))["payload"]["question"]
         result["waiting_reason"] = waiting
+        result["artifact_workspace"] = self.store.artifact_workspace(task["task_id"])
         return result
 
     def _snapshot(self, task):
@@ -303,7 +306,8 @@ class Engine:
             payload = self._load_evidence(task, cached["report_ref"], require_current_plan=False)["payload"]
             return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
                 "report_ref": cached["report_ref"], "task_state": task["state"], "delivery_status": "not_confirmed",
-                **{key: payload[key] for key in ("validation", "table_validations", "artifact_refs", "artifact_validations")}})
+                "validation": payload["validation"], "artifact_refs": payload.get("artifact_refs", []),
+                **{key: payload[key] for key in ("table_validations", "artifact_validations") if key in payload}})
         return copy.deepcopy(cached)
 
     def _task_create(self, args, unused):
@@ -342,8 +346,6 @@ class Engine:
                     "TASK_STATE_INVALID", "현재 상태에서는 질문을 추가할 수 없습니다.")
             ref = self.store.write_record(task["task_id"], "clarification", redact(patch))
             task.setdefault("clarification_times", {})[ref] = now()
-            if task["state"] != "awaiting_input":
-                task["return_state"] = task["state"]
             task["waiting_reason"] = {"kind": "input", "record_ref": ref}
             task["state"] = "awaiting_input"
         else:
@@ -363,8 +365,6 @@ class Engine:
             task["state"] = "planning" if task["profile_id"] else "awaiting_input"
             if not task["profile_id"]:
                 task["waiting_reason"] = {"kind": "input", "message": "사용할 profile을 선택하세요."}
-            elif task.get("return_state") in {"running", "reconciling", "verifying"} and self._active_approved(task):
-                task["state"] = task.pop("return_state")
         self._save(task)
         return response({**self._receipt(task), "clarification_ref": ref})
 
@@ -443,7 +443,6 @@ class Engine:
             task["owner_id"] = self.owner
             if paused:
                 self._invalidate(task)
-                task.pop("return_state", None)
             waiting = task.pop("paused_waiting", None) if paused else task["waiting_reason"]
             previous_state = task["state"]
             if waiting and waiting["kind"] == "input":
@@ -499,7 +498,6 @@ class Engine:
 
     def _resource_list(self, args, task):
         require(task["profile_id"], "CONTEXT_REQUIRED", "profile을 먼저 선택하세요.")
-        from .results import ResultService
         profile = self._current_profile(task)
         items = self.registry.list(profile)
         if args.get("types"):
@@ -508,7 +506,7 @@ class Engine:
         page, cursor, more = self._page("resources", task["task_id"], signature, args,
                                       lambda offset, limit: items[offset:offset+limit])
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
-                         "instances": page, "output_formats": ResultService(self.store).formats(),
+                         "instances": page,
                          "next_cursor": cursor, "has_more": more})
 
     def _current_profile(self, task):
@@ -517,6 +515,23 @@ class Engine:
         require(profile["revision"] == task["context"]["profile_revision"], "CONTEXT_CHANGED",
                 "고정한 profile 구성이 변경됐습니다. 기존 승인을 새 대상에 적용할 수 없습니다.")
         return profile
+
+    def _read_resource(self, task, instance_id, capability_id):
+        """History follows its original target and today's disclosure policy."""
+        profile = self.store.get_profile(task["profile_id"])
+        current = next((item for item in profile["resources"] if item["instance_id"] == instance_id), None)
+        original = next((item for item in task["profile_snapshot"]["resources"] if item["instance_id"] == instance_id), None)
+        require(current is not None and original is not None and all(current.get(key) == original.get(key)
+                for key in ("type", "adapter", "target", "identity_ref", "connection")),
+                "ACCESS_DENIED", "보존 자료의 원래 대상·연결·조회 권한을 현재 profile에서 확인할 수 없습니다.")
+        capability = next((item for item in current["capabilities"] if item["capability_id"] == capability_id), None)
+        original_capability = next((item for item in original["capabilities"] if item["capability_id"] == capability_id), None)
+        discovered = (capability is None and original_capability is None
+                      and current.get("discover_tools") is True and original.get("discover_tools") is True)
+        require(discovered or (capability is not None and original_capability is not None and all(
+                capability.get(key) == original_capability.get(key) for key in ("tool_name", "constraints"))),
+                "ACCESS_DENIED", "보존 자료의 원래 조회 기능·권한을 현재 profile에서 확인할 수 없습니다.")
+        return current
 
     def _capability_get(self, args, task):
         descriptor = self.registry.get(self._current_profile(task), args["instance_id"], args["capability_id"])
@@ -601,7 +616,6 @@ class Engine:
         draft.setdefault("carried_evidence_refs", [])
         require(draft.get("previous_plan_id") == (active["plan_id"] if active else None),
                 "PLAN_INVALID", "대체할 현재 계획 ID를 정확히 지정하세요.")
-        from .results import ResultService
         limitations = self._validate_searches(task, draft, active)
         draft["memory_limitations"] = list(dict.fromkeys([*draft["memory_limitations"], *limitations]))
         instances = set()
@@ -614,8 +628,9 @@ class Engine:
         from .planning import resolve_memory_defaults
         profile = self._current_profile(task)
         draft = resolve_memory_defaults(profile, draft)
-        contracts = validate_plan(profile, draft, self.registry,
-                                  ResultService(self.store).formats(), instances)
+        contracts = validate_plan(profile, draft, self.registry, instances)
+        draft["output"].pop("table_rules", None)
+        draft["output"].pop("artifact_rules", None)
         for limit, amount in (("max_tool_calls", "tool_calls"), ("max_runtime_ms", "runtime_ms"), ("max_external_requests", "external_requests")):
             if draft["budget"][limit] is not None:
                 consumed, reserved = task["usage"][amount], task["reserved"][amount]
@@ -734,9 +749,6 @@ class Engine:
         require(rule is not None, "ACCESS_DENIED", "해당 리소스의 자료 제공 규칙이 없습니다.")
         return rule
 
-    def _resource_config(self, task, instance_id):
-        return next(item for item in self._current_profile(task)["resources"] if item["instance_id"] == instance_id)
-
     def _bindings(self, task, plan, step, args):
         definitions = {item["binding_id"]: item for item in step["input_bindings"]}
         selections = args.get("bindings", [])
@@ -810,9 +822,22 @@ class Engine:
         require(not args.get("reconcile_of_call_id") and not args.get("reconcile_task_id"),
                 "UNSUPPORTED_CONSTRAINT", "현재 등록한 읽기 기능은 원격 변경 확인을 지원하지 않습니다.")
         step = next((item for item in plan["draft"]["steps"] if item["step_id"] == args["step_id"]), None)
-        require(step and all(step[key] == args[key] for key in ("instance_id", "capability_id", "contract_ref")),
+        require(step and all(step[key] == args[key] for key in ("instance_id", "contract_ref")) and
+                (step["capability_id"] == "*" or step["capability_id"] == args["capability_id"]),
                 "SCOPE_VIOLATION", "승인한 단계·대상·기능·계약과 다릅니다.")
-        return step
+        profile = self._current_profile(task)
+        approved = self.registry.get(profile, step["instance_id"], step["capability_id"])
+        require(approved["contract_ref"] == step["contract_ref"], "CONTRACT_CHANGED", "승인한 읽기 기능 구성이 변경됐습니다.")
+        if step["capability_id"] == "*":
+            selected = next((item for item in approved["capability_refs"] if item["capability_id"] == args["capability_id"]), None)
+            require(selected is not None, "SCOPE_VIOLATION", "승인한 리소스의 실제 읽기 기능을 선택하세요.")
+            actual = self.registry.get(profile, step["instance_id"], args["capability_id"])
+            require(actual["contract_ref"] == selected["contract_ref"], "CONTRACT_CHANGED", "선택한 실제 기능 계약이 변경됐습니다.")
+        else:
+            actual = approved
+        require(not actual["effects"]["changes_state"] and step["purpose"] in actual["supported_purposes"],
+                "SCOPE_VIOLATION", "승인한 목적의 읽기 기능만 실행할 수 있습니다.")
+        return step, actual
 
     def _execute(self, args):
         fingerprint = hashlib.sha256(json.dumps(redact(args), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -832,11 +857,11 @@ class Engine:
             require(not any(item["step_id"] == args["step_id"] and item["call_state"] in {"pending", "unknown"}
                 for item in task["calls"]), "WORKER_CONFLICT", "같은 단계의 진행 중 호출을 먼저 확인하세요.")
             plan = self._current_plan(task)
-            step = self._execution_allowed(task, plan, args)
+            step, actual = self._execution_allowed(task, plan, args)
             parameters = self._bindings(task, plan, step, args)
-            invocation = self.registry.normalize(self._current_profile(task), step["instance_id"], step["capability_id"], parameters, step["scope"])
-            output_schema = self.registry.get(self._current_profile(task), step["instance_id"], step["capability_id"])["output_schema"]
-            require(invocation.contract_ref == step["contract_ref"], "CONTRACT_CHANGED", "실행할 계약이 승인 당시와 다릅니다.")
+            invocation = self.registry.normalize(self._current_profile(task), step["instance_id"], actual["capability_id"], parameters, step["scope"])
+            output_schema = actual["output_schema"]
+            require(invocation.contract_ref == actual["contract_ref"], "CONTRACT_CHANGED", "실행할 계약이 승인 당시와 다릅니다.")
             header = self._plan_header(task, plan["plan_id"])
             budget = self._budget(header, task)["remaining"]
             require(budget["remaining_tool_calls"] is not None and budget["remaining_tool_calls"] >= 1 and
@@ -844,6 +869,8 @@ class Engine:
                     "BUDGET_EXCEEDED", "업무의 누적 호출·시간 한도가 소진됐습니다.")
             timeout_ms = min(budget["remaining_runtime_ms"], args.get("_timeout_ms", 60000))
             call = {key: args[key] for key in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref")}
+            call.update(capability_id=step["capability_id"], actual_capability_id=actual["capability_id"],
+                        actual_contract_ref=actual["contract_ref"])
             call.update(call_state="pending", external_effect="none", result_ref=None, error_code=None,
                         dispatched=False, runtime_ms=0, reserved_runtime_ms=timeout_ms,
                         query_fingerprint=invocation.fingerprint, observed_at=now())
@@ -909,14 +936,14 @@ class Engine:
                     call["call_state"] = "unknown" if failure.code == "EXTERNAL_OUTCOME_UNKNOWN" else "completed" if outcome is not None or failure.code == "RESULT_VALIDATION_FAILED" else "blocked" if failure.code in {"CONTEXT_CHANGED", "AUTHENTICATION_REQUIRED", "CONNECTION_NOT_READY"} else "failed"
                     call["result_ref"] = self.store.write_record(task["task_id"], "call_result", {
                         "call_id": key, "result": None, "error_code": failure.code, "source_complete": False,
-                        **{field: call[field] for field in ("plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}})
+                        **{field: call[field] for field in CALL_METADATA if field in call}})
                 else:
                     try:
                         body = self._completed_body(task, plan, step, call, outcome, invocation, output_schema)
                     except (StoreError, ValueError, TypeError):
                         call["error_code"] = "RESULT_VALIDATION_FAILED"
                         body = {"result": None, "source_complete": False, "warnings": ["원격 읽기는 완료했지만 출력 제공 검사를 통과하지 못했습니다."],
-                            **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}}
+                            **{field: call[field] for field in CALL_METADATA if field in call}}
                     call["result_ref"] = self.store.write_record(task["task_id"], "call_result", body)
                     call["call_state"] = "completed"
                 if task.get("finished_at"):
@@ -945,14 +972,15 @@ class Engine:
         def selector(path):
             return {"segments": [{"index": part} if type(part) is int else {"key": part} for part in path]}
         return {"result": project(raw, [selector(path) for path in visible], masking=[{"field": selector(path), "action": "redact"} for path in masked]), "source_complete": outcome.get("source_complete"),
-            "query_fingerprint": invocation.fingerprint, "model_paths": [list(path) for path in views["allowed_model_fields"][1]],
+            "query_fingerprint": invocation.fingerprint,
+            "model_paths": [list(path) for path in views["allowed_model_fields"][1]],
             "export_paths": [list(path) for path in views["export_fields"][1]], "retained_paths": [list(path) for path in views["retained_fields"][1]],
             "model_visible_paths": [list(path) for path in views["allowed_model_fields"][2]],
             "export_visible_paths": [list(path) for path in views["export_fields"][2]],
             "retained_visible_paths": [list(path) for path in views["retained_fields"][2]],
             "output_schema": output_schema, "warnings": outcome.get("warnings", []),
             "value_types": outcome.get("value_types", {}), "units": outcome.get("units", {}),
-            **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "instance_id", "capability_id", "contract_ref", "observed_at")}}
+            **{field: call[field] for field in CALL_METADATA if field in call}}
 
     def _call_reply(self, task, call):
         inline, warnings, evidence_refs, truncated = None, [], [], False
@@ -974,6 +1002,7 @@ class Engine:
         status = "partial" if truncated and code == "RESULT_TRUNCATED" else "error" if code else "pending" if call["call_state"] == "pending" else "ok"
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
             **{field: call[field] for field in ("call_id", "plan_id", "plan_version", "step_id", "call_state", "external_effect", "result_ref")},
+            **{field: call[field] for field in ("actual_capability_id", "actual_contract_ref") if field in call},
             "inline_result": inline, "usage": {"logical_calls": int(call["dispatched"]), "external_requests": None if call["dispatched"] else 0,
                 "runtime_ms": call["runtime_ms"], "metrics": []}, "budget_remaining": self._budget(header, task)["remaining"],
             "evidence_refs": evidence_refs, "warnings": warnings,
@@ -982,8 +1011,8 @@ class Engine:
             status, code, "보존된 호출 상태와 오류를 확인하세요." if code else None)
 
     def _load_evidence(self, task, ref, mode="model", *, require_current_plan=True, _lineage=(), _checked=None):
-        checked = set() if _checked is None else _checked
-        require(ref not in _lineage and len(_lineage) < 32 and len(checked) + len(_lineage) <= 256,
+        checked = {} if _checked is None else _checked
+        require(ref not in _lineage and len(_lineage) < 32 and len(checked.keys() | set(_lineage) | {ref}) <= 256,
                 "RESULT_VALIDATION_FAILED", "파생 자료의 출처가 순환하거나 검사 한도를 초과했습니다.")
         if ref.startswith("memory_"):
             plan = self._current_plan(task)
@@ -1008,13 +1037,13 @@ class Engine:
         if kind == "call_result":
             require("intent" not in payload, "ACCESS_DENIED", "실행 의도는 원격 완료 근거가 아닙니다.")
             metadata.update({key: payload[key] for key in ("instance_id", "plan_id", "plan_version", "step_id", "capability_id", "contract_ref", "observed_at")})
+            metadata.update({key: payload[key] for key in ("actual_capability_id", "actual_contract_ref") if key in payload})
             metadata.update(source_complete=payload.get("source_complete"), warnings=payload.get("warnings", []),
-                            query_fingerprint=payload.get("query_fingerprint"), output_schema=payload.get("output_schema", {"type": "object"}))
+                            query_fingerprint=payload.get("query_fingerprint"),
+                            output_schema=payload.get("output_schema", {"type": "object"}))
             if payload.get("result") is None:
                 return {**metadata, "result": None, "allowed_paths": [], "provided_paths": [], "retained_paths": []}
-            profile = self._current_profile(task)
-            resource = next((item for item in profile["resources"] if item["instance_id"] == payload["instance_id"]), None)
-            require(resource is not None, "ACCESS_DENIED", "현재 profile의 리소스가 아닙니다.")
+            resource = self._read_resource(task, payload["instance_id"], payload.get("actual_capability_id", payload["capability_id"]))
             original = self._plan_get({"plan_id": payload["plan_id"]}, task)["data"]["plan"]
             source_step = next((step for step in original["draft"]["steps"] if step["step_id"] == payload["step_id"]), {})
             metadata["scope"] = copy.deepcopy(source_step.get("scope"))
@@ -1059,7 +1088,6 @@ class Engine:
                             provided_paths=[as_pointer(path) for path in leaves(payload)],
                             retained_paths=[as_pointer(path) for path in leaves(payload)])
         elif kind == "worker_result":
-            self._current_profile(task)
             refs = set(payload["evidence_refs"])
             proof = payload.get("_source_paths", {})
             require(set(proof) == refs, "ACCESS_DENIED", "작업자 결과의 출처 제공 범위를 확인할 수 없습니다.")
@@ -1068,12 +1096,10 @@ class Engine:
                     require_current_plan=require_current_plan, _lineage=(*_lineage, ref), _checked=checked)
                 require(set(proof[source_ref]) <= set(source["allowed_paths"]),
                     "ACCESS_DENIED", "작업자 결과에 사용한 원문 필드의 현재 제공 범위를 확인하세요.")
-                checked.add(source_ref)
+                checked[source_ref] = max(checked.get(source_ref, -1), len(_lineage) + 1)
             metadata["payload"].pop("_source_paths", None)
             metadata.update(evidence_refs=sorted(refs), source_complete=None)
         elif kind in {"report", "table", "artifact"}:
-            # Deny archived derived data after any profile reconfiguration until reviewed.
-            self._current_profile(task)
             refs = set(payload.get("evidence_refs", []))
             for finding in payload.get("findings", []):
                 refs.update(finding.get("evidence_refs", []))
@@ -1090,10 +1116,16 @@ class Engine:
             lineage = (*_lineage, ref)
             for source_ref in sorted(refs):
                 require(source_ref not in lineage, "RESULT_VALIDATION_FAILED", "파생 자료 출처가 순환합니다.")
-                if source_ref not in checked:
-                    self._load_evidence(task, source_ref, mode=mode, require_current_plan=require_current_plan,
-                                        _lineage=lineage, _checked=checked)
-                    checked.add(source_ref)
+                # A shared subtree needs another check when this path is deeper.
+                if checked.get(source_ref, -1) < len(lineage):
+                    source = self._load_evidence(task, source_ref, mode=mode, require_current_plan=require_current_plan,
+                                                 _lineage=lineage, _checked=checked)
+                    if source["record_kind"] == "call_result":
+                        # Free prose cannot be narrowed field by field after it was written.
+                        original_paths = source["payload"].get("model_paths", [])
+                        require({as_pointer(tuple(path)) for path in original_paths} <= set(source["allowed_paths"]),
+                                "ACCESS_DENIED", "파생 결과의 원문 필드가 현재 제공 범위에서 제외되었습니다.")
+                    checked[source_ref] = len(lineage)
             metadata["evidence_refs"] = sorted(refs)
             metadata["source_complete"] = None
         return metadata
@@ -1138,11 +1170,11 @@ class Engine:
                 "RESULT_VALIDATION_FAILED", "실제 미확인 효과를 보고에 정확히 포함하세요.")
         output_approved = bool(plan) and (self._active_approved(task) if task["state"] not in TERMINAL else
             any(approval.get("ever_approved") and approval["plan_id"] == plan["plan_id"] for approval in task["approvals"]))
-        if args["report"].get("tables") or args["report"].get("artifacts"):
-            require(output_approved, "APPROVAL_REQUIRED", "새 표·산출물 생성에는 해당 계획의 실제 승인이 필요합니다.")
+        if args["report"].get("artifacts"):
+            require(output_approved, "APPROVAL_REQUIRED", "산출물 등록에는 해당 계획의 실제 승인이 필요합니다.")
         if proposed == "succeeded":
-            require(output_approved and not self._active_calls(task),
-                    "RESULT_VALIDATION_FAILED", "성공 보고에는 승인 이력과 해소된 호출 상태가 필요합니다.")
+            require(output_approved, "APPROVAL_REQUIRED", "성공 보고에는 현재 계획의 실제 승인이 필요합니다.")
+            require(not self._active_calls(task), "RESULT_VALIDATION_FAILED", "성공 보고에는 해소된 호출 상태가 필요합니다.")
         if proposed == "cancelled":
             require(task["state"] == "cancelled", "TASK_STATE_INVALID", "업무 취소 도구로 먼저 취소하세요.")
         data = ResultService(self.store).submit(task, plan, args["report"],
@@ -1153,7 +1185,7 @@ class Engine:
         for ref in data["artifact_refs"]:
             task.setdefault("artifact_permissions", {})[ref] = {"plan_id": args["plan_id"]}
         from .automatic_memory import enqueue
-        enqueue(self, task, plan, args, data["report_ref"])
+        enqueue(self, task, args, data["report_ref"])
         self._save(task)
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], **data})
 

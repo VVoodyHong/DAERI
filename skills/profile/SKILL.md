@@ -1,6 +1,6 @@
 ---
 name: profile
-description: DAERI profile을 선택·전환하거나 profile과 그에 귀속된 로컬 자료를 삭제하려 할 때 사용한다.
+description: DAERI profile의 선택·전환·백업·복원·삭제를 요청할 때 사용한다.
 ---
 
 # DAERI profile
@@ -9,6 +9,9 @@ description: DAERI profile을 선택·전환하거나 profile과 그에 귀속�
 운영 대상은 `profile`로 부른다.
 `profile PROFILE`은 이 대화의 이후 새 업무에 사용할 기본 대상을 선택한다.
 `profile delete PROFILE`은 대상과 정리 범위를 확인한 뒤 해당 profile의 로컬 자료를 삭제한다.
+백업·복원 요청은 [이관 계약](../../docs/spec/configuration/profiles.md#이관백업복원)의 `profile backup/restore`로 처리한다.
+사용자 로컬 암호 입력 경로를 준비하고, 복원 미리보기의 대상·건수와 사용자 확인을 받은 뒤 해당 확인값으로 적용한다.
+완료 후 새 환경의 인증 등록·연결 진단과 선택한 기억 제공자의 재색인으로 연결한다.
 `../../`는 설치된 플러그인 루트다.
 
 ## 관리 명령 실행

@@ -1,25 +1,12 @@
 {
   "name": "daeri",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "DAERI operations plugin with host-native agents, shared approvals, profile-scoped resources and automatic memory.",
   "author": {
     "name": "DAERI"
   },
   "repository": "https://github.com/VVoodyHong/DAERI",
   "skills": "./skills/",
-  "mcpServers": {
-    "operations": {
-      "command": "${PLUGIN_ROOT}/.venv/bin/python.exe",
-      "args": [
-        "-I",
-        "-m",
-        "daeri.server"
-      ],
-      "env": {
-        "__PYVENV_LAUNCHER__": ""
-      }
-    }
-  },
   "interface": {
     "displayName": "DAERI",
     "shortDescription": "Agent collaboration with approval and memory",
