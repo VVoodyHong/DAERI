@@ -71,6 +71,139 @@ def test_transaction_guard_requires_its_own_commit_boundary(store):
                 pass
 
 
+@pytest.mark.parametrize('change', ['move', 'move_recreate', 'replace_database', 'replace_database_set', 'delete_database',
+                                  'root_symlink', 'database_symlink', 'root_file', 'database_directory'])
+def test_changed_store_location_blocks_cached_reads_and_closes_the_old_connection(store, tmp_path, change):
+    store.request_put('test', 'old-key', 'old-fingerprint', {'old': True})
+    connection = store._db
+    data = store.data_dir
+    moved = tmp_path / 'moved'
+    database = data / 'daeri.sqlite3'
+    replacement = None
+    if change in {'move', 'move_recreate', 'root_symlink', 'root_file'}:
+        data.rename(moved)
+        if change == 'move_recreate':
+            replacement = Store(data)
+            replacement.put_profile('new-profile')
+        elif change == 'root_symlink':
+            data.symlink_to(moved, target_is_directory=True)
+        elif change == 'root_file':
+            data.write_text('different object')
+    elif change == 'replace_database':
+        replacement = Store(tmp_path / 'replacement')
+        replacement.request_put('test', 'new-key', 'new-fingerprint', {'new': True})
+        replacement.close()
+        replacement = None
+        candidate = tmp_path / 'replacement' / 'daeri.sqlite3'
+        candidate.replace(database)
+        replacement_bytes = database.read_bytes()
+    elif change == 'replace_database_set':
+        moved.mkdir()
+        for suffix in ('', '-wal', '-shm', '-journal'):
+            path = data / ('daeri.sqlite3' + suffix)
+            if path.exists():
+                path.rename(moved / path.name)
+        replacement = Store(data)
+        replacement.put_profile('new-profile')
+        replacement_files = {path: path.read_bytes() for path in (database, data / 'daeri.sqlite3-wal')}
+    elif change == 'delete_database':
+        database.unlink()
+    else:
+        original = data / 'original.sqlite3'
+        database.rename(original)
+        if change == 'database_symlink':
+            database.symlink_to(original)
+        else:
+            database.mkdir()
+    try:
+        with pytest.raises(StoreError) as error:
+            store.request_get('test', 'old-key')
+        assert error.value.code == 'STORE_UNAVAILABLE'
+        assert '연결' in error.value.message
+        assert str(tmp_path) not in str(error.value)
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute('SELECT 1')
+        store.close()
+        store.close()
+        if change == 'replace_database_set':
+            assert {path: path.read_bytes() for path in replacement_files} == replacement_files
+        if replacement is not None:
+            replacement.put_profile('still-usable')
+            assert [profile['name'] for profile in replacement.list_profiles()] == ['new-profile', 'still-usable']
+        if change == 'replace_database':
+            assert database.read_bytes() == replacement_bytes
+    finally:
+        if replacement is not None:
+            replacement.close()
+
+
+def test_restoring_the_original_location_requires_a_new_store_connection(store, tmp_path):
+    store.request_put('test', 'old-key', 'old-fingerprint', {'old': True})
+    data, moved = store.data_dir, tmp_path / 'moved'
+    data.rename(moved)
+    with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
+        store.assert_current_location()
+    moved.rename(data)
+    with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
+        store.request_get('test', 'old-key')
+    reopened = Store(data)
+    try:
+        assert reopened.request_get('test', 'old-key')['response'] == {'old': True}
+    finally:
+        reopened.close()
+
+
+def test_unverifiable_store_location_is_permanently_closed(store, monkeypatch):
+    store.request_put('test', 'old-key', 'old-fingerprint', {'old': True})
+    original = Path.lstat
+
+    def denied(path):
+        if path == store.data_dir:
+            raise PermissionError('private path must not be returned')
+        return original(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'lstat', denied)
+        with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
+            store.request_get('test', 'old-key')
+    with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
+        store.request_get('test', 'old-key')
+    with pytest.raises(sqlite3.ProgrammingError):
+        store._db.execute('SELECT 1')
+
+
+@pytest.mark.parametrize('nested', [False, True])
+def test_location_change_rolls_back_after_the_transaction_guard_restores_side_effects(store, tmp_path, nested):
+    connection, events = store._db, []
+    store.request_put('test', 'old-key', 'old-fingerprint', {'old': True})
+    moved = tmp_path / 'moved'
+
+    @contextmanager
+    def guard():
+        try:
+            yield
+        except StoreError:
+            events.append(('guard', connection.in_transaction))
+            raise
+
+    with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
+        with store.transaction(guard=guard()):
+            store.request_put('test', 'uncommitted', 'pending-fingerprint', {'pending': True})
+            store.data_dir.rename(moved)
+            if nested:
+                with store.transaction():
+                    pytest.fail('A nested transaction must fail before executing its body.')
+    assert events == [('guard', True)]
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute('SELECT 1')
+    reopened = Store(moved)
+    try:
+        assert reopened.request_get('test', 'uncommitted') is None
+        assert reopened.request_get('test', 'old-key')['response'] == {'old': True}
+    finally:
+        reopened.close()
+
+
 def task_for(store, task_id="task-one", profile_name="alpha", created_at="2026-10-20T00:00:00+00:00"):
     profile = store.put_profile(profile_name)
     task = {

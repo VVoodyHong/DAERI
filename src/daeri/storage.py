@@ -10,7 +10,7 @@ import sqlite3
 import stat
 import sys
 import threading
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import monotonic, sleep
@@ -133,10 +133,17 @@ def _regular_file(path):
         yield stream
 
 
+def _file_identity(path):
+    entry = path.lstat()
+    return entry.st_dev, entry.st_ino, stat.S_IFMT(entry.st_mode)
+
+
 class Store:
     def __init__(self, data_dir: Path):
         self.data_dir = Path(data_dir)
         self._lock = threading.RLock()
+        self._closed = self._location_invalid = False
+        self._transaction_depth = 0
         try:
             for folder in (self.data_dir, *(self.data_dir / name for name in ("profiles", "records", "staging", "artifacts"))):
                 if folder.is_symlink():
@@ -159,6 +166,7 @@ class Store:
             finally:
                 os.close(descriptor)
             database.chmod(0o600)
+            self._location_identity = (_file_identity(self.data_dir), _file_identity(database))
             self._db = sqlite3.connect(database, isolation_level=None, timeout=5, check_same_thread=False)
             self._db.row_factory = sqlite3.Row
             self._db.execute("PRAGMA foreign_keys=ON")
@@ -232,26 +240,62 @@ class Store:
     @contextmanager
     def transaction(self, *, guard=None):
         with self._lock:
+            self.assert_current_location()
             outer = not self._db.in_transaction
             if guard is not None and not outer:
                 raise StoreError('INVALID_INPUT', 'Guarded updates require their own transaction boundary.')
+            self._transaction_depth += 1
             try:
                 if outer:
                     self._db.execute("BEGIN IMMEDIATE")
                 with guard if guard is not None else nullcontext():
                     yield self
                     if outer:
+                        self.assert_current_location()
                         self._db.commit()
             except BaseException as error:
-                if outer:
-                    self._db.rollback()
+                if outer and not self._closed:
+                    try:
+                        self._db.rollback()
+                    except sqlite3.Error:
+                        if not self._location_invalid:
+                            raise StoreError("STORE_UNAVAILABLE", "Local storage operation failed.") from None
                 if isinstance(error, sqlite3.Error):
                     raise StoreError("STORE_UNAVAILABLE", "Local storage operation failed.") from None
                 raise
+            finally:
+                self._transaction_depth -= 1
+                if self._location_invalid and not self._transaction_depth:
+                    self.close()
+
+    def assert_current_location(self):
+        with self._lock:
+            if not self._location_invalid and not self._closed:
+                try:
+                    current = (_file_identity(self.data_dir), _file_identity(self.data_dir / 'daeri.sqlite3'))
+                except OSError:
+                    current = None
+                if current == self._location_identity:
+                    return
+                self._location_invalid = True
+            if self._location_invalid and not self._transaction_depth:
+                self.close()
+            raise StoreError('STORE_UNAVAILABLE', 'DAERI 저장소가 변경되었습니다. 연결을 다시 시작해 주세요.')
 
     def close(self):
         with self._lock:
-            self._db.close()
+            if self._closed:
+                return
+            try:
+                if self._location_invalid:
+                    with suppress(sqlite3.Error):
+                        self._db.rollback()
+                self._db.close()
+            except sqlite3.Error:
+                if not self._location_invalid:
+                    raise
+            finally:
+                self._closed = True
 
     def assert_profile_available(self, profile_id):
         row = self._db.execute('SELECT state FROM profile_deletions WHERE profile_id=?', (profile_id,)).fetchone()

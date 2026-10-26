@@ -85,6 +85,7 @@ class Engine:
     def _call(self, tool, arguments):
         args = None
         try:
+            self.store.assert_current_location()
             require(tool in INPUT_MODELS, "NOT_FOUND", "지원하지 않는 도구입니다.")
             require(isinstance(arguments, dict), "INVALID_INPUT", "JSON 객체를 전달하세요.")
             encoded = json.dumps(arguments, ensure_ascii=False, allow_nan=False)

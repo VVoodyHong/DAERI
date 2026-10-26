@@ -97,6 +97,43 @@ def test_stdio_create_and_get_use_the_selected_local_data_directory(tmp_path, pl
     assert (tmp_path / "data" / "daeri.sqlite3").is_file()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX relocation of an open SQLite database")
+def test_stdio_rejects_a_moved_store_and_reconnects_to_the_current_store(tmp_path):
+    data = tmp_path / "data"
+    moved = tmp_path / "moved data"
+
+    async def scenario():
+        async with connect(data) as (old_session, _):
+            first = envelope(await old_session.call_tool("daeri_task_create", {
+                "request_id": "reused-id", "request_text": "이전 업무",
+            }))
+            assert first["status"] == "ok", first
+            data.rename(moved)
+            replacement = Store(data)
+            try:
+                profile = replacement.put_profile("fresh-profile")
+                arguments = {"request_id": "reused-id", "request_text": "새 업무",
+                             "context": {"profile_id": profile["profile_id"]}}
+                stale = envelope(await old_session.call_tool("daeri_task_create", arguments))
+                assert stale["status"] == "error", stale
+                assert stale["data"] is None
+                assert stale["error"]["code"] == "STORE_UNAVAILABLE", stale
+                assert stale["error"]["next_action"] == "stop"
+                assert "연결" in stale["error"]["message"]
+                assert str(tmp_path) not in json.dumps(stale, ensure_ascii=False)
+                assert replacement.list_tasks(profile["profile_id"]) == []
+                async with connect(data) as (fresh_session, _):
+                    current = envelope(await fresh_session.call_tool("daeri_task_create", arguments))
+                    assert current["status"] == "ok", current
+                    assert len(replacement.list_tasks(profile["profile_id"])) == 1
+                    again = envelope(await old_session.call_tool("daeri_task_create", arguments))
+                    assert again["error"]["code"] == "STORE_UNAVAILABLE", again
+            finally:
+                replacement.close()
+
+    asyncio.run(scenario())
+
+
 def test_invalid_known_tool_input_returns_a_daeri_error_without_echoing_input(tmp_path):
     async def scenario():
         async with connect(tmp_path / "data") as (session, _):
