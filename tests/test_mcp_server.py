@@ -7,7 +7,7 @@ import subprocess
 import sys
 from datetime import timedelta
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from mcp.shared.exceptions import McpError
 from jsonschema import Draft202012Validator
@@ -60,6 +60,9 @@ def test_stdio_handshake_lists_the_implemented_tools_and_strict_schemas(tmp_path
             assert not validator.is_valid({"request_id": "schema-check", "request_text": "요청", "extra": True})
             assert not validator.is_valid({"request_text": "요청"})
             assert all(tool.description for tool in tools.values())
+            for tool in tools.values():
+                assert tool.inputSchema["type"] == "object"
+                assert not {"oneOf", "anyOf", "allOf"} & tool.inputSchema.keys(), tool.name
             for name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update", "daeri_result_submit", "daeri_worker"}:
                 assert tools[name].annotations.openWorldHint is True
             worker_schema = Draft202012Validator(tools["daeri_worker"].inputSchema)
@@ -130,6 +133,49 @@ def test_stdio_rejects_a_moved_store_and_reconnects_to_the_current_store(tmp_pat
                     assert again["error"]["code"] == "STORE_UNAVAILABLE", again
             finally:
                 replacement.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('outcome', ['success', 'error'])
+def test_stdio_cancellation_preserves_the_session_after_synchronous_work(tmp_path, outcome):
+    async def wait_for(path):
+        async with asyncio.timeout(5):
+            while not path.exists():
+                await asyncio.sleep(0.005)
+
+    async def scenario():
+        parameters = StdioServerParameters(command=sys.executable,
+            args=['-I', str(ROOT / 'tests/fixtures/cancellation_mcp.py'), str(tmp_path), outcome],
+            env={'__PYVENV_LAUNCHER__': ''})
+        async with stdio_client(parameters) as (reader, writer):
+            async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=5)) as session:
+                await session.initialize()
+                # The SDK allocates the next request ID when the scheduled call starts.
+                request_id = session._request_id
+                cancelled = asyncio.create_task(session.call_tool('daeri_task_create', {
+                    'request_id': 'cancelled', 'request_text': 'Controlled synchronous work'}))
+                try:
+                    await wait_for(tmp_path / 'started')
+                    await session.send_notification(types.ClientNotification(types.CancelledNotification(
+                        params=types.CancelledNotificationParams(requestId=request_id, reason='User interruption'))))
+                    with pytest.raises(McpError, match='Request cancelled'):
+                        await cancelled
+                    assert not (tmp_path / 'completed').exists()
+                    following = envelope(await session.call_tool('daeri_task_create', {
+                        'request_id': 'while-finishing', 'request_text': 'Redirect before the old work finishes'}))
+                    assert following['status'] == 'ok', following
+                    assert following['data']['completed'] == 0
+                    (tmp_path / 'release').touch()
+                    await wait_for(tmp_path / 'completed')
+                    assert json.loads((tmp_path / 'completed').read_text()) == {'count': 1, 'outcome': outcome}
+                    for index in range(2):
+                        result = envelope(await session.call_tool('daeri_task_create', {
+                            'request_id': f'following-{index}', 'request_text': 'Continue on the same connection'}))
+                        assert result['status'] == 'ok', result
+                        assert result['data']['completed'] == 1
+                finally:
+                    (tmp_path / 'release').touch()
 
     asyncio.run(scenario())
 

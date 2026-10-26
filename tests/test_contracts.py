@@ -12,6 +12,14 @@ def validate(model_name, payload):
     return getattr(import_module("daeri.contracts"), model_name).model_validate(payload)
 
 
+@pytest.mark.parametrize("tool_name,model", list(import_module("daeri.contracts").INPUT_MODELS.items()))
+def test_tool_inputs_use_an_object_root_supported_by_host_tool_loading(tool_name, model):
+    schema = model.model_json_schema()
+    Draft202012Validator.check_schema(schema)
+    assert schema["type"] == "object", tool_name
+    assert not {"oneOf", "anyOf", "allOf"} & schema.keys(), tool_name
+
+
 def approval(**changes):
     return {
         "request_id": "request-1",
@@ -464,3 +472,26 @@ def test_binding_pointer_schema_preserves_root_source_and_nonempty_target(source
 
 def test_worker_call_can_select_a_real_capability_in_an_approved_resource_bundle():
     assert_branch_contract("WorkerCall", {"step_id": "read", "call_id": "call", "capability_id": "scan_keys", "parameters": {}}, True)
+
+
+@pytest.mark.parametrize("operation,fields,required,unrelated", [
+    ("create", {"request_id": "r", "expected_task_revision": 1, "assignment": {
+        "label": "확인", "objective": "자료 확인", "step_ids": ["s"],
+        "completion_criteria": ["자료를 근거로 확인"]}}, "assignment", {"delegation_token": "token"}),
+    ("get", {"delegation_token": "token"}, "delegation_token", {"request_id": "r"}),
+    ("execute", {"delegation_token": "token", "call": {
+        "step_id": "s", "call_id": "c", "parameters": {}}}, "call", {"query": "자료"}),
+    ("search", {"delegation_token": "token", "query": "자료"}, "query", {"record_ref": "ref"}),
+    ("read", {"delegation_token": "token", "record_ref": "ref"}, "record_ref", {"query": "자료"}),
+    ("complete", {"request_id": "r", "delegation_token": "token", "result": {
+        "summary": "확인", "evidence_refs": [], "limitations": []}}, "result", {"query": "자료"}),
+    ("revoke", {"request_id": "r", "expected_task_revision": 1, "delegation_id": "d"},
+        "delegation_id", {"delegation_token": "token"}),
+])
+def test_worker_schema_preserves_each_operations_required_and_exclusive_fields(operation, fields, required, unrelated):
+    payload = {"operation": operation, "task_id": "t", **fields}
+    assert_branch_contract("WorkerRequest", payload, True)
+    missing = dict(payload)
+    del missing[required]
+    assert_branch_contract("WorkerRequest", missing, False)
+    assert_branch_contract("WorkerRequest", {**payload, **unrelated}, False)

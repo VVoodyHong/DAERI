@@ -1,6 +1,6 @@
 {
   "name": "daeri",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "description": "DAERI operations plugin with host-native agents, shared approvals, profile-scoped resources and automatic memory.",
   "author": {
     "name": "DAERI"

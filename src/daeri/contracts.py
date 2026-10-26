@@ -79,7 +79,9 @@ class TaskPatch(InputModel):
 
 class TaskUpdate(InputModel):
     model_config = ConfigDict(json_schema_extra={
-        "oneOf": [{"required": ["patch"]}, {"required": ["action"]}],
+        "if": {"required": ["patch"]},
+        "then": {"properties": {"action": False}},
+        "else": {"required": ["action"]},
     })
 
     request_id: NonEmptyString
@@ -97,7 +99,9 @@ class TaskUpdate(InputModel):
 
 class TaskGet(InputModel):
     model_config = ConfigDict(json_schema_extra={
-        "oneOf": [{"required": ["task_id"]}, {"required": ["profile_id"]}],
+        "if": {"required": ["task_id"]},
+        "then": {"properties": {"profile_id": False}},
+        "else": {"required": ["profile_id"]},
     })
 
     task_id: NonEmptyString = Field(default=None)
@@ -415,10 +419,11 @@ class ReportMemoryCandidate(InputModel):
 
 
 class ResultSubmit(InputModel):
-    model_config = ConfigDict(json_schema_extra={"oneOf": [
-        {"properties": {"plan_id": {"type": "null"}, "plan_version": {"type": "null"}}},
-        {"properties": {"plan_id": {"type": "string"}, "plan_version": {"type": "integer"}}},
-    ]})
+    model_config = ConfigDict(json_schema_extra={
+        "if": {"properties": {"plan_id": {"type": "null"}}},
+        "then": {"properties": {"plan_version": {"type": "null"}}},
+        "else": {"properties": {"plan_version": {"type": "integer"}}},
+    })
     request_id: NonEmptyString
     task_id: NonEmptyString
     expected_task_revision: PositiveInt
@@ -498,13 +503,21 @@ WORKER_FIELDS = {
 }
 
 
+def worker_operation_schema():
+    fields = set().union(*(required | optional for required, optional in WORKER_FIELDS.values()))
+    schema = False
+    for operation, (required, optional) in reversed(WORKER_FIELDS.items()):
+        schema = {
+            "if": {"properties": {"operation": {"const": operation}}},
+            "then": {"required": sorted(required),
+                     "properties": {field: False for field in sorted(fields - required - optional)}},
+            "else": schema,
+        }
+    return schema
+
+
 class WorkerRequest(InputModel):
-    model_config = ConfigDict(json_schema_extra={"oneOf": [
-        {"properties": {"operation": {"const": operation},
-            **{field: False for field in set().union(*(a | b for a, b in WORKER_FIELDS.values())) - required - optional}},
-         "required": sorted(required)}
-        for operation, (required, optional) in WORKER_FIELDS.items()
-    ]})
+    model_config = ConfigDict(json_schema_extra=worker_operation_schema())
     operation: Literal["create", "get", "execute", "search", "read", "complete", "revoke"]
     task_id: NonEmptyString
     request_id: NonEmptyString = Field(default=None)

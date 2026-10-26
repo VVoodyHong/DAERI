@@ -30,7 +30,7 @@
 | 기억 | 호스트 후보의 자동 검증·정본 저장·색인·재시도·검색·정정·무효화 | [자동 갱신](../../tests/test_automatic_memory.py)·[출처](../../tests/test_knowledge.py)·[검색](../../tests/test_embedding_memory.py)·[규모](../../tests/test_memory_search_scale.py) |
 | 회상 평가 | 고정 합성 기억·질의의 유형별 회수율·순위·시간·접근 불가 반환 검사 | [평가 명령](../../evaluations/memory_recall.py)·[자료](../../evaluations/memory_recall.json)·[평가 회귀](../../tests/test_memory_recall_evaluation.py) |
 | 임베딩 | 로컬·OpenAI 호환 회사 API·키워드 전용 선택과 전송·응답·모델 호환 검사 | [API](../../tests/test_embedding_provider.py)·[통합](../../tests/test_embedding_integration.py) |
-| 공개 MCP | 16개 도구·입력·구조화 응답·실제 stdio·오류 | [스키마](../../tests/test_contracts.py)·[stdio](../../tests/test_mcp_server.py) |
+| 공개 MCP | 16개 도구·호스트 호환 입력·구조화 응답·실제 stdio·요청 취소 후 연결 유지 | [스키마](../../tests/test_contracts.py)·[stdio](../../tests/test_mcp_server.py) |
 | 개발 검사 | 공통 검증·실패 결과 보존·문서 링크·배포 원본 대조와 GitHub 실행 구성 | [저장소 검사](../../tests/test_repository_checks.py)·[문서 링크](../../tests/test_documentation_links.py) |
 
 [첫 업무](../../tests/test_first_work_defaults.py)는 접속 전용 YAML → 승인 조회 → 호스트 보고·파일 → 선별 기억 → 다음 업무 회상을 확인한다.

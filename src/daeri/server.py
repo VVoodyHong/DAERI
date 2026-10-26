@@ -65,7 +65,14 @@ def tool_result(result):
 def create_server(engine):
     server = Server(
         "operations", version=version("daeri-agent"),
-        instructions="Use the fixed DAERI profile. The host root agent owns planning, user approval, work assignment and evidence integration. Search memory and inspect registered contracts before planning. Obtain the user's actual reply in the current conversation before resource execution. Delegate independent approved steps through daeri_worker and the host's native workers when useful. Root and workers choose calls within their approved steps, method, scope, dependencies, field policy and shared cumulative budget. The root submits the final report with curated memory candidates; the runtime automatically validates, stores and indexes eligible knowledge. Environment preparation and authentication use the explicit setup management path.",
+        instructions=(
+            "Use the fixed DAERI profile. Discover each needed tool by name through the host's tool search when tools are deferred, and load its input schema. "
+            "The host root agent owns planning, user approval, work assignment and evidence integration. Search memory and inspect registered contracts before planning. "
+            "Obtain the user's actual reply in the current conversation before resource execution. Delegate independent approved steps through daeri_worker and the host's native workers when useful. "
+            "Root and workers choose calls within their approved steps, method, scope, dependencies, field policy and shared cumulative budget. "
+            "Discover and call daeri_result_submit with the final report and curated memory_candidates to finish the task; the runtime automatically validates, stores and indexes eligible knowledge. "
+            "Check the returned task and memory status before presenting completion. Environment preparation and authentication use the explicit setup management path."
+        ),
     )
 
     @server.list_tools()
@@ -87,13 +94,16 @@ def create_server(engine):
     @server.call_tool(validate_input=False)
     async def call_tool(name, arguments):
         try:
-            return tool_result(await anyio.to_thread.run_sync(engine.call, name, arguments))
+            result = tool_result(await anyio.to_thread.run_sync(engine.call, name, arguments))
         except Exception:
             print("DAERI local request failed (STORE_UNAVAILABLE).", file=sys.stderr)
-            return tool_result({
+            result = tool_result({
                 "status": "error", "data": None,
                 "error": {"code": "STORE_UNAVAILABLE", "message": "Local request could not be completed.", "next_action": "stop"},
             })
+        # Deliver cancellation after the shielded work, before the SDK sends a response.
+        await anyio.lowlevel.checkpoint_if_cancelled()
+        return result
 
     registered_call = server.request_handlers[types.CallToolRequest]
 

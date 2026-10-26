@@ -68,6 +68,8 @@ DAERI 실행기가 계획 승인·리소스 권한을 검사하고 MCP는 도구
 ## 입력을 구성하는 원칙
 
 최상위 입력은 JSON object이며 모든 DTO는 명시한 확장 영역 외의 추가 필드를 거부한다.
+도구 스키마의 최상위 조건은 `if`·`then`·`else`로 표현해 [호스트의 최상위 조합 변환](https://code.claude.com/docs/en/mcp#tool-input-schemas-with-a-root-level-combinator)에 의존하는 도구 제외를 해소한다.
+중첩 자료형의 조합과 실행기의 엄격한 입력 검증은 각 DTO의 조건을 따른다.
 필수 필드 누락·타입·enum 위반은 `INVALID_INPUT`이다.
 
 선택 필드의 생략은 표에 정의한 기본 동작을 뜻한다.
