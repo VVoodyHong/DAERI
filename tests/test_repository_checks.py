@@ -27,7 +27,8 @@ def repository(tmp_path):
     source = root / 'src/daeri'
     source.mkdir(parents=True)
     (source / '__init__.py').write_text('"""Synthetic package."""\n')
-    shutil.copy2(ROOT / 'src/daeri/catalog.json', source / 'catalog.json')
+    (source / 'config').mkdir()
+    shutil.copy2(ROOT / 'src/daeri/config/catalog.json', source / 'config/catalog.json')
     return root
 
 
@@ -44,7 +45,7 @@ def test_catalog_and_lock_version_drift_are_reported(repository):
     lock = repository / 'uv.lock'
     lock.write_text(lock.read_text().replace(f'name = "daeri-agent"\nversion = "{VERSION}"',
                                             'name = "daeri-agent"\nversion = "0.0.0"'))
-    catalog = repository / 'src/daeri/catalog.json'
+    catalog = repository / 'src/daeri/config/catalog.json'
     value = json.loads(catalog.read_text())
     value['db-postgres']['version'] = '0.0.0'
     catalog.write_text(json.dumps(value))

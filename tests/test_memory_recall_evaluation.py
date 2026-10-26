@@ -5,8 +5,8 @@ import httpx
 import pytest
 
 from evaluations import memory_recall as evaluation
-from daeri.embedding import OpenAICompatibleEmbedder
-from daeri.memory import MemoryService
+from daeri.infrastructure.embedding import OpenAICompatibleEmbedder
+from daeri.infrastructure.memory import MemoryService
 
 
 def test_scores_use_top_k_and_positive_gold_without_duplicate_credit():
@@ -119,7 +119,7 @@ def test_api_failures_cannot_be_presented_as_semantic_quality(monkeypatch, break
               'endpoint': 'https://embedding.example.test/v1/embeddings',
               'model': 'fixture', 'credential_ref': 'env:TEST_EMBEDDING_TOKEN'}
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        monkeypatch.setattr('daeri.memory.create_api_embedder', lambda config, **kwargs:
+        monkeypatch.setattr('daeri.infrastructure.memory.create_api_embedder', lambda config, **kwargs:
             OpenAICompatibleEmbedder(config, credentials=Credential(), client=client))
         result = evaluation.evaluate(evaluation.load_dataset(), config)
     assert result['status'] == 'incomplete'

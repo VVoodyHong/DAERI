@@ -6,8 +6,8 @@ from threading import Barrier, BrokenBarrierError
 import httpx
 import pytest
 
-from daeri.credentials import Credentials
-from daeri.storage import StoreError
+from daeri.infrastructure.credentials import Credentials
+from daeri.core.errors import StoreError
 
 
 def api_config(**changes):
@@ -17,7 +17,7 @@ def api_config(**changes):
 
 
 def provider():
-    return importlib.import_module("daeri.embedding")
+    return importlib.import_module("daeri.infrastructure.embedding")
 
 
 def test_absent_embedding_config_preserves_local_mode_without_api_options():

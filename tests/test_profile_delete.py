@@ -9,8 +9,9 @@ import threading
 
 import pytest
 
-from daeri import setup
-from daeri.storage import Store, StoreError
+import daeri.config.setup as setup
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -164,11 +165,11 @@ def test_profile_delete_cli_defaults_to_preview_and_requires_its_confirmation(tm
 
 def test_resource_diagnosis_cannot_publish_after_profile_deletion(store, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
-    from daeri.resources import ResourceRegistry
+    from daeri.infrastructure.resources import ResourceRegistry
     profile = store.put_profile('alpha', resources=[resource('source', 'credential:private')])
     registry = ResourceRegistry(store)
     entered, release = threading.Event(), threading.Event()
-    monkeypatch.setattr(registry, '_binding', lambda config: ('test-binding', {}))
+    monkeypatch.setattr(registry, '_credentials', lambda config: {})
     async def session(*args):
         return object(), {}
     async def tools(*args):
@@ -318,7 +319,7 @@ def test_legacy_pending_deletion_includes_canonical_yaml_without_rereading_profi
     config.parent.mkdir(parents=True)
     config.write_text('profile: alpha\n')
     preview = setup.preview_profile_deletion(store, 'alpha')
-    from daeri.profile_deletion import _manifest
+    from daeri.config.profile_deletion import _manifest
     with store.transaction():
         row = store._db.execute('SELECT * FROM profiles WHERE profile_id=?', (profile['profile_id'],)).fetchone()
         manifest = _manifest(store, row)
@@ -341,7 +342,7 @@ def test_pending_deletion_accepts_only_exact_managed_profile_yaml_paths(store, r
     outside_scope.parent.mkdir()
     outside_scope.write_text('keep configuration')
     preview = setup.preview_profile_deletion(store, 'alpha')
-    from daeri.profile_deletion import _manifest
+    from daeri.config.profile_deletion import _manifest
     with store.transaction():
         row = store._db.execute('SELECT * FROM profiles WHERE profile_id=?', (profile['profile_id'],)).fetchone()
         manifest = _manifest(store, row)

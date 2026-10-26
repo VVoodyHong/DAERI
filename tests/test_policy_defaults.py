@@ -4,12 +4,13 @@ from copy import deepcopy
 
 import pytest
 
-from daeri import policy
-from daeri.onboarding import apply_draft, create_draft, validate_draft
-from daeri.planning import validate_plan
-from daeri.setup import export_profile, import_profile, profile_template
-from daeri.setup_yaml import read_yaml, write_yaml
-from daeri.storage import Store, StoreError
+import daeri.core.policy as policy
+from daeri.config.onboarding import apply_draft, create_draft, validate_draft
+from daeri.application.planning import validate_plan
+from daeri.config.setup import export_profile, import_profile, profile_template
+from daeri.config.setup_yaml import read_yaml, write_yaml
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 from test_planning import Registry, inputs
 from test_setup import config_file, resource
 
@@ -132,7 +133,7 @@ def test_setup_defaults_to_plan_limits_and_yaml_can_restore_or_restrict_them(sto
 @pytest.mark.parametrize('legacy_flag', [False, True])
 def test_applying_legacy_embedding_yaml_keeps_selected_api_and_removes_the_old_switch(store, legacy_flag):
     from pathlib import Path
-    from daeri.credentials import Credentials
+    from daeri.infrastructure.credentials import Credentials
     from test_onboarding_credentials import Vault
 
     draft = create_draft(store, 'service', embedding='api', embedding_adapter='openai_compatible')

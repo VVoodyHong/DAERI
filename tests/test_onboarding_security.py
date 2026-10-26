@@ -4,10 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from daeri.onboarding import apply_draft, create_draft, validate_draft
-from daeri.setup import delete_profile, preview_profile_deletion
-from daeri.setup_yaml import read_yaml, write_yaml
-from daeri.storage import Store, StoreError
+from daeri.config.onboarding import apply_draft, create_draft, validate_draft
+from daeri.config.setup import delete_profile, preview_profile_deletion
+from daeri.config.setup_yaml import read_yaml, write_yaml
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def test_existing_profile_revision_cannot_change_after_yaml_review(store):
 def test_reviewed_schema_cannot_change_before_apply(store, monkeypatch):
     completed(store)
     token = validate_draft(store, 'production')['confirmation_token']
-    from daeri import onboarding
+    import daeri.config.onboarding as onboarding
     original = onboarding.setup_schema
 
     def changed_schema(recipe_id):
@@ -118,7 +119,7 @@ def test_missing_yaml_is_a_safe_validation_failure(store):
 @pytest.mark.parametrize('location', ['config', 'config/profiles', 'config/profiles/production.yaml',
                                     'setup', 'setup/production', 'setup/production/draft.json'])
 def test_draft_status_rejects_symlinks_and_preserves_their_targets(store, tmp_path, location):
-    from daeri.onboarding import draft_status
+    from daeri.config.onboarding import draft_status
     draft = completed(store)
     managed = store.data_dir / location
     outside = tmp_path / 'outside'
@@ -132,7 +133,7 @@ def test_draft_status_rejects_symlinks_and_preserves_their_targets(store, tmp_pa
 
 @pytest.mark.parametrize('operation', ['lstat', 'open'])
 def test_draft_status_reports_access_errors_instead_of_new_setup(store, monkeypatch, operation):
-    from daeri.onboarding import draft_status
+    from daeri.config.onboarding import draft_status
     draft = completed(store)
     path = Path(draft['path'])
     before = path.read_bytes()

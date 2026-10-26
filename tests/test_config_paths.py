@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from daeri.onboarding import apply_draft, create_draft, draft_status, validate_draft
-from daeri.setup_yaml import read_yaml, write_yaml
-from daeri.storage import Store, StoreError
+from daeri.config.onboarding import apply_draft, create_draft, draft_status, validate_draft
+from daeri.config.setup_yaml import read_yaml, write_yaml
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -154,7 +155,7 @@ def test_failed_legacy_removal_restores_the_original_pair(store, monkeypatch):
 
 
 def test_metadata_write_failure_after_migration_keeps_a_resumable_canonical_pair(store, monkeypatch):
-    from daeri import onboarding
+    import daeri.config.onboarding as onboarding
     canonical, metadata, legacy = legacy_draft(store)
     before = legacy.read_bytes(), metadata.read_bytes()
     original = onboarding._write

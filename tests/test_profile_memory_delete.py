@@ -3,8 +3,9 @@ import struct
 
 import pytest
 
-from daeri import memory
-from daeri.storage import Store, StoreError
+import daeri.infrastructure.memory as memory
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 from test_memory import configured_resource, memory_policy, save, source
 
 

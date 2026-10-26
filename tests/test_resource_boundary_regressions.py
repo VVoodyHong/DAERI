@@ -5,8 +5,9 @@ import sys
 
 import pytest
 
-from daeri.resources import ResourceRegistry, validate_resource
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.resources import ResourceRegistry, validate_resource
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -123,7 +124,7 @@ def test_confluence_success_keeps_document_content_and_unknown_completeness(regi
 
 
 def test_confluence_product_error_persists_failed_call_without_usable_evidence(registry, confluence_connection):
-    from daeri.engine import Engine
+    from daeri.application.runtime import Runtime
     from test_execution_flow import approve, begin, execution, resource as cache_resource
 
     source, _ = confluence_connection
@@ -132,28 +133,28 @@ def test_confluence_product_error_persists_failed_call_without_usable_evidence(r
     resource['policy'] = cache_resource()['policy']
     profile = registry.store.put_profile('document-profile', resources=[resource])
     registry.diagnose(profile, 'document')
-    engine = Engine(registry.store.data_dir)
+    runtime = Runtime(registry.store.data_dir)
     try:
         def page_scope(draft):
             draft['steps'][0]['scope'] = {'equals': {'page_id': '404'}}
 
-        saved, draft = begin(engine, profile, configure=page_scope)
-        approved = approve(engine, saved)
+        saved, draft = begin(runtime, profile, configure=page_scope)
+        approved = approve(runtime, saved)
         args = execution(saved, approved, draft['steps'][0])
         args['parameters'] = {'page_id': '404'}
-        result = engine.call('daeri_capability_execute', args)
+        result = runtime.call('daeri_capability_execute', args)
         assert result['status'] == 'error'
         assert result['error']['code'] == 'EXTERNAL_EXECUTION_FAILED'
         assert result['data']['call_state'] == 'failed'
         assert result['data']['inline_result'] is None
         assert result['data']['evidence_refs'] == []
         assert 'private-error-body' not in repr(result)
-        stored = engine.store.read_record(saved['task_id'], result['data']['result_ref'])['payload']
+        stored = runtime.store.read_record(saved['task_id'], result['data']['result_ref'])['payload']
         assert stored['result'] is None
         assert stored['error_code'] == 'EXTERNAL_EXECUTION_FAILED'
-        assert engine.call('daeri_capability_execute', args)['data']['call_state'] == 'failed'
+        assert runtime.call('daeri_capability_execute', args)['data']['call_state'] == 'failed'
     finally:
-        engine.close()
+        runtime.close()
 
 
 def test_previously_normalized_remote_invocation_is_blocked_before_call(registry, confluence_connection, monkeypatch):

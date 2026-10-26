@@ -13,7 +13,7 @@ from mcp.shared.exceptions import McpError
 from jsonschema import Draft202012Validator
 import pytest
 
-from daeri.storage import Store
+from daeri.infrastructure.storage import Store
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +21,7 @@ TOOL_NAMES = {
     "daeri_task_create", "daeri_task_update", "daeri_task_get", "daeri_task_resume",
     "daeri_task_cancel", "daeri_memory_search", "daeri_resource_list",
     "daeri_plan_submit", "daeri_plan_get", "daeri_approval_request",
-    "daeri_capability_get", "daeri_capability_execute", "daeri_result_submit", "daeri_result_get", "daeri_memory_update", "daeri_worker",
+    "daeri_capability_get", "daeri_capability_execute", "daeri_result_submit", "daeri_result_get", "daeri_memory_update", "daeri_subagent",
 }
 
 
@@ -33,7 +33,7 @@ async def connect(data_dir, *, launch=False, plugin_root=ROOT):
         env={"DAERI_DATA_DIR": str(data_dir), "__PYVENV_LAUNCHER__": ""},
         cwd=data_dir.parent,
     )
-    async with stdio_client(parameters) as (reader, writer):
+    async with stdio_client(parameters, errlog=sys.stderr) as (reader, writer):
         async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=10)) as session:
             initialized = await session.initialize()
             yield session, initialized
@@ -50,24 +50,24 @@ def envelope(result):
 def test_stdio_handshake_lists_the_implemented_tools_and_strict_schemas(tmp_path):
     async def scenario():
         async with connect(tmp_path / "data") as (session, initialized):
-            assert initialized.serverInfo.name == "operations"
+            assert initialized.serverInfo.name == "runtime"
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
             assert set(tools) == TOOL_NAMES
             schema = tools["daeri_task_create"].inputSchema
             validator = Draft202012Validator(schema)
-            assert validator.is_valid({"request_id": "schema-check", "request_text": "요청"})
-            assert not validator.is_valid({"request_id": "schema-check", "request_text": 7})
-            assert not validator.is_valid({"request_id": "schema-check", "request_text": "요청", "extra": True})
-            assert not validator.is_valid({"request_text": "요청"})
+            assert validator.is_valid({"request_text": "요청"})
+            assert not validator.is_valid({"request_text": 7})
+            assert not validator.is_valid({"request_text": "요청", "extra": True})
+            assert not validator.is_valid({"request_id": "schema-check", "request_text": "요청"})
             assert all(tool.description for tool in tools.values())
             for tool in tools.values():
                 assert tool.inputSchema["type"] == "object"
                 assert not {"oneOf", "anyOf", "allOf"} & tool.inputSchema.keys(), tool.name
-            for name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update", "daeri_result_submit", "daeri_worker"}:
+            for name in {"daeri_capability_execute", "daeri_memory_search", "daeri_memory_update", "daeri_result_submit", "daeri_subagent"}:
                 assert tools[name].annotations.openWorldHint is True
-            worker_schema = Draft202012Validator(tools["daeri_worker"].inputSchema)
-            assert worker_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token"})
-            assert not worker_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token", "expected_task_revision": 1})
+            subagent_schema = Draft202012Validator(tools["daeri_subagent"].inputSchema)
+            assert subagent_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token"})
+            assert not subagent_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token", "expected_task_revision": 1})
             for name in {"daeri_memory_search", "daeri_memory_update", "daeri_result_submit"}:
                 assert "embedding API" in tools[name].description
             for name in {"daeri_task_update", "daeri_task_cancel", "daeri_task_resume", "daeri_plan_submit", "daeri_approval_request"}:
@@ -148,7 +148,7 @@ def test_stdio_cancellation_preserves_the_session_after_synchronous_work(tmp_pat
         parameters = StdioServerParameters(command=sys.executable,
             args=['-I', str(ROOT / 'tests/fixtures/cancellation_mcp.py'), str(tmp_path), outcome],
             env={'__PYVENV_LAUNCHER__': ''})
-        async with stdio_client(parameters) as (reader, writer):
+        async with stdio_client(parameters, errlog=sys.stderr) as (reader, writer):
             async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=5)) as session:
                 await session.initialize()
                 # The SDK allocates the next request ID when the scheduled call starts.
@@ -266,7 +266,7 @@ def test_subprocess_local_plan_approval_pause_and_resume_lifecycle(tmp_path, plu
                 "draft": {
                     "purpose": "외부 조회 없이 현재 요청 검토", "steps": [],
                     "budget": {"max_tool_calls": 0, "max_external_requests": 0, "max_runtime_ms": 0, "resource_limits": []},
-                    "output": {"format": "text", "destination": "현재 대화", "resource_rules": [], "table_rules": [], "artifact_rules": []},
+                    "output": {"format": "text", "destination": "현재 대화", "resource_rules": []},
                     "memory_search_refs": [search["data"]["memory_search_ref"]], "memory_refs": [],
                     "memory_limitations": search["data"]["limitations"],
                     "completion_criteria": [{"criterion_id": "local-review", "description": "현재 요청 검토", "required": True, "step_ids": []}],
@@ -305,9 +305,9 @@ def test_subprocess_local_plan_approval_pause_and_resume_lifecycle(tmp_path, plu
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("use_worker", [False, True])
-def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_path, use_worker):
-    from daeri.resources import ResourceRegistry
+@pytest.mark.parametrize("use_subagent", [False, True])
+def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_path, use_subagent):
+    from daeri.infrastructure.resources import ResourceRegistry
     from test_execution_flow import resource
 
     data_dir = tmp_path / "data"
@@ -327,10 +327,9 @@ def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_
             descriptor = (await call("daeri_capability_get", {"task_id": task["task_id"], "instance_id": "cache-a", "capability_id": "get"}))["data"]["descriptor"]
             draft = {"purpose": "Read a fixed key", "steps": [{"step_id": "read", "description": "Read the selected test key",
                 "purpose": "collect", "depends_on": [], "instance_id": "cache-a", "capability_id": "get",
-                "contract_ref": descriptor["contract_ref"], "scope": {"equals": {"key": "orders"}}, "input_bindings": []}],
+                "contract_ref": descriptor["contract_ref"], "scope": {"equals": {"key": "orders"}}}],
                 "budget": {"max_tool_calls": 1, "max_external_requests": None, "max_runtime_ms": 10000, "resource_limits": []},
-                "output": {"format": "json", "destination": "current conversation", "resource_rules": [{"instance_id": "cache-a", **profile["resources"][0]["policy"]}],
-                    "table_rules": [], "artifact_rules": []},
+                "output": {"format": "json", "destination": "current conversation", "resource_rules": [{"instance_id": "cache-a", **profile["resources"][0]["policy"]}]},
                 "memory_search_refs": [search["memory_search_ref"]], "memory_refs": [], "memory_limitations": search["limitations"],
                 "completion_criteria": [{"criterion_id": "read", "description": "Read the selected key", "required": True, "step_ids": ["read"]}]}
             saved = (await call("daeri_plan_submit", {"request_id": "wire-plan", "task_id": task["task_id"],
@@ -340,16 +339,16 @@ def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_
             approved = (await call("daeri_approval_request", {**common, "request_id": "wire-approve", "stage": "respond",
                 "expected_task_revision": waiting["task_revision"], "approval_request_id": waiting["approval_request_id"],
                 "decision": "approve", "user_response": "이 시험 계획을 승인합니다"}))["data"]
-            if use_worker:
-                grant = (await call("daeri_worker", {"operation": "create", "request_id": "wire-worker",
+            if use_subagent:
+                grant = (await call("daeri_subagent", {"operation": "create", "request_id": "wire-subagent",
                     "task_id": task["task_id"], "expected_task_revision": approved["task_revision"],
                     "assignment": {"label": "조회", "objective": "시험 키 조회", "step_ids": ["read"],
                         "completion_criteria": ["조회 근거 반환"], "source_refs": []}}))["data"]
-                async with connect(data_dir) as (worker, _):
-                    worker_args = {"task_id": task["task_id"], "delegation_token": grant["delegation_token"]}
-                    executed = envelope(await worker.call_tool("daeri_worker", {**worker_args, "operation": "execute",
+                async with connect(data_dir) as (subagent, _):
+                    subagent_args = {"task_id": task["task_id"], "delegation_token": grant["delegation_token"]}
+                    executed = envelope(await subagent.call_tool("daeri_subagent", {**subagent_args, "operation": "execute",
                         "call": {"step_id": "read", "call_id": "wire-read", "parameters": {"key": "orders"}}}))
-                    completed = envelope(await worker.call_tool("daeri_worker", {**worker_args, "operation": "complete",
+                    completed = envelope(await subagent.call_tool("daeri_subagent", {**subagent_args, "operation": "complete",
                         "request_id": "wire-complete", "result": {"summary": "조회 완료",
                             "evidence_refs": [executed["data"]["result_ref"]], "limitations": []}}))
                     assert completed["status"] == "ok", completed

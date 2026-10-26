@@ -7,10 +7,11 @@ import sys
 import pytest
 from mcp.types import CallToolResult, EmbeddedResource, BlobResourceContents, ImageContent, TextContent
 
-from daeri.adapters import get_adapter
-from daeri.resources import ResourceRegistry, validate_resource
-from daeri.setup import build_setup_resource
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.adapters import get_adapter
+from daeri.infrastructure.resources import ResourceRegistry, validate_resource
+from daeri.config.setup import build_setup_resource
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.mark.parametrize('adapter,parameters', [
@@ -48,9 +49,50 @@ def test_explicit_constraints_require_values_instead_of_unknown_provider_default
     {'tables': ['public.orders'], 'columns': ['id'], 'max_rows': 100},
     {'tables': ['*'], 'columns': ['*'], 'max_rows': 100},
 ])
-def test_legacy_sql_semantic_restrictions_are_never_silently_ignored(policy):
+@pytest.mark.parametrize('adapter,parameters', [
+    ('postgres_read', {'sql': 'SELECT * FROM private.users'}),
+    ('redis_read', {'key': 'private:users'}),
+    ('gitlab_read', {'project_id': 'private/users'}),
+    ('confluence_read', {'page_id': '123'}),
+    ('jira_read', {'jql': 'project = PRIVATE'}),
+    ('aws_read', {'cli_command': 'aws ec2 describe-instances'}),
+])
+def test_unenforceable_registered_restrictions_are_never_silently_ignored(policy, adapter, parameters):
+    if adapter == 'aws_read':
+        policy = {**policy, 'region': 'ap-northeast-2'}
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
-        get_adapter('postgres_read').normalize({'sql': 'SELECT * FROM private.users'}, policy, {})
+        get_adapter(adapter).normalize(parameters, policy, {})
+
+
+def test_plan_rejects_scope_conditions_the_read_adapter_cannot_enforce(tmp_path):
+    from daeri.application.runtime import Runtime
+    from test_execution_flow import resource
+
+    runtime = Runtime(tmp_path / 'private')
+    try:
+        profile = runtime.store.put_profile('service', resources=[resource()])
+        runtime.registry.diagnose(profile, 'cache-a')
+        task = runtime.call('daeri_task_create', {
+            'request_text': 'Read public columns only',
+            'context': {'profile_id': profile['profile_id']},
+        })['data']
+        result = runtime.call('daeri_plan_submit', {
+            'task_id': task['task_id'],
+            'draft': {
+                'purpose': 'Read public columns only',
+                'steps': [{'step_id': 'read', 'description': 'Read the approved data',
+                           'instance_id': 'cache-a', 'capability_id': 'get',
+                           'scope': {'tables': ['public.orders'], 'columns': ['public_column'], 'max_rows': 1}}],
+                'output': {'format': 'text'},
+                'completion_criteria': [{'criterion_id': 'read', 'description': 'Read the approved data',
+                                         'step_ids': ['read']}],
+            },
+        })
+        assert result['status'] == 'error', result
+        assert result['error']['code'] == 'PLAN_INVALID'
+        assert runtime.store.get_task(task['task_id'])['plans'] == []
+    finally:
+        runtime.close()
 
 
 def test_aws_reuses_lower_read_policy_outside_the_old_ten_operations():

@@ -7,8 +7,8 @@ import struct
 
 import pytest
 
-from daeri.memory import MemoryService
-from daeri.storage import Store
+from daeri.infrastructure.memory import MemoryService
+from daeri.infrastructure.storage import Store
 from test_embedding_memory import api, api_config
 from test_memory import (NumericalFixtureEmbedder, TARGET_HASH, candidate,
                          configured_resource, memory_policy, save)

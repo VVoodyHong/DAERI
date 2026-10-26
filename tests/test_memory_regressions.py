@@ -7,33 +7,34 @@ from threading import Event
 
 import pytest
 
-from daeri.engine import Engine
-from daeri.memory import MemoryService
-from daeri.storage import Store, StoreError
-from test_engine import create, draft, request_approval, response_args
+from daeri.application.runtime import Runtime
+from daeri.infrastructure.memory import MemoryService
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
+from test_runtime import create, draft, request_approval, response_args
 from test_memory import NumericalFixtureEmbedder, candidate, configured_resource, memory_policy, save, source
 
 
 @pytest.fixture
 def completed(tmp_path):
-    engine = Engine(tmp_path)
+    runtime = Runtime(tmp_path)
     resource = configured_resource()
-    profile = engine.store.put_profile("memory-regression", resources=[resource],
+    profile = runtime.store.put_profile("memory-regression", resources=[resource],
                                       memory_policy=memory_policy(), long_term_memory_days=7)
-    task = create(engine, profile)
-    answered = engine.call("daeri_task_update", {"request_id": "answer", "task_id": task["task_id"],
+    task = create(runtime, profile)
+    answered = runtime.call("daeri_task_update", {"request_id": "answer", "task_id": task["task_id"],
         "expected_task_revision": task["task_revision"], "patch": {"clarification": "사용자가 확인한 운영 규칙"}})["data"]
     references = [task["request_ref"], answered["clarification_ref"]]
-    searched = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "운영 규칙"})["data"]
+    searched = runtime.call("daeri_memory_search", {"task_id": task["task_id"], "query": "운영 규칙"})["data"]
     planned = draft(searched["memory_search_ref"])
     planned["output"]["resource_rules"] = [{"instance_id": resource["instance_id"], **copy.deepcopy(resource["policy"])}]
-    saved = engine.call("daeri_plan_submit", {"request_id": "plan", "task_id": task["task_id"],
+    saved = runtime.call("daeri_plan_submit", {"request_id": "plan", "task_id": task["task_id"],
         "expected_task_revision": answered["task_revision"], "draft": planned})
     assert saved["status"] == "ok", saved
     saved = saved["data"]
-    approved = engine.call("daeri_approval_request", response_args(saved, request_approval(engine, saved)))
+    approved = runtime.call("daeri_approval_request", response_args(saved, request_approval(runtime, saved)))
     assert approved["status"] == "ok", approved
-    report = engine.call("daeri_result_submit", {"request_id": "report", "task_id": task["task_id"],
+    report = runtime.call("daeri_result_submit", {"request_id": "report", "task_id": task["task_id"],
         "expected_task_revision": approved["data"]["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
         "report": {"summary": "사용자 설명을 확인했다", "proposed_task_state": "succeeded",
             "findings": [{"kind": "observation", "text": "사용자 확인", "evidence_refs": references}], "tables": [],
@@ -42,26 +43,26 @@ def completed(tmp_path):
     assert report["status"] == "ok", report
     args = {"request_id": "remember", "task_id": task["task_id"], "expected_task_revision": report["data"]["task_revision"],
             "operation": "store", "source_refs": references, "reason": "확인한 지식 재사용", "draft": candidate()}
-    yield engine, profile, args
-    engine.close()
+    yield runtime, profile, args
+    runtime.close()
 
 
 def test_public_update_cannot_restore_invalidated_knowledge_with_an_old_source_subset(completed):
-    engine, profile, args = completed
-    saved = engine.call("daeri_memory_update", args)["data"]
-    blocked = engine.call("daeri_memory_update", {"request_id": "invalidate", "task_id": args["task_id"],
+    runtime, profile, args = completed
+    saved = runtime.call("daeri_memory_update", args)["data"]
+    blocked = runtime.call("daeri_memory_update", {"request_id": "invalidate", "task_id": args["task_id"],
         "expected_task_revision": saved["task_revision"], "operation": "invalidate", "source_refs": args["source_refs"][1:],
         "reason": "사용자 정정으로 이전 규칙 사용 중단", "memory_ref": saved["memory_ref"]})
     assert blocked["data"]["memory_state"] == "invalidated", blocked
-    result = engine.call("daeri_memory_update", {**args, "request_id": "old-subset",
+    result = runtime.call("daeri_memory_update", {**args, "request_id": "old-subset",
         "expected_task_revision": blocked["data"]["task_revision"], "source_refs": args["source_refs"][:1]})
     assert result["status"] == "error", result
     assert result["error"]["code"] == "MEMORY_CONFLICT"
-    assert engine.memory.search(profile["profile_id"], "E_CONN_001")["items"] == []
+    assert runtime.memory.search(profile["profile_id"], "E_CONN_001")["items"] == []
 
 
 def test_adding_an_older_source_does_not_restart_retention_but_a_new_observation_can(tmp_path, monkeypatch):
-    from daeri import memory
+    import daeri.infrastructure.memory as memory
 
     class Clock(datetime):
         current = datetime.now(UTC)
@@ -94,7 +95,7 @@ def test_adding_an_older_source_does_not_restart_retention_but_a_new_observation
 @pytest.mark.parametrize("cleanup_first", [False, True])
 @pytest.mark.parametrize("retention", ["source_bound", "long_term"])
 def test_fresh_observation_after_expiry_is_accepted_before_and_after_regular_cleanup(tmp_path, monkeypatch, cleanup_first, retention):
-    from daeri import memory
+    import daeri.infrastructure.memory as memory
 
     class Clock(datetime):
         current = datetime.now(UTC)
@@ -125,7 +126,7 @@ def test_fresh_observation_after_expiry_is_accepted_before_and_after_regular_cle
 
 
 def test_expired_memory_explicitly_invalidated_still_requires_observation_after_that_block(tmp_path, monkeypatch):
-    from daeri import memory
+    import daeri.infrastructure.memory as memory
 
     class Clock(datetime):
         current = datetime.now(UTC)
@@ -157,7 +158,7 @@ def test_expired_memory_explicitly_invalidated_still_requires_observation_after_
 
 
 def test_expired_memory_with_current_policy_revocation_requires_a_later_observation(tmp_path, monkeypatch):
-    from daeri import memory
+    import daeri.infrastructure.memory as memory
 
     class Clock(datetime):
         current = datetime.now(UTC)
@@ -207,16 +208,16 @@ class WaitingEmbedder(NumericalFixtureEmbedder):
         return super().embed_document(text)
 
 
-def test_public_search_allows_other_host_reads_and_rejects_policy_changes_during_embedding(completed):
-    engine, profile, args = completed
+def test_public_search_observes_current_policy_without_global_profile_conflict(completed):
+    runtime, profile, args = completed
     embedder = WaitingEmbedder("query")
-    engine.memory = MemoryService(engine.store, embedder, auto_load=False)
-    other = Store(engine.store.data_dir)
+    runtime.memory = MemoryService(runtime.store, embedder, auto_load=False)
+    other = Store(runtime.store.data_dir)
     other._db.execute("PRAGMA busy_timeout=100")
-    before = engine.store._db.execute("SELECT count(*) FROM records WHERE kind='memory_search'").fetchone()[0]
+    before = runtime.store._db.execute("SELECT count(*) FROM records WHERE kind='memory_search'").fetchone()[0]
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(engine.call, "daeri_memory_search", {"task_id": args["task_id"], "query": "운영 규칙"})
+            future = pool.submit(runtime.call, "daeri_memory_search", {"task_id": args["task_id"], "query": "운영 규칙"})
             assert embedder.entered.wait(2)
             try:
                 assert other.get_profile(profile["profile_id"])["revision"] == profile["revision"]
@@ -224,22 +225,22 @@ def test_public_search_allows_other_host_reads_and_rejects_policy_changes_during
             finally:
                 embedder.release.set()
             result = future.result(timeout=5)
-        assert result["status"] == "error", result
-        assert result["error"]["code"] == "CONTEXT_CHANGED"
-        assert engine.store._db.execute("SELECT count(*) FROM records WHERE kind='memory_search'").fetchone()[0] == before
+        assert result["status"] == "ok", result
+        assert result["data"]["items"] == []
+        assert runtime.store._db.execute("SELECT count(*) FROM records WHERE kind='memory_search'").fetchone()[0] == before + 1
     finally:
         other.close()
 
 
 def test_update_commits_pending_memory_before_embedding_and_rechecks_current_policy(completed):
-    engine, profile, args = completed
+    runtime, profile, args = completed
     embedder = WaitingEmbedder("document")
-    engine.memory = MemoryService(engine.store, embedder, auto_load=False)
-    other = Store(engine.store.data_dir)
+    runtime.memory = MemoryService(runtime.store, embedder, auto_load=False)
+    other = Store(runtime.store.data_dir)
     other._db.execute("PRAGMA busy_timeout=100")
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(engine.call, "daeri_memory_update", args)
+            future = pool.submit(runtime.call, "daeri_memory_update", args)
             assert embedder.entered.wait(2)
             try:
                 assert other.get_profile(profile["profile_id"])["revision"] == profile["revision"]
@@ -249,8 +250,10 @@ def test_update_commits_pending_memory_before_embedding_and_rechecks_current_pol
             finally:
                 embedder.release.set()
             result = future.result(timeout=5)
-        assert result["status"] == "error", result
-        assert result["error"]["code"] == "CONTEXT_CHANGED"
+        assert result["status"] == "partial", result
+        assert result["error"]["code"] == "MEMORY_INDEX_INCOMPLETE"
+        with pytest.raises(StoreError, match="ACCESS_DENIED"):
+            runtime.memory.get(profile["profile_id"], result["data"]["memory_ref"])
         row = other._db.execute("SELECT body,index_state FROM memory_versions").fetchone()
         assert row["body"] is not None and row["index_state"] == "pending"
         assert other._db.execute("SELECT count(*) FROM memory_vectors").fetchone()[0] == 0
@@ -312,13 +315,13 @@ def test_legacy_lineage_blocks_old_subsets_and_accepts_fresh_independent_evidenc
 
 
 def test_public_update_reports_late_invalidation_without_publishing_its_vector(completed):
-    engine, profile, args = completed
+    runtime, profile, args = completed
     embedder = WaitingEmbedder("document")
-    engine.memory = MemoryService(engine.store, embedder, auto_load=False)
-    other = Store(engine.store.data_dir)
+    runtime.memory = MemoryService(runtime.store, embedder, auto_load=False)
+    other = Store(runtime.store.data_dir)
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(engine.call, "daeri_memory_update", args)
+            future = pool.submit(runtime.call, "daeri_memory_update", args)
             assert embedder.entered.wait(2)
             try:
                 other_service = MemoryService(other, auto_load=False)
@@ -342,12 +345,12 @@ def test_public_update_preserves_pending_memory_and_replays_after_index_failure(
         def embed_document(self, text):
             raise RuntimeError("controlled local inference failure")
 
-    engine, profile, args = completed
-    engine.memory = MemoryService(engine.store, FailedModel(), auto_load=False)
-    result = engine.call("daeri_memory_update", args)
+    runtime, profile, args = completed
+    runtime.memory = MemoryService(runtime.store, FailedModel(), auto_load=False)
+    result = runtime.call("daeri_memory_update", args)
     assert result["status"] == "partial", result
     assert result["data"]["memory_state"] == "active" and result["data"]["index_state"] == "pending"
-    assert engine.memory.get(profile["profile_id"], result["data"]["memory_ref"])["statement"] == args["draft"]["statement"]
-    repeated = engine.call("daeri_memory_update", args)
+    assert runtime.memory.get(profile["profile_id"], result["data"]["memory_ref"])["statement"] == args["draft"]["statement"]
+    repeated = runtime.call("daeri_memory_update", args)
     assert repeated["data"] == result["data"]
-    assert engine.store._db.execute("SELECT count(*) FROM memory_versions").fetchone()[0] == 1
+    assert runtime.store._db.execute("SELECT count(*) FROM memory_versions").fetchone()[0] == 1

@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from daeri.resources import ResourceRegistry, validate_resource
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.resources import ResourceRegistry, validate_resource
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -82,10 +83,10 @@ def exercise_stdio_read(registry, resource):
     ("jira_read", "Issue", "jira_get_issue"),
 ])
 def test_builtin_selection_exposes_the_read_adapter_contract(adapter_id, resource_type, read_tool):
-    from daeri import adapters
+    import daeri.infrastructure.adapters as adapters
 
     get_adapter = getattr(adapters, "get_adapter")
-    from daeri.adapters.base import ReadAdapter
+    from daeri.infrastructure.adapters.base import ReadAdapter
 
     adapter = get_adapter(adapter_id)
     assert isinstance(adapter, ReadAdapter)
@@ -98,7 +99,7 @@ def test_builtin_selection_exposes_the_read_adapter_contract(adapter_id, resourc
 
 
 def test_builtin_registry_maps_canonical_ids_to_the_selected_instances():
-    from daeri import adapters
+    import daeri.infrastructure.adapters as adapters
 
     get_adapter = getattr(adapters, "get_adapter")
     registered = getattr(adapters, "BUILTIN_ADAPTERS")
@@ -116,7 +117,7 @@ def test_builtin_registry_maps_canonical_ids_to_the_selected_instances():
     ("document_read", "confluence_read"),
 ])
 def test_legacy_names_select_the_same_adapter_instance(legacy, canonical):
-    from daeri import adapters
+    import daeri.infrastructure.adapters as adapters
 
     get_adapter = getattr(adapters, "get_adapter")
     adapter = get_adapter(canonical)
@@ -128,7 +129,7 @@ def test_legacy_names_select_the_same_adapter_instance(legacy, canonical):
     "unknown_read", "", None, 1, True, [], {}, b"source_read",
 ])
 def test_unknown_and_nonstring_adapter_ids_are_invalid_input(adapter_id):
-    from daeri import adapters
+    import daeri.infrastructure.adapters as adapters
 
     get_adapter = getattr(adapters, "get_adapter")
     with pytest.raises(StoreError) as caught:
@@ -153,10 +154,10 @@ def test_canonical_and_legacy_gitlab_configs_execute_without_rewriting(registry,
 
 
 def test_registered_read_adapter_subclass_uses_the_common_stdio_pipeline(registry, monkeypatch):
-    from daeri import adapters
+    import daeri.infrastructure.adapters as adapters
 
     get_adapter = getattr(adapters, "get_adapter")
-    from daeri.adapters.base import ReadAdapter
+    from daeri.infrastructure.adapters.base import ReadAdapter
 
     class FixtureReadAdapter(ReadAdapter):
         adapter_id = "fixture_read"
@@ -182,8 +183,8 @@ def test_registered_read_adapter_subclass_uses_the_common_stdio_pipeline(registr
 
 @pytest.mark.parametrize("identifier", ["gitlab_read", "source_read"])
 def test_ambiguous_trusted_adapter_names_are_rejected(identifier, monkeypatch):
-    from daeri import adapters
-    from daeri.adapters.base import ReadAdapter
+    import daeri.infrastructure.adapters as adapters
+    from daeri.infrastructure.adapters.base import ReadAdapter
 
     class ConflictingAdapter(ReadAdapter):
         adapter_id = "extension_read"
@@ -195,8 +196,8 @@ def test_ambiguous_trusted_adapter_names_are_rejected(identifier, monkeypatch):
 
 
 def test_registry_builder_rejects_duplicate_canonical_ids_before_dictionary_creation():
-    from daeri import adapters
-    from daeri.adapters.base import ReadAdapter
+    import daeri.infrastructure.adapters as adapters
+    from daeri.infrastructure.adapters.base import ReadAdapter
 
     class DuplicateAdapter(ReadAdapter):
         adapter_id = "gitlab_read"
@@ -211,7 +212,7 @@ def test_registry_builder_rejects_duplicate_canonical_ids_before_dictionary_crea
     "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",
 ])
 def test_control_environment_names_keep_the_existing_case_sensitive_boundary(adapter_id, field):
-    from daeri.adapters import get_adapter
+    from daeri.infrastructure.adapters import get_adapter
 
     resource = resource_config(adapter_id)
     resource["connection"]["env"][field.lower()] = "false"

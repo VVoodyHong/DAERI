@@ -6,10 +6,11 @@ import json
 import httpx
 import pytest
 
-from daeri.credentials import Credentials
-from daeri.embedding import OpenAICompatibleEmbedder
-from daeri.memory import MemoryService
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.credentials import Credentials
+from daeri.infrastructure.embedding import OpenAICompatibleEmbedder
+from daeri.infrastructure.memory import MemoryService
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 from test_embedding_memory import api_config, profile
 from test_memory import candidate, memory_policy, save
 
@@ -38,7 +39,7 @@ def company_api(monkeypatch):
                 hook()
             return OpenAICompatibleEmbedder(config, credentials=Credentials(Vault()), client=client)
 
-        monkeypatch.setattr("daeri.memory.create_api_embedder", create)
+        monkeypatch.setattr("daeri.infrastructure.memory.create_api_embedder", create)
         yield state
 
 
@@ -139,7 +140,7 @@ def test_permission_revoked_during_provider_selection_prevents_http_transmission
 
 
 def test_saved_legacy_config_keeps_profile_revision_files_and_vectors(tmp_path, company_api):
-    from daeri.setup import configure_embedding, export_profile
+    from daeri.config.setup import configure_embedding, export_profile
     with closing(Store(tmp_path)) as store:
         selected = profile(store, embedding=api_config())
         legacy = {**selected, 'embedding': dict(selected['embedding'])}
@@ -169,7 +170,7 @@ def test_saved_legacy_config_keeps_profile_revision_files_and_vectors(tmp_path, 
 
 @pytest.mark.parametrize('revoke', [False, True])
 def test_company_format_uses_registry_and_core_transmission_guard(tmp_path, monkeypatch, revoke):
-    from daeri.embedding import API_ADAPTERS
+    from daeri.infrastructure.embedding import API_ADAPTERS
     requests, state = [], {'hook': None}
 
     def respond(request):

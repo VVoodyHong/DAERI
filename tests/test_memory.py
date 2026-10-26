@@ -8,8 +8,9 @@ import sys
 
 import pytest
 
-from daeri.memory import LocalEmbedder, MemoryService
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.memory import LocalEmbedder, MemoryService
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 TARGET = {"server": "https://git.example.test", "project": "team/service"}

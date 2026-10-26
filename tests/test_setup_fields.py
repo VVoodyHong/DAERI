@@ -3,7 +3,7 @@
 import pytest
 from jsonschema import Draft202012Validator
 
-from daeri.adapters import BUILTIN_ADAPTERS, get_adapter
+from daeri.infrastructure.adapters import BUILTIN_ADAPTERS, get_adapter
 
 
 def field(adapter, name):
@@ -90,8 +90,8 @@ def test_setup_credential_slots_are_declared_by_each_adapter(adapter):
 
 
 def test_setup_credential_fields_follow_active_resource_references(tmp_path):
-    from daeri.setup import profile_template, resource_credential_fields, setup_schema
-    from daeri.storage import Store
+    from daeri.config.setup import profile_template, resource_credential_fields, setup_schema
+    from daeri.infrastructure.storage import Store
     store = Store(tmp_path)
     try:
         resource = profile_template(store, 'db-postgres', 'service-prod', 'db')['resources'][0]
@@ -107,7 +107,7 @@ def test_setup_credential_fields_follow_active_resource_references(tmp_path):
 
 
 def test_embedding_credential_slots_use_selected_api_contract():
-    from daeri.embedding import embedding_credential_fields
+    from daeri.infrastructure.embedding import embedding_credential_fields
     assert embedding_credential_fields({'provider': 'local'}) == {}
     assert embedding_credential_fields({'provider': 'api', 'adapter': None}) == {}
     fields = embedding_credential_fields({'provider': 'api', 'adapter': 'openai_compatible',

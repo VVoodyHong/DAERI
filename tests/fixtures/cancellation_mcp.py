@@ -11,7 +11,7 @@ from mcp.server.stdio import stdio_server
 from daeri.server import create_server
 
 
-class ControlledEngine:
+class ControlledRuntime:
     def __init__(self):
         self.completed = 0
 
@@ -28,12 +28,12 @@ class ControlledEngine:
             recorded.write_text(json.dumps({'count': self.completed, 'outcome': outcome}))
             recorded.replace(control / 'completed')
             if outcome == 'error':
-                raise RuntimeError('Controlled engine failure')
+                raise RuntimeError('Controlled runtime failure')
         return {'status': 'ok', 'data': {'completed': self.completed}, 'error': None}
 
 
 async def main():
-    server = create_server(ControlledEngine())
+    server = create_server(ControlledRuntime())
     async with stdio_server() as (reader, writer):
         await server.run(reader, writer, server.create_initialization_options())
 

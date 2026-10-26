@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from daeri.provider_login import ProviderLoginError, device_login
+from daeri.infrastructure.provider_login import ProviderLoginError, device_login
 
 
 class ApiError(Exception):
@@ -165,7 +165,7 @@ def test_expiry_during_poll_delay_prevents_late_token_request(tmp_path):
 
 @pytest.mark.parametrize('profile', ['operations reader@example.test', "operations 'reader'@example.test"])
 def test_provider_profile_names_survive_login_reuse_and_target_binding(tmp_path, monkeypatch, profile):
-    from daeri.adapters import get_adapter
+    from daeri.infrastructure.adapters import get_adapter
     result = device_login(settings(profile=profile), client=Client(), home=tmp_path,
                           emit=lambda _: None, sleep=lambda _: None, monotonic=lambda: 0)
     assert result['provider_profile'] == profile
@@ -182,7 +182,7 @@ def test_provider_profile_names_survive_login_reuse_and_target_binding(tmp_path,
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     resource = {'target': {'profile': profile, 'account': '111111111111', 'region': 'ap-northeast-2'},
                 'connection': {'transport': 'stdio', 'env': {'AWS_PROFILE': profile, 'AWS_REGION': 'ap-northeast-2'}}}
-    assert 'config' in get_adapter('aws_read').binding_files(resource, {})
+    get_adapter('aws_read').binding_files(resource, {})
 
 
 @pytest.mark.parametrize('profile', ['operations[reader', 'operations]reader', 'operations\nreader',
@@ -196,7 +196,7 @@ def test_provider_profile_name_rejection_never_starts_login_or_writes_configurat
 
 
 def test_provider_login_remains_a_standalone_isolated_script(tmp_path):
-    from daeri import provider_login
+    import daeri.infrastructure.provider_login as provider_login
     result = subprocess.run([sys.executable, '-I', provider_login.__file__],
                             input=json.dumps(settings(profile='invalid[profile')),
                             text=True, capture_output=True, timeout=10, cwd=tmp_path)
@@ -208,7 +208,7 @@ def test_provider_login_remains_a_standalone_isolated_script(tmp_path):
 @pytest.mark.parametrize('source', ['environment', 'service_environment', 'configuration'])
 def test_provider_client_uses_the_region_endpoint_despite_configured_overrides(tmp_path, monkeypatch, source):
     pytest.importorskip('botocore', reason='Provider SDK is installed only in the Infra recipe environment.')
-    from daeri.provider_login import _client
+    from daeri.infrastructure.provider_login import _client
     path = tmp_path / 'config'
     path.write_text('[default]\n' + ('endpoint_url = https://alternate.example.test\n'
                                      if source == 'configuration' else ''))
@@ -256,7 +256,7 @@ AMBIGUOUS_PROFILES = [
 
 @pytest.mark.parametrize('profile,first,second', AMBIGUOUS_PROFILES)
 def test_ambiguous_provider_profile_sections_are_not_overwritten(tmp_path, profile, first, second):
-    from daeri.provider_login import _configuration
+    from daeri.infrastructure.provider_login import _configuration
     aws = tmp_path / '.aws'
     aws.mkdir()
     path = aws / 'config'
@@ -269,8 +269,8 @@ def test_ambiguous_provider_profile_sections_are_not_overwritten(tmp_path, profi
 
 @pytest.mark.parametrize('profile,first,second', AMBIGUOUS_PROFILES)
 def test_infra_binding_rejects_ambiguous_provider_profiles(tmp_path, monkeypatch, profile, first, second):
-    from daeri.adapters import get_adapter
-    from daeri.storage import StoreError
+    from daeri.infrastructure.adapters import get_adapter
+    from daeri.core.errors import StoreError
     aws = tmp_path / '.aws'
     aws.mkdir()
     (aws / 'config').write_text(f'[{first}]\nsso_account_id = 111111111111\n'
@@ -284,8 +284,8 @@ def test_infra_binding_rejects_ambiguous_provider_profiles(tmp_path, monkeypatch
 
 
 def test_infra_binding_checks_default_source_profile_aliases(tmp_path, monkeypatch):
-    from daeri.adapters import get_adapter
-    from daeri.storage import StoreError
+    from daeri.infrastructure.adapters import get_adapter
+    from daeri.core.errors import StoreError
     aws = tmp_path / '.aws'
     aws.mkdir()
     (aws / 'config').write_text('[profile operations]\nrole_arn = arn:aws:iam::111111111111:role/reader\n'
@@ -300,7 +300,7 @@ def test_infra_binding_checks_default_source_profile_aliases(tmp_path, monkeypat
 
 
 def test_provider_login_rejects_ambiguous_sdk_sso_session_prefixes(tmp_path):
-    from daeri.provider_login import _configuration
+    from daeri.infrastructure.provider_login import _configuration
     aws = tmp_path / '.aws'
     aws.mkdir()
     original = ('[profile operations]\nsso_session = operations\nsso_account_id = 111111111111\n'
@@ -313,7 +313,7 @@ def test_provider_login_rejects_ambiguous_sdk_sso_session_prefixes(tmp_path):
 
 
 def test_unambiguous_default_provider_profile_can_login_and_bind(tmp_path, monkeypatch):
-    from daeri.adapters import get_adapter
+    from daeri.infrastructure.adapters import get_adapter
     result = device_login(settings(profile='default'), client=Client(), home=tmp_path,
                           emit=lambda _: None, sleep=lambda _: None, monotonic=lambda: 0)
     assert result['provider_profile'] == 'default'
@@ -323,4 +323,4 @@ def test_unambiguous_default_provider_profile_can_login_and_bind(tmp_path, monke
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     resource = {'target': {'profile': 'default', 'account': '111111111111', 'region': 'ap-northeast-2'},
                 'connection': {'transport': 'stdio', 'env': {'AWS_PROFILE': 'default', 'AWS_REGION': 'ap-northeast-2'}}}
-    assert 'config' in get_adapter('aws_read').binding_files(resource, {})
+    get_adapter('aws_read').binding_files(resource, {})

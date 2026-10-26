@@ -2,11 +2,11 @@ import math
 
 import pytest
 
-from daeri.storage import StoreError
+from daeri.core.errors import StoreError
 
 
 def codec():
-    from daeri import setup_yaml
+    import daeri.config.setup_yaml as setup_yaml
     return setup_yaml
 
 

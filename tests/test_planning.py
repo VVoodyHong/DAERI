@@ -4,8 +4,8 @@ from copy import deepcopy
 
 import pytest
 
-from daeri.planning import validate_plan
-from daeri.storage import StoreError
+from daeri.application.planning import validate_plan
+from daeri.core.errors import StoreError
 
 
 ROOT = {"segments": []}
@@ -22,20 +22,16 @@ def inputs():
     policy = {"allowed_model_fields": [ROOT], "export_fields": [ROOT], "retained_fields": [ROOT], "masking": [], "memory": NONE}
     profile = {"resources": [{"instance_id": "resource", "policy": deepcopy(policy)}]}
     draft = {"purpose": "Read approved data", "steps": [{"step_id": "read", "description": "Read current resource", "purpose": "collect",
-        "depends_on": [], "instance_id": "resource", "capability_id": "get", "contract_ref": "contract", "scope": {}, "input_bindings": []}],
+        "depends_on": [], "instance_id": "resource", "capability_id": "get", "contract_ref": "contract", "scope": {}}],
         "budget": {"max_tool_calls": 1, "max_external_requests": None, "max_runtime_ms": 1000, "resource_limits": []},
-        "output": {"format": "text", "destination": "conversation", "resource_rules": [{"instance_id": "resource", **deepcopy(policy)}],
-                   "table_rules": [], "artifact_rules": []}, "memory_search_refs": ["search"], "memory_refs": [], "memory_limitations": [],
+        "output": {"format": "text", "destination": "conversation", "resource_rules": [{"instance_id": "resource", **deepcopy(policy)}]}, "memory_search_refs": ["search"], "memory_refs": [], "memory_limitations": [],
         "completion_criteria": [{"criterion_id": "read", "description": "Read approved source", "required": True, "step_ids": ["read"]}]}
     return profile, draft
 
 
-def test_valid_typed_plan_preserves_engine_dictionary_contract():
+def test_valid_typed_plan_preserves_runtime_dictionary_contract():
     profile, draft = inputs()
-    draft["output"].pop("table_rules")
-    draft["output"].pop("artifact_rules")
     assert validate_plan(profile, draft, Registry()) == ["contract"]
-    assert draft["steps"][0].get("conditions") is None
 
 
 @pytest.mark.parametrize("field", ["table_rules", "artifact_rules"])

@@ -4,8 +4,8 @@ from copy import deepcopy
 
 import pytest
 
-from daeri import planning
-from daeri.storage import StoreError
+import daeri.application.planning as planning
+from daeri.core.errors import StoreError
 from test_planning import NONE, ROOT, Registry, inputs
 
 
@@ -113,8 +113,8 @@ def test_overlapping_array_selectors_keep_the_actual_common_fields():
 
 def test_memory_candidate_preflight_uses_real_checks_without_persisting_or_indexing(tmp_path):
     from contextlib import closing
-    from daeri.memory import MemoryService
-    from daeri.storage import Store
+    from daeri.infrastructure.memory import MemoryService
+    from daeri.infrastructure.storage import Store
     from test_memory import configured_resource, memory_policy, save, source
 
     with closing(Store(tmp_path)) as store:

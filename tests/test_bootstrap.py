@@ -242,7 +242,7 @@ def test_successful_prepare_registers_the_prepared_runtime(installation):
     result = prepare(installation, '--prepare')
     assert result.returncode == 0, result.stderr
     assert json.loads((root / '.mcp.json').read_text()) == {'mcpServers': {
-        'operations': {
+        'runtime': {
             'command': str(root / '.venv/bin/python.exe'),
             'args': ['-I', '-m', 'daeri.server'],
             'env': {'__PYVENV_LAUNCHER__': ''},
@@ -300,7 +300,7 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
     )
     assert registered.returncode == 0, registered.stderr
     assert registered.stdout == ''
-    config = json.loads((plugin / '.mcp.json').read_text())['mcpServers']['operations']
+    config = json.loads((plugin / '.mcp.json').read_text())['mcpServers']['runtime']
     args = config['args']
     command = config['command']
     env = {'DAERI_DATA_DIR': str(tmp_path / 'data'), 'PYTHONHOME': str(tmp_path / 'foreign-python'),
@@ -311,10 +311,10 @@ def test_packaged_portable_mcp_entrypoint_initializes_from_an_unrelated_director
 
     async def scenario():
         parameters = StdioServerParameters(command=command, args=args, env=env, cwd=tmp_path)
-        async with stdio_client(parameters) as (reader, writer):
+        async with stdio_client(parameters, errlog=sys.stderr) as (reader, writer):
             async with ClientSession(reader, writer, read_timeout_seconds=timedelta(seconds=15)) as session:
                 hello = await session.initialize()
-                assert hello.serverInfo.name == 'operations'
+                assert hello.serverInfo.name == 'runtime'
                 names = {tool.name for tool in (await session.list_tools()).tools}
                 assert {'daeri_task_create', 'daeri_plan_submit', 'daeri_approval_request'} <= names
 
@@ -372,7 +372,7 @@ def test_windows_preparation_registers_mcp_or_restores_environment(plugin_enviro
         assert not marker.exists()
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)['ready'] is True
-        config = json.loads((root / '.mcp.json').read_text())['mcpServers']['operations']
+        config = json.loads((root / '.mcp.json').read_text())['mcpServers']['runtime']
         assert config['command'] == str(root / '.venv/bin/python.exe')
         assert config['args'] == ['-I', '-m', 'daeri.server']
     assert not (root / '.venv.previous').exists()

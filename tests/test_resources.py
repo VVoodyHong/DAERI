@@ -10,9 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from daeri.resources import ResourceRegistry, validate_resource
-from daeri.storage import Store, StoreError
-from daeri.adapters import get_adapter, normalize as interpret
+from daeri.infrastructure.resources import ResourceRegistry, validate_resource
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
+from daeri.infrastructure.adapters import get_adapter, normalize as interpret
 
 
 def config():
@@ -44,35 +45,28 @@ def scope():
 
 
 @pytest.mark.skipif(not hasattr(os, 'mkfifo'), reason='POSIX special files')
-@pytest.mark.parametrize('kind', ['binding-key', 'registration'])
-def test_resource_special_files_fail_without_blocking_engine_or_registry_reads(registry, kind):
+def test_resource_special_files_fail_without_blocking_registry_reads(registry):
     selected = profile()
-    path = (registry.directory / '.binding-key' if kind == 'binding-key'
-            else registry._path(selected, 'source-one'))
+    path = registry._path(selected, 'source-one')
     path.unlink(missing_ok=True)
     os.mkfifo(path)
     script = '''
 import json,sys
 from pathlib import Path
-from daeri.engine import Engine
-from daeri.resources import ResourceRegistry
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.resources import ResourceRegistry
+from daeri.infrastructure.storage import Store, StoreError
 try:
-    if sys.argv[2] == 'binding-key':
-        engine = Engine(Path(sys.argv[1]))
-        engine.close()
-    else:
-        store = Store(Path(sys.argv[1]))
-        try:
-            ResourceRegistry(store).get(json.loads(sys.argv[3]), 'source-one', 'read-file')
-        finally:
-            store.close()
+    store = Store(Path(sys.argv[1]))
+    try:
+        ResourceRegistry(store).get(json.loads(sys.argv[2]), 'source-one', 'read-file')
+    finally:
+        store.close()
 except StoreError as error:
     print(error.code)
 else:
     print('opened')
 '''
-    result = subprocess.run([sys.executable, '-c', script, str(registry.store.data_dir), kind,
+    result = subprocess.run([sys.executable, '-c', script, str(registry.store.data_dir),
                              json.dumps(selected)], capture_output=True, text=True, timeout=3, check=True)
     assert result.stdout.strip() == 'STORE_UNAVAILABLE'
     assert path.exists() and not path.is_file()
@@ -179,7 +173,7 @@ def test_normalized_argument_limit_covers_fixed_and_default_values(registry, tmp
 
 
 def test_connection_only_source_recipe_requires_approved_project_revision_and_path(registry):
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     resource = build_setup_resource(registry.store, 'source-gitlab', 'service', 'source-one',
                                     {'server': 'https://git.example.test'})
     assert resource['capabilities'][0]['constraints'] == {}
@@ -212,7 +206,7 @@ def test_connection_only_source_recipe_requires_approved_project_revision_and_pa
      {'page_id': '123'}, {'page_id': '456'}, {'equals': {'page_id': '123'}}),
 ])
 def test_connection_only_db_and_document_recipes_keep_task_read_scope(registry, recipe, inputs, allowed, denied, approved):
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     resource = build_setup_resource(registry.store, recipe, 'service', 'resource-one', inputs)
     constraints = resource['capabilities'][0]['constraints']
     actual = copy.deepcopy(allowed)
@@ -223,7 +217,7 @@ def test_connection_only_db_and_document_recipes_keep_task_read_scope(registry, 
     assert interpret(resource['adapter'], copy.deepcopy(allowed), constraints, {})['fields'] == sorted(allowed)
 
 
-def test_profile_revision_or_schema_change_requires_new_diagnosis(registry):
+def test_connection_change_requires_new_diagnosis(registry):
     p = profile()
     registry.diagnose(p, "source-one")
     invocation = registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, scope())
@@ -232,6 +226,59 @@ def test_profile_revision_or_schema_change_requires_new_diagnosis(registry):
         registry.get(p, "source-one", "read-file")
     invocation.connection["env"]["FIXTURE_MODE"] = "changed"
     with pytest.raises(StoreError, match="CONTEXT_CHANGED"):
+        registry.execute(invocation)
+
+
+def test_unrelated_profile_and_presentation_changes_keep_diagnosed_connection(registry):
+    p = profile()
+    registry.diagnose(p, 'source-one')
+    before = registry.get(p, 'source-one', 'read-file')['contract_ref']
+    p.update(revision=2, core_context='Updated context', memory_policy={})
+    p['resources'][0]['policy'] = {'model_fields': ['body']}
+    p['resources'][0]['capabilities'][0]['description'] = 'Updated label'
+    invocation = registry.normalize(p, 'source-one', 'read-file',
+                                    {'ref': 'main', 'file_path': 'src/main.py'}, scope())
+    assert 'team/service' in registry.execute(invocation)['result']['body']
+    registry.diagnose(p, 'source-one')
+    assert registry.get(p, 'source-one', 'read-file')['contract_ref'] == before
+
+
+@pytest.mark.parametrize('metadata', [
+    {'description': 'Updated provider explanation'},
+    {'annotations': {'title': 'New title', 'readOnlyHint': True, 'idempotentHint': True}},
+])
+def test_tool_presentation_changes_keep_registered_read_contract(registry, tmp_path, metadata):
+    path = tmp_path / 'tool-metadata.json'
+    path.write_text('{}')
+    resource = config()
+    resource['connection']['env']['FIXTURE_TOOL_METADATA'] = str(path)
+    p = profile(resource)
+    registry.diagnose(p, 'source-one')
+    before = registry.get(p, 'source-one', 'read-file')['contract_ref']
+    invocation = registry.normalize(p, 'source-one', 'read-file',
+                                    {'ref': 'main', 'file_path': 'src/main.py'}, scope())
+    path.write_text(json.dumps(metadata))
+    assert 'team/service' in registry.execute(invocation)['result']['body']
+    registry.diagnose(p, 'source-one')
+    assert registry.get(p, 'source-one', 'read-file')['contract_ref'] == before
+
+
+@pytest.mark.parametrize('metadata', [
+    {'annotations': {'readOnlyHint': False}},
+    {'inputSchema': {'type': 'object', 'properties': {'query': {'type': 'string'}}}},
+    {'outputSchema': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+])
+def test_actual_tool_read_status_and_schema_changes_require_new_diagnosis(registry, tmp_path, metadata):
+    path = tmp_path / 'tool-metadata.json'
+    path.write_text('{}')
+    resource = config()
+    resource['connection']['env']['FIXTURE_TOOL_METADATA'] = str(path)
+    p = profile(resource)
+    registry.diagnose(p, 'source-one')
+    invocation = registry.normalize(p, 'source-one', 'read-file',
+                                    {'ref': 'main', 'file_path': 'src/main.py'}, scope())
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(StoreError, match='CONTEXT_CHANGED'):
         registry.execute(invocation)
 
 
@@ -341,13 +388,13 @@ def test_cache_patterns_and_document_queries_are_lower_mcp_inputs():
 
 
 def test_schema_external_reference_is_rejected_before_any_call():
-    from daeri.resources import _schema
+    from daeri.infrastructure.resources import _schema
     with pytest.raises(StoreError):
         _schema({"type": "object", "properties": {"value": {"$ref": "https://other.test/schema"}}})
     _schema({"type": "object", "$defs": {"safe": {"type": "string"}}, "properties": {"value": {"$ref": "#/$defs/safe"}}})
 
 
-def test_credential_rotation_invalidates_old_contract_and_inflight_request(registry):
+def test_credential_rotation_keeps_diagnosed_connection_and_inflight_read(registry):
     secrets = {"auth_one": "credential-first"}
     registry.resolve = secrets.__getitem__
     resource = config()
@@ -355,14 +402,14 @@ def test_credential_rotation_invalidates_old_contract_and_inflight_request(regis
     p = profile(resource)
     registry.diagnose(p, "source-one")
     before = registry.get(p, "source-one", "read-file")["contract_ref"]
-    invocation = registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, scope())
+    invocation = registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/auth.py"}, scope())
+    assert registry.execute(invocation)['result']['body'] == 'initial'
     secrets["auth_one"] = "credential-second"
-    with pytest.raises(StoreError, match="CONTEXT_CHANGED"):
-        registry.execute(invocation)
-    with pytest.raises(StoreError, match="CONTEXT_CHANGED"):
-        registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/main.py"}, scope())
+    assert registry.execute(invocation)['result']['body'] == 'rotated'
+    invocation = registry.normalize(p, "source-one", "read-file", {"ref": "main", "file_path": "src/auth.py"}, scope())
+    assert registry.execute(invocation)['result']['body'] == 'rotated'
     registry.diagnose(p, "source-one")
-    assert registry.get(p, "source-one", "read-file")["contract_ref"] != before
+    assert registry.get(p, "source-one", "read-file")["contract_ref"] == before
     assert "credential-first" not in "".join(path.read_text() for path in registry.directory.glob("*.json"))
 
 
@@ -380,15 +427,14 @@ def test_db_uri_cannot_select_another_database(registry):
     resource["connection"]["auth_env"] = {"DATABASE_URI": "database-auth"}
     registry.resolve = lambda ref: "postgresql://reader:private@db.example.test:5432/other?sslmode=require"
     with pytest.raises(StoreError, match="CONTEXT_CHANGED"):
-        registry._binding(resource)
+        registry._credentials(resource)
     registry.resolve = lambda ref: "postgresql://reader:private@db.example.test:5432/service?sslmode=require"
-    fingerprint, values = registry._binding(resource)
-    assert len(fingerprint) == 64
-    assert "private" not in fingerprint
+    assert registry._credentials(resource) == {
+        'database-auth': 'postgresql://reader:private@db.example.test:5432/service?sslmode=require'}
 
 
 def db_password_config(registry):
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     return build_setup_resource(registry.store, 'db-postgres', 'service', 'primary-db', {
         'host': 'db.example.test', 'port': 5432, 'database': 'service/db', 'username': 'reader@example'})
 
@@ -412,7 +458,7 @@ def test_db_password_builds_only_selected_endpoint_in_private_environment(regist
     password = 'private:/@?#%+ value'
     ref = next(iter(resource['connection']['auth_env'].values()))
     registry.resolve = lambda selected: password
-    fingerprint, credentials = registry._binding(resource)
+    credentials = registry._credentials(resource)
     environment = get_adapter('postgres_read').session_environment(resource, {'DATABASE_PASSWORD': credentials[ref]})
     assert environment == {
         'DATABASE_URI': f'postgresql://reader%40example:{quote(password, safe="")}@{authority}:5432/service%2Fdb?sslmode=require'}
@@ -425,8 +471,6 @@ def test_db_password_builds_only_selected_endpoint_in_private_environment(regist
     assert resource == original
     assert password not in json.dumps(registry._launch_connection(resource))
     assert environment['DATABASE_URI'] not in json.dumps(registry._launch_connection(resource))
-    registry.resolve = lambda selected: password + 'rotated'
-    assert registry._binding(resource)[0] != fingerprint
 
 
 @pytest.mark.parametrize('target', [
@@ -440,7 +484,7 @@ def test_db_password_rejects_ambiguous_targets_before_launch(registry, target):
     resource['target'].update(target)
     registry.resolve = lambda ref: 'private'
     with pytest.raises(StoreError):
-        registry._binding(resource)
+        registry._credentials(resource)
 
 
 def test_db_password_and_legacy_uri_require_one_explicit_authentication_mode(registry):
@@ -458,7 +502,7 @@ def test_db_runtime_secret_environment_masks_password_and_derived_uri(registry, 
     resource = db_password_config(registry)
     ref = next(iter(resource['connection']['auth_env'].values()))
     registry.resolve = lambda selected: password
-    _, credentials = registry._binding(resource)
+    credentials = registry._credentials(resource)
     captured = {}
 
     @asynccontextmanager
@@ -476,8 +520,8 @@ def test_db_runtime_secret_environment_masks_password_and_derived_uri(registry, 
             body = '|'.join([password, quote(password, safe=''), captured['environment']['DATABASE_URI']])
             return CallToolResult(content=[], structuredContent={'body': body, 'count': 1})
 
-    monkeypatch.setattr('daeri.resources.stdio_client', transport)
-    monkeypatch.setattr('daeri.resources.ClientSession', Session)
+    monkeypatch.setattr('daeri.infrastructure.resources.stdio_client', transport)
+    monkeypatch.setattr('daeri.infrastructure.resources.ClientSession', Session)
     async def run():
         async with AsyncExitStack() as stack:
             _, secrets = await registry._session(stack, resource, 30, credentials)
@@ -515,18 +559,18 @@ def test_db_password_uses_explicit_allowed_tls_mode(registry, mode):
     resource = db_password_config(registry)
     resource['connection']['env']['PGSSLMODE'] = mode
     registry.resolve = lambda ref: 'private'
-    registry._binding(resource)
+    registry._credentials(resource)
     environment = get_adapter('postgres_read').session_environment(resource, {'DATABASE_PASSWORD': 'private', 'PGSSLMODE': mode})
     assert environment['DATABASE_URI'].endswith('?sslmode=' + mode)
 
 
 def test_db_password_rejects_disabled_tls_and_legacy_uri_settings_remain_explicit(registry):
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     resource = db_password_config(registry)
     resource['connection']['env']['PGSSLMODE'] = 'disable'
     registry.resolve = lambda ref: 'private'
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
-        registry._binding(resource)
+        registry._credentials(resource)
     resource['connection']['env'] = {}
     resource['connection']['auth_env'] = {'DATABASE_URI': 'credential:service.primary-db.database_uri'}
     updated = build_setup_resource(registry.store, 'db-postgres', 'service', 'primary-db', {'port': 6432}, existing=resource)
@@ -544,13 +588,12 @@ def test_infra_sso_binding_checks_account_and_provider_changes(registry, tmp_pat
     resource = config()
     resource.update(type="Infra", adapter="aws_read", target={"account": "111122223333", "profile": "service", "region": "ap-northeast-2"})
     resource["connection"]["env"] = {"AWS_PROFILE": "service", "AWS_REGION": "ap-northeast-2"}
-    before, _ = registry._binding(resource)
+    assert registry._credentials(resource) == {}
     (aws / "credentials").write_text("[service]\naws_access_key_id=example\n")
-    after, _ = registry._binding(resource)
-    assert before != after
+    assert registry._credentials(resource) == {}
     settings.write_text("[profile service]\nsso_account_id=999900001111\n")
     with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        registry._binding(resource)
+        registry._credentials(resource)
 
 
 def test_legacy_json_and_sql_literals_preserve_actual_types():
@@ -623,7 +666,7 @@ def aws_config(tmp_path, monkeypatch, extra=""):
 def test_aws_provider_overrides_cannot_bypass_target_or_execute_programs(registry, tmp_path, monkeypatch, setting):
     resource, _ = aws_config(tmp_path, monkeypatch, setting)
     with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        registry._binding(resource)
+        registry._credentials(resource)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -636,17 +679,17 @@ def test_aws_environment_overrides_are_rejected_before_launch(registry, tmp_path
     resource, _ = aws_config(tmp_path, monkeypatch)
     resource["connection"]["env"][field] = value
     with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        registry._binding(resource)
+        registry._credentials(resource)
 
 
 def test_aws_source_profile_process_and_global_plugins_are_blocked(registry, tmp_path, monkeypatch):
     resource, aws = aws_config(tmp_path, monkeypatch)
     (aws / "config").write_text("[profile service]\nrole_arn=arn:aws:iam::111122223333:role/reader\nsource_profile=base\nregion=ap-northeast-2\n[profile base]\ncredential_process=/unapproved/helper\n")
     with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        registry._binding(resource)
+        registry._credentials(resource)
     (aws / "config").write_text("[profile service]\nsso_account_id=111122223333\nregion=ap-northeast-2\n[plugins]\ncustom=/unapproved/plugin\n")
     with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
-        registry._binding(resource)
+        registry._credentials(resource)
 
 
 def test_aws_launch_pins_provider_profile_and_defense_in_depth(registry):
@@ -662,8 +705,8 @@ def test_aws_launch_pins_provider_profile_and_defense_in_depth(registry):
     assert env["AWS_API_MCP_ALLOW_UNRESTRICTED_LOCAL_FILE_ACCESS"] == "no-access"
 
 
-def test_standard_provider_login_configuration_remains_usable_and_cache_bound(registry, tmp_path, monkeypatch):
-    from daeri.provider_login import _configuration
+def test_provider_login_configuration_survives_sso_cache_refresh(registry, tmp_path, monkeypatch):
+    from daeri.infrastructure.provider_login import _configuration
     import io
 
     resource, aws = aws_config(tmp_path, monkeypatch)
@@ -679,11 +722,23 @@ def test_standard_provider_login_configuration_remains_usable_and_cache_bound(re
     cache.mkdir(parents=True)
     token = cache / "local-session.json"
     token.write_text('{"accessToken":"PRIVATE_FIRST_SENTINEL"}')
-    first, credentials = registry._binding(resource)
-    assert credentials == {}
-    assert "PRIVATE_FIRST_SENTINEL" not in first
+    metadata = tmp_path / 'aws-tool.json'
+    metadata.write_text(json.dumps({'name': 'call_aws', 'inputSchema': {
+        'type': 'object', 'properties': {'cli_command': {'type': 'string'}},
+        'required': ['cli_command'], 'additionalProperties': False}}))
+    resource['connection']['env']['FIXTURE_TOOL_METADATA'] = str(metadata)
+    resource['capabilities'] = [{'capability_id': 'read', 'tool_name': 'call_aws',
+                                 'constraints': {'region': 'ap-northeast-2'}}]
+    p = profile(resource)
+    registry.diagnose(p, 'source-one')
+    before = registry.get(p, 'source-one', 'read')['contract_ref']
+    invocation = registry.normalize(p, 'source-one', 'read',
+                                    {'cli_command': 'aws ec2 describe-instances'}, {})
     token.write_text('{"accessToken":"PRIVATE_SECOND_SENTINEL"}')
-    assert registry._binding(resource)[0] != first
+    result = registry.execute(invocation)
+    assert 'aws ec2 describe-instances' in result['result']['data']['body']
+    registry.diagnose(p, 'source-one')
+    assert registry.get(p, 'source-one', 'read')['contract_ref'] == before
 
 
 @pytest.mark.parametrize("variable", ["PYTHONPATH", "DYLD_INSERT_LIBRARIES", "HTTPS_PROXY"])

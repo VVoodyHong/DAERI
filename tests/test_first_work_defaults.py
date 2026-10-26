@@ -6,13 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from daeri.engine import Engine
-from daeri.onboarding import create_draft, validate_draft, apply_draft
-from daeri.resources import ResourceRegistry
-from daeri.setup_yaml import read_yaml, write_yaml
-from daeri.storage import Store
+from daeri.application.runtime import Runtime
+from daeri.config.onboarding import create_draft, validate_draft, apply_draft
+from daeri.infrastructure.resources import ResourceRegistry
+from daeri.config.setup_yaml import read_yaml, write_yaml
+from daeri.infrastructure.storage import Store
 from test_embedding_memory import api, api_config
-from test_execution_flow import ROOT, approve, begin, comparison_report, execution, resource, table_plan
+from test_execution_flow import comparison_report, resource
+from test_simple_workflow import simple_plan
 from test_memory import NumericalFixtureEmbedder
 
 
@@ -67,38 +68,36 @@ def test_setup_to_approved_report_file_memory_and_next_task_without_policy_edits
             for item in previous['resources']:
                 ResourceRegistry(store).diagnose(previous, item['instance_id'])
             profile = store.get_profile(previous['profile_id'])
-    with closing(Engine(tmp_path)) as engine:
+    with closing(Runtime(tmp_path)) as runtime:
         if provider == 'local':
-            engine.memory.embedder = NumericalFixtureEmbedder()
-        # This copy describes the requested plan; it never updates the profile limits.
-        proposed = copy.deepcopy(profile)
-        for item in proposed['resources']:
-            item['policy'] = {'allowed_model_fields': [ROOT], 'export_fields': [ROOT],
-                'retained_fields': [ROOT], 'masking': []}
-        def automatic_plan(draft):
-            table_plan(draft)
-            for rule in draft['output']['resource_rules']:
-                rule.pop('retained_fields')
-        saved, plan = begin(engine, proposed, configure=automatic_plan)
-        blocked = engine.call('daeri_capability_execute', execution(saved,
-            {'task_revision': saved['task_revision'], 'approval_id': 'invented'}, plan['steps'][0]))
+            runtime.memory.embedder = NumericalFixtureEmbedder()
+        task = runtime.call('daeri_task_create', {'request_text': 'Cache 비교',
+            'context': {'profile_id': profile['profile_id']}})['data']
+        recalled = runtime.call('daeri_memory_search', {'task_id': task['task_id'], 'query': 'Cache 비교'})
+        assert recalled['status'] == 'ok', recalled
+        draft = simple_plan(profile)
+        draft['memory_search_refs'] = [recalled['data']['memory_search_ref']]
+        saved = runtime.call('daeri_plan_submit', {'task_id': task['task_id'], 'draft': draft})['data']
+        blocked = runtime.call('daeri_capability_execute', {'task_id': task['task_id'],
+            'step_id': 'read-0', 'parameters': {'key': 'orders'}})
         assert blocked['status'] == 'error'
-        assert engine.store.get_task(saved['task_id'])['calls'] == []
-        approved = approve(engine, saved)
-        first = engine.call('daeri_capability_execute', execution(saved, approved, plan['steps'][0]))
+        assert runtime.store.get_task(saved['task_id'])['calls'] == []
+        approved = runtime.call('daeri_approval_request', {'task_id': task['task_id'],
+            'plan_id': saved['plan_id'], 'decision': 'approve', 'user_response': '진행해'})
+        assert approved['status'] == 'ok', approved
+        first = runtime.call('daeri_capability_execute', {'task_id': task['task_id'],
+            'step_id': 'read-0', 'parameters': {'key': 'orders'}})
         assert first['status'] == 'ok', first
-        second = engine.call('daeri_capability_execute', execution(saved,
-            {**approved, 'task_revision': first['data']['task_revision']}, plan['steps'][1], call_id='call-2'))
+        second = runtime.call('daeri_capability_execute', {'task_id': task['task_id'],
+            'step_id': 'read-1', 'parameters': {'key': 'orders'}})
         assert second['status'] == 'ok', second
         body = comparison_report(first['data'], second['data'])
         sources = [first['data']['result_ref'], second['data']['result_ref']]
-        output = Path(engine.store.artifact_workspace(saved['task_id'])) / 'comparison.csv'
+        output = Path(runtime.store.artifact_workspace(saved['task_id'])) / 'comparison.csv'
         output.write_text('ID,A,B,Difference\none,10,7,3\n', encoding='utf-8')
         body['artifacts'] = [{'artifact_id': 'comparison-csv', 'label': '캐시 비교',
             'local_path': str(output), 'media_type': 'text/csv', 'source_refs': sources}]
-        report = engine.call('daeri_result_submit', {'request_id': 'report', 'task_id': saved['task_id'],
-            'expected_task_revision': second['data']['task_revision'], 'plan_id': saved['plan_id'],
-            'plan_version': saved['plan_version'], 'report': body,
+        report = runtime.call('daeri_result_submit', {'task_id': saved['task_id'], 'report': body,
             'memory_candidates': [{'draft': {'category': 'procedure',
                 'statement': 'Cache 비교는 같은 식별자의 조회를 같은 기준으로 대조하고 차이를 검산한다.',
                 'applicability': '현재 profile의 캐시 비교', 'instance_ids': ['cache-a', 'cache-b'],
@@ -109,24 +108,24 @@ def test_setup_to_approved_report_file_memory_and_next_task_without_policy_edits
         memories = [item['memory_ref'] for item in report['data']['memory']['items']
                     if item['state'] == 'ready']
         assert memories
-        artifact = engine.call('daeri_result_get', {'task_id': saved['task_id'],
+        artifact = runtime.call('daeri_result_get', {'task_id': saved['task_id'],
             'record_ref': report['data']['artifact_refs'][0]})
         assert artifact['status'] == 'ok', artifact
         assert Path(artifact['data']['managed_file']['local_path']).read_text() == 'ID,A,B,Difference\none,10,7,3\n'
         for reference in memories:
-            statement = engine.memory.get(profile['profile_id'], reference)['statement']
+            statement = runtime.memory.get(profile['profile_id'], reference)['statement']
             assert '10.00' not in statement and '7.00' not in statement and 'orders' not in statement
-        next_task = engine.call('daeri_task_create', {'request_id': 'next', 'request_text': 'Cache 비교',
+        next_task = runtime.call('daeri_task_create', {'request_text': 'Cache 비교',
             'context': {'profile_id': profile['profile_id']}})['data']
-        recalled = engine.call('daeri_memory_search', {'task_id': next_task['task_id'], 'query': 'Cache 비교'})
+        recalled = runtime.call('daeri_memory_search', {'task_id': next_task['task_id'], 'query': 'Cache 비교'})
         assert recalled['status'] == 'ok', recalled
         assert set(memories) <= {item['memory_ref'] for item in recalled['data']['items']}
         assert recalled['data']['retrieval_state'] == ('keyword_only' if provider == 'keyword_only' else 'hybrid')
-        assert engine.store.get_task(next_task['task_id'])['calls'] == []
-        assert engine.store.get_profile('service')['memory_policy'] is None
+        assert runtime.store.get_task(next_task['task_id'])['calls'] == []
+        assert runtime.store.get_profile('service')['memory_policy'] is None
         if provider == 'api':
             assert {call[0] for call in api.calls} == {'document', 'query'}
         else:
             assert api.calls == []
-        vectors = engine.store._db.execute('SELECT count(*) FROM memory_vectors').fetchone()[0]
+        vectors = runtime.store._db.execute('SELECT count(*) FROM memory_vectors').fetchone()[0]
         assert vectors == (0 if provider == 'keyword_only' else len(memories))

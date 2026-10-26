@@ -7,8 +7,9 @@ import sys
 
 import pytest
 
-from daeri import cli, profile_portability
-from daeri.storage import StoreError
+import daeri.config.profile_portability as profile_portability
+from daeri import cli
+from daeri.core.errors import StoreError
 
 
 PASSWORD = 'PRIVATE_ARCHIVE_PASSPHRASE'
@@ -90,8 +91,8 @@ def test_archive_password_file_rejects_unsafe_input_before_opening_store(tmp_pat
     assert not (tmp_path / 'data').exists() and stderr == ''
 
 
-def test_backup_owns_one_engine_and_closes_it_after_failure(tmp_path, monkeypatch, invoke):
-    import daeri.engine
+def test_backup_owns_one_runtime_and_closes_it_after_failure(tmp_path, monkeypatch, invoke):
+    import daeri.application.runtime
 
     path = password_file(tmp_path)
     events = []
@@ -100,7 +101,7 @@ def test_backup_owns_one_engine_and_closes_it_after_failure(tmp_path, monkeypatc
         def close(self):
             events.append('closed')
 
-    class Engine:
+    class Runtime:
         def __init__(self, data_dir):
             assert data_dir == tmp_path / 'data'
             self.store = Connection()
@@ -109,8 +110,8 @@ def test_backup_owns_one_engine_and_closes_it_after_failure(tmp_path, monkeypatc
         def close(self):
             self.store.close()
 
-    def backup(engine, name, archive, passphrase):
-        assert isinstance(engine, Engine) and name == 'alpha'
+    def backup(runtime, name, archive, passphrase):
+        assert isinstance(runtime, Runtime) and name == 'alpha'
         assert archive == tmp_path / 'archive' and passphrase == PASSWORD
         events.append('backup')
         raise StoreError('PROFILE_BUSY', PASSWORD)
@@ -118,7 +119,7 @@ def test_backup_owns_one_engine_and_closes_it_after_failure(tmp_path, monkeypatc
     def forbidden(args):
         pytest.fail('Archive backup must not also open the generic Store connection.')
 
-    monkeypatch.setattr(daeri.engine, 'Engine', Engine)
+    monkeypatch.setattr(daeri.application.runtime, 'Runtime', Runtime)
     monkeypatch.setattr(profile_portability, 'backup_profile', backup)
     monkeypatch.setattr(cli, '_with_store', forbidden)
     code, result, stderr = invoke('backup', 'alpha', str(tmp_path / 'archive'), '--password-file', str(path))
@@ -127,7 +128,7 @@ def test_backup_owns_one_engine_and_closes_it_after_failure(tmp_path, monkeypatc
 
 
 def test_restore_confirmation_uses_only_one_store_and_closes_it(tmp_path, monkeypatch, invoke):
-    import daeri.storage
+    import daeri.infrastructure.storage
 
     path = password_file(tmp_path)
     events = []
@@ -146,7 +147,7 @@ def test_restore_confirmation_uses_only_one_store_and_closes_it(tmp_path, monkey
         events.append('restored')
         return {'profile_id': 'profile_restored', 'restored': True}
 
-    monkeypatch.setattr(daeri.storage, 'Store', Store)
+    monkeypatch.setattr(daeri.infrastructure.storage, 'Store', Store)
     monkeypatch.setattr(profile_portability, 'restore_profile', restore)
     code, result, stderr = invoke('restore', str(tmp_path / 'archive'), '--confirm', 'confirmed-token',
                                   '--password-file', str(path))
@@ -184,7 +185,7 @@ def test_archive_commands_reject_password_values_in_arguments(tmp_path, monkeypa
 
 
 def test_cli_backup_preview_and_confirmed_restore_preserve_profile_identity(tmp_path, invoke):
-    from daeri.storage import Store
+    from daeri.infrastructure.storage import Store
 
     source = Store(tmp_path / 'source')
     try:

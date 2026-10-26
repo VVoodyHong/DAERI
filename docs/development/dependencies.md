@@ -9,11 +9,11 @@
 
 | 정본 | 관리하는 내용 |
 |---|---|
-| [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | 실행기 Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
+| [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | runtime Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
-| [연결 카탈로그](../../src/daeri/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
-| `adapters/`의 setup 계약 | 어댑터별 공개·인증 입력 스키마, 저장 표현·목적지와 선택한 인증 방식의 최종 구성 |
-| `embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
+| [연결 카탈로그](../../src/daeri/config/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
+| `infrastructure/adapters/`의 setup 계약 | 어댑터별 공개·인증 입력 스키마, 저장 표현·목적지와 선택한 인증 방식의 최종 구성 |
+| `infrastructure/embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
 
@@ -60,7 +60,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 `check`는 설치된 실행 패키지의 `version`과 Python 지원 범위·MCP·SQLite·실제 FTS5 검색 결과를 반환한다.
 `ready`는 기본 실행 환경의 검사 결과다.
 리소스 인증·진단·기억 모델은 해당 관리 경로의 결과로 확인한다.
-저장소 개설 전의 실행기 검사와 저장된 profile의 연결 진단은 별도 결과로 제공한다.
+저장소 개설 전의 runtime 검사와 저장된 profile의 연결 진단은 별도 결과로 제공한다.
 
 ### 공통 자동 검사
 
@@ -78,7 +78,7 @@ uv run --no-sync python -m scripts.check
 | 문서 | 루트 안내·`docs`·`skills`·`agents`의 내부 파일·이미지·Markdown 제목 앵커 연결이 유효 |
 | 회귀·공개 계약 | 전체 pytest 통과; 조건부 생략·실패 근거는 JUnit XML에 기록 |
 | 회상 평가 | 고정 합성 자료의 키워드 평가 완료·접근 불가 결과 0건; 회수율·순위는 평가 보고서로 보존 |
-| 배포물 | 빈 임시 디렉터리에서 sdist·wheel 생성, 필수 파일·원본 바이트 일치와 설치별 구성·런타임·캐시의 혼입 검사 통과 |
+| 배포물 | 빈 임시 디렉터리에서 sdist·wheel 생성, 필수 파일·원본 바이트 일치와 설치별 구성·runtime·캐시의 혼입 검사 통과 |
 
 결과는 기본 `build/checks/`에 검사별 로그·`summary.json`·`summary.md`·`pytest.xml`·`memory-recall.json`·검증한 `dist/`로 기록한다.
 `--output-dir PATH`로 결과 디렉터리를 지정할 수 있다.
@@ -102,13 +102,13 @@ uv 버전은 [준비 도구 정책](../../scripts/dependencies.env)을 읽고 �
 |---|---|
 | `native` | macOS의 공통 검사와 Windows의 native bootstrap 회귀 12개 |
 | `local_model` | 공개 로컬 모델 다운로드·준비 → DNS 차단 실제 추론 회귀 → 같은 합성 자료의 의미 회상 평가 |
-| `clean_bootstrap` | macOS·Windows의 빈 플러그인 실행 환경·별도 사용자 경로에서 실제 준비 → MCP 구성 발행·실행기 검사 |
+| `clean_bootstrap` | macOS·Windows의 빈 플러그인 실행 환경·별도 사용자 경로에서 실제 준비 → MCP 구성 발행·runtime 검사 |
 
 GitHub runner에 기본 설치된 OS 도구와 캐시 없는 회사 PC의 전체 설치 경험은 각각의 근거로 확인한다.
 회사 API·운영 리소스·SSO·호스트 UI·재연결의 검증은 해당 환경에서 진행한다.
 이 workflow는 읽기 권한·고정 액션 참조를 사용하고 외부 배포·병합은 별도 Git 작업의 범위다.
 실행 설정은 [uv의 공식 CI 안내](https://docs.astral.sh/uv/guides/integration/github/)와 [GitHub workflow 규격](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)을 기준으로 구성했다.
-현재 확인한 로컬·호스팅 실행 경계는 [구현 계획](../plans/initial-implementation.md#4-자동-ci-검사)을 따른다.
+현재 확인한 로컬·호스팅 실행 경계는 [구현 계획](../plans/initial-implementation.md#확보한-검증-근거)을 따른다.
 
 ### 기억 회상 평가
 
@@ -155,7 +155,7 @@ sh "$DAERI_MANAGE" resource prepare PROFILE INSTANCE --recipe RECIPE
 
 정상 미준비는 `setup_required`·종료 코드 0, 손상·중단 상태는 `RUNTIME_UNAVAILABLE`·종료 코드 1로 구분한다.
 판정 대상·환경 검사·설치·복구는 [최초 진입 계약](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)을 따른다.
-준비된 실행기의 CLI 결과·오류·종료 코드는 그대로 전달한다.
+준비된 runtime의 CLI 결과·오류·종료 코드는 그대로 전달한다.
 
 Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안내하고 해당 요청을 종료한다.
 실제 실패는 사용자에게 필요한 영향·다음 조치로 요약하고 기술 정보는 [상세 진단 조건](../spec/hosts/plugins.md#사용자-안내)에 따라 제공한다.
@@ -194,38 +194,46 @@ CLI 예외는 `status: error`·`data: null`·오류 코드·고정된 안전 메
 명시적 준비가 전용 환경을 활성화한 뒤 `scripts/register_mcp.py`로 설치 사본의 루트 `.mcp.json`을 발행한다.
 두 호스트는 해당 파일을 기본 탐색해 전용 `.venv/bin/python.exe`의 절대 경로와 `-I -m daeri.server`를 사용한다.
 준비·발행·실패 복구는 [환경 준비](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계), 새 구성 읽기·실제 연결은 [호스트 계약](../spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)을 따른다.
-실행기 선택은 설치한 플러그인의 전용 Python 절대 경로로 고정한다.
-일반 MCP는 준비된 실행기를 시작하고 표준 출력은 MCP 전달에 사용한다.
+runtime 선택은 설치한 플러그인의 전용 Python 절대 경로로 고정한다.
+일반 MCP는 준비된 runtime을 시작하고 표준 출력은 MCP 전달에 사용한다.
 준비·로그인 요청은 관리 진입으로 연결한다.
 
-호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 실행기가 저장 상태·정책과 대조한다.
+호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 runtime이 저장 상태·정책과 대조한다.
 실제 리소스 요청은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
-총괄·작업자의 판단·조정과 실행 검사의 경계는 [멀티 에이전트 아키텍처](../architecture/overview.md#오케스트레이션과-자율-수행)가 설명한다.
-다음 모듈은 같은 로컬 배포 안에서 이 흐름의 책임을 나눈다.
+총괄 에이전트·하위 에이전트의 판단·조정과 실행 검사의 경계는 [멀티 오케스트레이션 에이전트 아키텍처](../architecture/overview.md#오케스트레이션과-자율-수행)가 설명한다.
+구현은 같은 로컬 배포 안에서 역할별 패키지로 나눈다.
+공개 실행 모듈은 `daeri.cli`와 `daeri.server`다.
 
-| 모듈·파일 | 책임과 자료 흐름 |
-|---|---|
-| `server.py`·`contracts.py` | [공개 MCP 도구](../spec/mcp/common.md#초기-도구-목록)의 입력·응답과 worker 게이트웨이를 검사하고 공통 실행기에 전달 |
-| `engine.py`·`planning.py` | 업무 상태·소유권·멱등 처리, 계획·승인·실행·예산과 근거 연결 |
-| `workers.py` | root 계획·승인에 연결한 위임 발급·토큰·기한·철회, worker의 배정·검색·근거 읽기·실행·완료와 공유 실행기 연결 |
-| `resources.py` | 공통 기능 등록·계약 지문·인증 참조 해소·하위 MCP 세션·스키마 및 전송 검사 |
-| `adapters/__init__.py`·`adapters/base.py` | 신뢰하는 어댑터 등록·식별자 조회와 공통 읽기 검사·결과 처리 계약 |
-| `adapters/`의 제품별 모듈 | 제품별 설정 입력 스키마·대상 설정안·실행 시 인증 변환·로그인·요청 의미·접속 대상·범위·결과 검사 |
-| `policy.py`·`security.py` | 필드 제공·마스킹·출처 경로와 알려진 인증 문자열 보조 검사 |
-| `results.py` | 호스트 보고의 실제 근거·완료 판단 연결, 생성 파일의 등록·출처·내보내기·기한 검사 |
-| `memory.py`·`knowledge.py` | profile별 지식의 출처·정책·기한·개정·검색·갱신 검사 |
-| `automatic_memory.py` | 호스트가 선별한 후보의 검증·자동 기억 처리·색인·대기 재시도 |
-| `embedding.py` | 임베딩 제공자·API 어댑터 등록·설정 및 호환 입력 검증·선택 구현 생성·현재 선택과 어댑터별 요청·인증·응답 검사 |
-| `storage.py` | SQLite 제어 기록과 불변 파일 발행·무결성·만료·정리, 프로세스 소유자의 신호 없는 생존 확인 |
-| `profile_deletion.py` | profile 소유 참조·삭제 미리보기·사용 차단·연관 자료 정리·실패 재시도 |
-| `profile_portability.py`·`profile_bundle_validation.py`·`portable_archive.py` | 단일 profile의 공개 가능 스냅샷·논리 참조 검사·인증 암호화·확인 후 원자적 복원 |
-| `cli.py`·`setup.py` | 명시적인 관리 진입·공통 연결 변환·recipe 준비·진단 |
-| `onboarding.py`·`setup_yaml.py` | 사용자 설정 YAML의 생성·이전 위치 이관·제한된 입력 검사·인증값 분리·확인값 대조·일괄 적용과 참조 치환 |
-| `credentials.py`·`provider_login.py` | OS 인증 참조와 별도 제공자 SDK의 사용자 로그인 처리 |
-| `scripts/`·호스트별 플러그인·`skills/`·`agents/` | 관리 진입의 정상 미준비 판정·환경 격리, 최초 준비·검사·MCP 구성 발행·사용자 Skill과 총괄 조정·작업자 지침 전달 |
+```text
+src/daeri/
+├── cli.py
+├── server.py
+├── core/
+├── application/
+├── infrastructure/
+│   └── adapters/
+└── config/
+```
+
+| 위치 | 담당 구현 | 책임 |
+|---|---|---|
+| 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#초기-도구-목록)를 받아 설정·업무 처리로 전달 |
+| `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 필드·기억·보존 정책, 공통 오류, 인증 문자열 보조 검사와 정규 JSON 표현 |
+| `application/` | `runtime.py`·`planning.py`·`subagents.py`·`results.py`·`knowledge.py`·`automatic_memory.py` | 업무·계획·승인·위임·읽기 실행, 보고·파일의 근거 연결, 기억 후보 검증·갱신·재시도 |
+| `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP와 인증, 기억 검색·색인과 임베딩 제공자 연결 |
+| `infrastructure/adapters/` | 공통 `base.py`와 제품별 모듈 | 제품별 설정 스키마·대상·인증·로그인·읽기 의미·요청과 결과 검사 |
+| `config/` | `setup.py`·`onboarding.py`·`setup_yaml.py`·`catalog.json`·`profile_*.py`·`portable_archive.py` | 접속·인증 YAML과 recipe 준비·진단, profile 개정·삭제·암호화 백업·검증·복원 |
+
+`core`는 다른 DAERI 패키지를 가져오지 않으며 정책과 공통 자료 처리를 소유한다.
+`application`은 `core`를 사용하고 `Runtime`에서 `infrastructure`의 저장소·인증·리소스 등록부·기억 구현을 직접 구성한다.
+업무의 일부 저장 조회는 SQLite 연결을 직접 사용하며 `config`와 `infrastructure`도 profile 검증·참조 추적·정리에서 협력한다.
+현재 의존 경계는 코어 정책의 독립성과 실행·외부 연결·설정의 책임 구분에 있다.
+
+`scripts/`와 호스트별 플러그인은 환경 격리·최초 준비·검사·MCP 구성 발행을 담당한다.
+`skills/`와 `agents/`는 사용자 진입과 총괄 에이전트·하위 에이전트의 업무 지침을 전달한다.
 
 개발용 `evaluations/memory_recall.py`·JSON은 [회상 품질 평가](#기억-회상-평가)의 명령·고정 자료를 소유한다.
-제품 런타임의 공개 도구와 별도로 실행하고 지표·격리·실패 처리는 [평가 회귀](../../tests/test_memory_recall_evaluation.py)로 확인한다.
+제품 runtime의 공개 도구와 별도로 실행하고 지표·격리·실패 처리는 [평가 회귀](../../tests/test_memory_recall_evaluation.py)로 확인한다.
 개발용 `scripts/check.py`·`check_docs.py`는 [공통 검사](#공통-자동-검사)를, `.github/workflows/check.yml`은 GitHub의 트리거·실행 환경·결과 보관을 소유한다.
 
 리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
@@ -243,7 +251,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 | 구분 | 위치·책임 |
 |---|---|
 | 프로그램 | 플러그인 `.runtime/uv.exe`·`.venv`와 해당 사본의 생성 `.mcp.json`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
-| 관리 런타임 | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
+| 관리 Python runtime | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
 | 설정·업무·기억·파일 | [데이터별 정본과 형식](../spec/configuration/profiles.md#데이터별-정본과-형식)에 따라 SQLite·JSON·YAML·작업 및 관리 파일로 분리 |
 | 비밀 | OS 인증 저장소·선택한 제공자 표준 캐시에서 해소하고 실행 자료에는 참조를 연결 |
 
@@ -255,7 +263,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 ## 검증의 해석
 
 로컬 자동 테스트는 허용·거부·부분 결과·충돌·복구와 실제 stdio 전달을 확인한다.
-worker 게이트웨이·공유 예산·동시 호출의 로컬 검증과 실제 호스트의 worker 생성·MCP 전달·완료 회수는 각각의 근거로 확인한다.
+하위 에이전트 게이트웨이·공유 예산·동시 호출의 로컬 검증과 실제 호스트의 하위 에이전트 생성·MCP 전달·완료 회수는 각각의 근거로 확인한다.
 하위 프로그램의 잠긴 설치·import·도구 메타데이터 확인과 모의 리소스의 전체 실행은 서로 다른 검증이다.
-실제 호스트 설치·대화 의미 해석·worker 생성과 도구 권한·회사 리소스·제공자 로그인·Windows 실행은 별도의 근거가 필요하다.
+실제 호스트 설치·대화 의미 해석·하위 에이전트 생성과 도구 권한·회사 리소스·제공자 로그인·Windows 실행은 별도의 근거가 필요하다.
 현재 검증·남은 범위·실행 결과는 [최초 구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)에서 관리한다.

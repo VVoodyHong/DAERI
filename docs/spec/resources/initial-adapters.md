@@ -29,7 +29,7 @@
 DAERI는 연결·인증·대상·자료 제공과 읽기 효과 분류에 필요한 부분만 보완한다.
 `readOnlyHint`는 탐색 메타데이터이며 실제 강제 수단은 제품의 읽기 모드·서비스 권한과 검증한 구현이다.
 
-제품·정확한 패키지 버전·실행 파일·기본 환경·호환 기능 ID는 [카탈로그](../../../src/daeri/catalog.json)가 소유한다.
+제품·정확한 패키지 버전·실행 파일·기본 환경·호환 기능 ID는 [카탈로그](../../../src/daeri/config/catalog.json)가 소유한다.
 `recipes/<recipe-id>/pyproject.toml`·`uv.lock`은 하위 MCP의 별도 설치 조합이며 [개발 의존성](../../development/dependencies.md)을 따른다.
 
 ## 범주별 의미 보존
@@ -81,7 +81,8 @@ DB 역할·스키마 권한·행 정책, Redis ACL, AWS IAM과 서비스 토큰 
 기본값도 확인할 수 없는 제한 인수는 `UNSUPPORTED_CONSTRAINT`로 명시 입력을 요구한다.
 호스트는 검사한 범위 안에서 질의·필터·정렬·페이지 인수를 선택한다.
 
-과거 SQL의 `sql_field`·`tables`·`columns`·`max_rows` 의미 제약이 남은 호출은 `UNSUPPORTED_CONSTRAINT`이며 관리 설정과 새 계획으로 전환한다.
+등록된 `sql_field`·`tables`·`columns`·`max_rows` 의미 제약은 모든 어댑터의 공통 검사에서 `UNSUPPORTED_CONSTRAINT`로 반환한다.
+실제 서비스 권한이나 지원하는 명시적 필드 조건으로 관리 설정을 바꾸고 재진단·새 계획으로 전환한다.
 알려진 과거 생성 기본값의 명시적 갱신과 사용자 지정 제약의 처리는 [설정 변경](../configuration/profiles.md#검증과-변경-의미)을 따른다.
 
 ## 어댑터별 실제 지원 경계
@@ -123,14 +124,14 @@ Jira 입력 스키마에 `update_history`가 있으면 false로 정규화한다.
 
 실제 요청의 대상·인증은 등록한 연결에 바인딩한다.
 비밀값은 전송 경계에서만 참조를 해소하고 설정·계획·결과에는 비밀 없는 참조를 사용한다.
-인증 값과 제공자 파일 지문이 바뀌면 이전 계약을 폐기한다.
+인증 갱신과 실제 연결·대상 변경의 처리는 [등록부와 계약 변경](contract.md#등록부와-계약-변경)을 따른다.
 
 | 제품 | 바인딩 |
 |---|---|
 | PostgreSQL | 단일 host·port·database·사용자와 password 또는 단일 URI; 대체 접속 옵션 검사 |
 | Redis | host·port·db와 명시 인증; 등록 환경으로 실행 인수 생성 |
 | GitLab·Confluence·Jira | 등록 서버와 해당 토큰·계정; 대체 tenant·OAuth·서버 설정 검사 |
-| AWS | 제공자 profile·region·SSO 또는 역할의 계정과 로컬 제공자 설정·캐시 |
+| AWS | 제공자 profile·region·SSO 또는 역할의 등록 계정 |
 
 DB의 새 setup은 공개 접속 정보와 비밀번호 참조를 사용한다.
 자식 실행 직전에 사용자명·비밀번호·DB명을 인코딩한 URI를 구성해 인증 환경에 전달한다.
@@ -144,15 +145,13 @@ GitLab·Confluence·Jira는 등록한 서버의 명시적 토큰 참조를 해�
 
 AWS 인증은 등록 계정과 일치하는 제공자 SSO 또는 명시 역할의 표준 설정·캐시를 사용한다.
 credential process·간접 토큰 파일·endpoint·CLI 플러그인·별칭 같은 대체 실행·인증 설정은 `UNSUPPORTED_CONSTRAINT`다.
-제공자 SSO 세션·캐시를 사용하되 갱신으로 인증 문맥이 바뀌면 재진단과 새 계획이 필요하다.
 계정·위치·인증 준비는 [profile과 로그인](../configuration/profiles.md#인증-저장과-전달)을 따른다.
 
 실제 서비스 권한 철회·오류는 해당 서비스의 응답으로 확인한다.
-로컬 지문은 대상·인증 문맥의 변경을 검사한다.
 
 ## 호출·출력·실패
 
-전송 직전에 인증 지문·정규화 요청·하위 도구 계약을 다시 확인한다.
+전송 직전에 등록 연결의 현재 인증을 해소하고 정규화 요청·하위 도구 계약을 다시 확인한다.
 입력은 고정값·기본값 적용 전후 UTF-8 JSON 64KiB, 정규화 응답은 2MiB까지 처리한다.
 응답 상한 초과는 본문이 null인 `RESULT_TRUNCATED`다.
 하위 내부 페이지·재시도 수는 미측정 값 `null`, 외부 요청 상한 강제 지원은 `false`로 제공한다.
@@ -185,17 +184,8 @@ Decimal은 정확한 문자열과 해당 자료의 타입 경로로 보존한다
 
 ### 오류와 확인 경계
 
-| 상황 | 결과 |
-|---|---|
-| 진단 전·연결 실패 | `CONNECTION_NOT_READY` |
-| 인증 참조 미해소 | `AUTHENTICATION_REQUIRED` |
-| 대상·인증·도구·정규화 계약 변경 | `CONTEXT_CHANGED`; 재진단·새 계획 |
-| 명시적 승인 조건·연결 이탈 | `SCOPE_VIOLATION` |
-| 미지원 전송·효과·제약 | `UNSUPPORTED_CONSTRAINT` |
-| 하위 명시적 실패 | `EXTERNAL_EXECUTION_FAILED`; 비밀 없는 상태 |
-| 단절·시간 초과 | `EXTERNAL_OUTCOME_UNKNOWN`; 자동 재실행 없음 |
-| 출력 계약 불일치 | `RESULT_VALIDATION_FAILED` |
-| 수신 처리 상한 초과 | `RESULT_TRUNCATED` |
+진단·인증·실제 대상·도구 계약의 변경 처리는 [등록부와 계약 변경](contract.md#등록부와-계약-변경)을 따른다.
+읽기 상태·오류와 단절 뒤 새 관찰은 [실행 결과와 오류](../mcp/resources.md#결과와-오류)가 정의한다.
 
 로컬 시험 MCP에서 실제 stdio 탐색·호출·계약 변경·명시적 제한·연결 이탈·출력 경계를 확인한다.
 고정 패키지의 읽기 모드와 메타데이터는 캐시된 설치 원문으로 대조했다.

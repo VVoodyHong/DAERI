@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from daeri.results import ResultService
-from daeri.storage import Store, StoreError
+from daeri.application.results import ResultService
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -50,6 +51,48 @@ def test_host_can_complete_an_approved_sample_without_claiming_a_full_dataset(ho
     assert service.store.read_record(task['task_id'], saved['report_ref'])['payload']['limitations']
 
 
+@pytest.mark.parametrize('required', [False, True])
+def test_only_an_optional_criterion_can_be_reported_not_applicable(host_result, required):
+    service, task, plan, report, reference, _, load = host_result
+    # A previously saved conditional step cannot waive a required completion criterion.
+    plan['draft']['steps'].append({'step_id': 'followup', 'instance_id': 'db', 'capability_id': 'query',
+        'contract_ref': 'read-v2', 'scope': {}, 'input_bindings': [{'binding_id': 'value',
+            'source_step_id': 'read', 'source_pointer': '/rows/0/value', 'target_pointer': None}],
+        'conditions': [{'binding_id': 'value', 'operator': 'eq', 'value': 0}]})
+    plan['draft']['completion_criteria'][0].update(required=required, step_ids=['followup'])
+    report['checks'][0].update(status='not_applicable', reason='후속 조사가 현재 요청에 필요하지 않음',
+                               evidence_refs=[reference])
+    if required:
+        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
+            service.submit(task, plan, report, load_evidence=load)
+        assert not service.store._db.execute("SELECT * FROM records WHERE kind='report'").fetchall()
+    else:
+        saved = service.submit(task, plan, report, load_evidence=load)
+        assert saved['task_state'] == 'succeeded'
+        assert saved['validation']['checks'][0]['status'] == 'not_applicable'
+
+
+@pytest.mark.parametrize('memory_only_completion', [False, True])
+def test_report_can_cite_current_memory_but_external_completion_needs_real_reads(host_result, memory_only_completion):
+    service, task, plan, report, reference, _, load = host_result
+    memory_ref = 'memory-found-during-work'
+    report['findings'].append({'kind': 'memory', 'text': '기억한 절차를 참고했다', 'evidence_refs': [memory_ref]})
+
+    def sources(ref, mode='model'):
+        if ref == memory_ref:
+            return {'record_kind': 'memory', 'payload': {'statement': '검증된 조회 절차'}, 'expires_at': None}
+        return load(ref, mode)
+
+    if memory_only_completion:
+        report['checks'][0]['evidence_refs'] = [memory_ref]
+        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
+            service.submit(task, plan, report, load_evidence=sources)
+    else:
+        saved = service.submit(task, plan, report, load_evidence=sources)
+        assert saved['task_state'] == 'succeeded'
+        assert saved['validation']['checks'][0]['evidence_refs'] == [reference]
+
+
 @pytest.mark.parametrize('extension,media_type', [('csv', 'text/csv'), ('xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'), ('pdf', 'application/pdf')])
 def test_host_file_is_preserved_without_a_format_generator(host_result, extension, media_type):
     service, task, plan, report, ref, _, load = host_result
@@ -76,6 +119,53 @@ def test_host_file_requires_export_permission_for_its_provided_source(host_resul
     with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
         service.submit(task, plan, report, load_evidence=load)
     assert not service.store._db.execute('SELECT * FROM artifact_files').fetchall()
+
+
+def test_host_file_checks_only_its_declared_sources(host_result):
+    service, task, plan, report, reference, record, load = host_result
+    file_report(host_result)
+    unrelated = service.store.write_record(task['task_id'], 'call_result', {'result': {'private': 'model-only'}})
+    task['calls'] = [{'result_ref': unrelated}]
+    report['findings'].append({'kind': 'observation', 'text': '별도 참고 자료 확인', 'evidence_refs': [unrelated]})
+
+    def sources(ref, mode='model'):
+        if ref == unrelated:
+            return {'record_kind': 'call_result', 'result': {'private': 'model-only'}, 'expires_at': None,
+                    'provided_paths': ['/private'], 'allowed_paths': [] if mode == 'export' else ['/private']}
+        return load(ref, mode)
+
+    saved = service.submit(task, plan, report, load_evidence=sources)
+    assert task['artifact_ids']['answer']['source_refs'] == [reference]
+    assert Path(service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])['local_path']).read_bytes() == b'5'
+
+
+@pytest.mark.parametrize('short_source', ['finding', 'artifact'])
+def test_each_file_uses_only_its_own_contributors_for_expiry(host_result, short_source):
+    service, task, plan, report, reference, _, load = host_result
+    deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    short_ref = service.store.write_record(task['task_id'], 'call_result', {'result': {'other': 1}}, deadline)
+    if short_source == 'finding':
+        report['findings'].append({'kind': 'observation', 'text': '별도 참고', 'evidence_refs': [short_ref]})
+    else:
+        path = Path(service.store.artifact_workspace(task['task_id'])) / 'short.txt'
+        path.write_text('1')
+        report['artifacts'] = [{'artifact_id': 'short', 'label': '별도 결과', 'local_path': str(path),
+            'media_type': 'text/plain', 'source_refs': [short_ref]}]
+    path = Path(service.store.artifact_workspace(task['task_id'])) / 'answer.txt'
+    path.write_text('5')
+    report['artifacts'].append({'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
+        'media_type': 'text/plain', 'source_refs': [reference]})
+
+    def sources(ref, mode='model'):
+        if ref == short_ref:
+            return {'record_kind': 'call_result', 'result': {'other': 1}, 'expires_at': deadline,
+                    'provided_paths': ['/other'], 'allowed_paths': ['/other']}
+        return load(ref, mode)
+
+    saved = service.submit(task, plan, report, load_evidence=sources)
+    assert service.store.read_record(task['task_id'], saved['report_ref'])['expires_at'] == deadline
+    answer = service.store.artifact_file(task['task_id'], saved['artifact_refs'][-1])
+    assert answer['expires_at'] is None
 
 
 def test_host_file_inherits_the_shorter_expiry_of_an_intermediate_report(host_result):
@@ -262,7 +352,7 @@ def test_host_judgment_still_requires_the_real_approved_evidence(host_result, ch
 
 
 def test_profile_deletion_removes_its_host_file_workspace(host_result):
-    from daeri.profile_deletion import preview, delete
+    from daeri.config.profile_deletion import preview, delete
     service, task, _, _, _, _, _ = host_result
     workspace = Path(service.store.artifact_workspace(task['task_id']))
     (workspace / 'unfinished.txt').write_text('unfinished')

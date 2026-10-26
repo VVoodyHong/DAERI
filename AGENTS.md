@@ -1,4 +1,4 @@
-# DAERI Agent
+# DAERI 멀티 오케스트레이션 에이전트
 
 이 파일은 Codex와 Claude Code가 공유하는 기본 지침과 작업 진입점이다.  
 상세 규칙은 `docs` 하위에서 관리한다.

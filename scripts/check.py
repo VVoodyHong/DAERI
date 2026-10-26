@@ -44,7 +44,7 @@ def check_metadata(root):
     entries = [item for item in marketplace['plugins'] if item['name'] == 'daeri']
     if len(entries) != 1 or entries[0].get('version') != version:
         issues.append('.claude-plugin/marketplace.json: plugin version differs from pyproject.toml')
-    catalog = json.loads((root / 'src/daeri/catalog.json').read_text(encoding='utf-8'))
+    catalog = json.loads((root / 'src/daeri/config/catalog.json').read_text(encoding='utf-8'))
     for name, item in catalog.items():
         recipe = _toml(root / 'recipes' / name / 'pyproject.toml')['project']
         if recipe['dependencies'] != [item['package'] + '==' + item['version']]:

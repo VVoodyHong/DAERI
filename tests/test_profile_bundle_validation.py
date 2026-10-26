@@ -10,7 +10,7 @@ import zipfile
 
 import pytest
 
-from daeri.storage import StoreError
+from daeri.core.errors import StoreError
 
 
 STAMP = '2026-01-01T00:00:00+00:00'
@@ -44,8 +44,8 @@ def manifest():
 
 def validate(value, entries=None):
     # An absent entry point is a missing feature, never an import-time collection error.
-    assert importlib.util.find_spec('daeri.profile_bundle_validation') is not None
-    from daeri.profile_bundle_validation import validate_manifest
+    assert importlib.util.find_spec('daeri.config.profile_bundle_validation') is not None
+    from daeri.config.profile_bundle_validation import validate_manifest
     data = io.BytesIO()
     with zipfile.ZipFile(data, 'w') as archive:
         archive.writestr('manifest.json', json.dumps(value))

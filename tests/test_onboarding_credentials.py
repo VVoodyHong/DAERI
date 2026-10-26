@@ -3,10 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from daeri.credentials import Credentials
-from daeri.onboarding import apply_draft, create_draft, validate_draft
-from daeri.setup_yaml import read_yaml, write_yaml
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.credentials import Credentials
+from daeri.config.onboarding import apply_draft, create_draft, validate_draft
+from daeri.config.setup_yaml import read_yaml, write_yaml
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 class Vault:
@@ -265,7 +266,7 @@ def test_native_failure_preserves_active_profile_and_user_yaml_for_retry(store):
 
 
 def test_file_failure_restores_native_value_and_preserves_retryable_draft(store, monkeypatch):
-    from daeri import onboarding
+    import daeri.config.onboarding as onboarding
     draft = database_draft(store)
     vault = Vault({'production.db.database_password': 'OLD_PRIVATE'})
     original_profile = approve(store, vault)

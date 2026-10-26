@@ -8,10 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from daeri.adapters import get_adapter
-from daeri.resources import validate_resource
-from daeri.setup import build_setup_resource, load_catalog, profile_template, setup_schema
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.adapters import get_adapter
+from daeri.infrastructure.resources import validate_resource
+from daeri.config.setup import build_setup_resource, load_catalog, profile_template, setup_schema
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -190,7 +191,7 @@ def test_changing_public_connection_values_preserves_existing_token_reference(st
 
 
 def test_jira_stdio_discovery_normalization_and_execution_use_the_selected_tenant(store, tmp_path):
-    from daeri.resources import ResourceRegistry
+    from daeri.infrastructure.resources import ResourceRegistry
     script = tmp_path / 'jira_mcp.py'
     script.write_text('''import os,json
 from mcp.server.fastmcp import FastMCP

@@ -37,7 +37,7 @@ def test_setup_catalog_does_not_create_user_data(tmp_path):
 
 def test_setup_company_api_adapter_selection_round_trips_through_cli(tmp_path):
     from pathlib import Path
-    from daeri.setup_yaml import read_yaml, write_yaml
+    from daeri.config.setup_yaml import read_yaml, write_yaml
     prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
     catalog = json.loads(run_cli(*prefix, 'catalog').stdout)
     assert [item['adapter_id'] for item in catalog['embedding_adapters']] == ['openai_compatible']
@@ -63,8 +63,8 @@ def test_setup_company_api_adapter_selection_round_trips_through_cli(tmp_path):
 def test_setup_cli_imports_yaml_credentials_without_printing_the_values(tmp_path, monkeypatch, capsys):
     from pathlib import Path
     from daeri.cli import main
-    from daeri.credentials import Credentials
-    from daeri.setup_yaml import read_yaml, write_yaml
+    from daeri.infrastructure.credentials import Credentials
+    from daeri.config.setup_yaml import read_yaml, write_yaml
     values = {}
 
     class Vault:
@@ -166,7 +166,7 @@ def test_setup_status_validates_profile_before_inspecting_paths(tmp_path):
 
 def test_setup_yaml_draft_validate_and_apply_across_processes(tmp_path):
     from pathlib import Path
-    from daeri.setup_yaml import read_yaml, write_yaml
+    from daeri.config.setup_yaml import read_yaml, write_yaml
     prefix = ('--data-dir', str(tmp_path / 'private'), 'setup')
     draft = run_cli(*prefix, 'draft', 'service', '--resource', 'primary=db-postgres', '--embedding', 'keyword_only')
     assert draft.returncode == 0, draft.stdout
@@ -364,7 +364,7 @@ def test_auth_standard_input_is_stored_without_returning_value(monkeypatch):
     from types import SimpleNamespace
     from io import StringIO
     stored = {}
-    monkeypatch.setattr('daeri.credentials.Credentials.set',
+    monkeypatch.setattr('daeri.infrastructure.credentials.Credentials.set',
                         lambda self, reference, value: stored.update({reference: value}))
     monkeypatch.setattr('sys.stdin', StringIO('AUTH_PRIVATE_SENTINEL\n'))
     result = _auth(SimpleNamespace(auth_command='set', stdin=True, reference='credential:test'))
@@ -376,11 +376,11 @@ def test_auth_standard_input_is_stored_without_returning_value(monkeypatch):
 @pytest.mark.parametrize("ending", ["\n", "\r\n"])
 def test_auth_stdin_rejects_trailing_input_after_maximum_length_credential(monkeypatch, ending):
     from daeri.cli import _auth
-    from daeri.storage import StoreError
+    from daeri.core.errors import StoreError
     from types import SimpleNamespace
     from io import StringIO
     stored = []
-    monkeypatch.setattr("daeri.credentials.Credentials.set", lambda self, ref, value: stored.append(value))
+    monkeypatch.setattr("daeri.infrastructure.credentials.Credentials.set", lambda self, ref, value: stored.append(value))
     monkeypatch.setattr("sys.stdin", StringIO("x" * 16384 + ending + "SECOND_LINE"))
     with pytest.raises(StoreError) as caught:
         _auth(SimpleNamespace(auth_command="set", stdin=True, reference="credential:test"))
@@ -394,7 +394,7 @@ def test_auth_stdin_accepts_maximum_single_line_with_optional_line_ending(monkey
     from types import SimpleNamespace
     from io import StringIO
     stored = []
-    monkeypatch.setattr("daeri.credentials.Credentials.set", lambda self, ref, value: stored.append(value))
+    monkeypatch.setattr("daeri.infrastructure.credentials.Credentials.set", lambda self, ref, value: stored.append(value))
     monkeypatch.setattr("sys.stdin", StringIO("x" * 16384 + ending))
     result = _auth(SimpleNamespace(auth_command="set", stdin=True, reference="credential:test"))
     assert result["stored"] is True
@@ -403,7 +403,7 @@ def test_auth_stdin_accepts_maximum_single_line_with_optional_line_ending(monkey
 
 def test_auth_prompt_never_falls_back_to_echoed_input(monkeypatch):
     from daeri.cli import _auth
-    from daeri.storage import StoreError
+    from daeri.core.errors import StoreError
     from types import SimpleNamespace
     import getpass
     import warnings

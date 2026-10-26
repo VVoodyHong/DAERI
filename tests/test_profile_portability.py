@@ -7,10 +7,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from daeri.engine import Engine
-from daeri.storage import Store, StoreError
-from daeri.portable_archive import open_bundle
-from daeri.profile_portability import backup_profile, inspect_backup, restore_profile
+from daeri.application.runtime import Runtime
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
+from daeri.config.portable_archive import open_bundle
+from daeri.config.profile_portability import backup_profile, inspect_backup, restore_profile
 from test_memory_flow import remembered
 
 
@@ -18,10 +19,10 @@ PASSWORD = 'test-only-portability-password'
 
 
 def test_encrypted_roundtrip_preserves_history_files_memory_and_isolates_profiles(remembered, tmp_path):
-    engine, profile, saved, draft, approved, first, second, report = remembered
-    other = engine.store.put_profile('unrelated-source', core_context=['OTHER_PROFILE_SECRET'])
+    runtime, profile, saved, draft, approved, first, second, report = remembered
+    other = runtime.store.put_profile('unrelated-source', core_context=['OTHER_PROFILE_SECRET'])
     archive = tmp_path / 'profile.daeri'
-    result = backup_profile(engine, profile['profile_id'], archive, PASSWORD)
+    result = backup_profile(runtime, profile['profile_id'], archive, PASSWORD)
     assert result['profile_id'] == profile['profile_id']
     assert b'OTHER_PROFILE_SECRET' not in archive.read_bytes()
     preview = inspect_backup(archive, PASSWORD)
@@ -36,18 +37,18 @@ def test_encrypted_roundtrip_preserves_history_files_memory_and_isolates_profile
     restored = restore_profile(with_store, archive, PASSWORD, preview['confirmation_token'])
     assert restored['profile_id'] == profile['profile_id']
     assert with_store.get_profile(unrelated['profile_id']) == unrelated
-    old_task = engine.store.get_task(saved['task_id'])
+    old_task = runtime.store.get_task(saved['task_id'])
     imported = with_store.get_task(saved['task_id'])
     assert imported['state'] == old_task['state'] == 'succeeded'
     assert imported['owner_id'] is None
     assert all(item['state'] != 'approved' for item in imported['approvals'])
     assert all(item.get('historical_ever_approved') and not item.get('ever_approved') for item in imported['approvals'] if item.get('approval_id'))
-    assert with_store.read_record(saved['task_id'], first['result_ref'])['payload'] == engine.store.read_record(saved['task_id'], first['result_ref'])['payload']
+    assert with_store.read_record(saved['task_id'], first['result_ref'])['payload'] == runtime.store.read_record(saved['task_id'], first['result_ref'])['payload']
     ref = report['artifact_refs'][0]
-    assert Path(with_store.artifact_file(saved['task_id'], ref)['local_path']).read_bytes() == Path(engine.store.artifact_file(saved['task_id'], ref)['local_path']).read_bytes()
+    assert Path(with_store.artifact_file(saved['task_id'], ref)['local_path']).read_bytes() == Path(runtime.store.artifact_file(saved['task_id'], ref)['local_path']).read_bytes()
     assert with_store._db.execute('SELECT count(*) FROM memory_vectors').fetchone()[0] == 0
     with_store.close()
-    target = Engine(destination)
+    target = Runtime(destination)
     try:
         refs = {row[0] for row in target.store._db.execute('SELECT memory_ref FROM memory_fts')}
         assert refs
@@ -59,7 +60,7 @@ def test_encrypted_roundtrip_preserves_history_files_memory_and_isolates_profile
 
 
 def test_wrong_password_confirmation_collision_and_tombstone_preserve_destination(tmp_path):
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     profile = source.store.put_profile('portable')
     archive = tmp_path / 'profile.daeri'
     backup_profile(source, 'portable', archive, PASSWORD)
@@ -84,7 +85,7 @@ def test_wrong_password_confirmation_collision_and_tombstone_preserve_destinatio
 
 
 def test_restore_failure_rolls_back_all_rows_and_removes_its_files(tmp_path, monkeypatch):
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     profile = source.store.put_profile('portable')
     created = source.call('daeri_task_create', {'request_id': 'create', 'request_text': 'hello', 'context': {'profile_id': profile['profile_id']}})
     assert created['status'] == 'ok'
@@ -110,24 +111,24 @@ def test_restore_failure_rolls_back_all_rows_and_removes_its_files(tmp_path, mon
 
 
 def test_current_export_restriction_prevents_leaking_derived_prose(remembered, tmp_path):
-    engine, profile, saved, *_ = remembered
+    runtime, profile, saved, *_ = remembered
     config = {key: copy.deepcopy(value) for key, value in profile.items() if key not in {'profile_id', 'revision'}}
     config['resources'][0]['policy']['export_fields'] = []
-    engine.store.put_profile(**config)
+    runtime.store.put_profile(**config)
     archive = tmp_path / 'restricted.daeri'
     with pytest.raises(StoreError) as rejected:
-        backup_profile(engine, profile['profile_id'], archive, PASSWORD)
+        backup_profile(runtime, profile['profile_id'], archive, PASSWORD)
     assert rejected.value.code == 'ACCESS_DENIED'
     assert not archive.exists()
 
 
 def test_expiry_during_storage_preserves_deadline_and_never_restores_body(remembered, tmp_path):
-    engine, profile, saved, *_ = remembered
+    runtime, profile, saved, *_ = remembered
     archive = tmp_path / 'expired.daeri'
     expired = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-    engine.store.set_task_expiry(saved['task_id'], expired)
-    engine.store.cleanup()
-    backup_profile(engine, profile['profile_id'], archive, PASSWORD)
+    runtime.store.set_task_expiry(saved['task_id'], expired)
+    runtime.store.cleanup()
+    backup_profile(runtime, profile['profile_id'], archive, PASSWORD)
     preview = inspect_backup(archive, PASSWORD)
     target = Store(tmp_path / 'target')
     restore_profile(target, archive, PASSWORD, preview['confirmation_token'])
@@ -140,7 +141,7 @@ def test_expiry_during_storage_preserves_deadline_and_never_restores_body(rememb
 
 def test_fresh_credentials_do_not_inherit_target_values_and_restore_never_calls_api(tmp_path, monkeypatch):
     from test_execution_flow import resource
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     item = resource()
     item['connection']['auth_env'] = {'REDIS_PWD': 'credential:old-cache'}
     profile = source.store.put_profile('portable', resources=[item], embedding={
@@ -153,9 +154,9 @@ def test_fresh_credentials_do_not_inherit_target_values_and_restore_never_calls_
     source.close()
     def forbidden(*args, **kwargs):
         pytest.fail('Restore must not resolve credentials, call APIs or load local models')
-    monkeypatch.setattr('daeri.memory.create_api_embedder', forbidden)
-    monkeypatch.setattr('daeri.memory.LocalEmbedder.load', forbidden)
-    monkeypatch.setattr('daeri.credentials.Credentials.get', forbidden)
+    monkeypatch.setattr('daeri.infrastructure.memory.create_api_embedder', forbidden)
+    monkeypatch.setattr('daeri.infrastructure.memory.LocalEmbedder.load', forbidden)
+    monkeypatch.setattr('daeri.infrastructure.credentials.Credentials.get', forbidden)
     target = Store(tmp_path / 'target')
     result = restore_profile(target, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     current = target.get_profile('portable')
@@ -169,15 +170,15 @@ def test_fresh_credentials_do_not_inherit_target_values_and_restore_never_calls_
     target.close()
 
 
-def test_worker_token_and_approved_request_cannot_be_replayed_after_restore(tmp_path):
+def test_subagent_token_and_approved_request_cannot_be_replayed_after_restore(tmp_path):
     from test_execution_flow import resource, begin, approve, execution
-    from test_workers import create_worker
-    source = Engine(tmp_path / 'source')
+    from test_subagents import create_subagent
+    source = Runtime(tmp_path / 'source')
     profile = source.store.put_profile('portable', resources=[resource()])
     source.registry.diagnose(profile, 'cache-a')
     saved, draft = begin(source, profile)
     approved = approve(source, saved)
-    grant = create_worker(source, saved, ['read-0'])['data']
+    grant = create_subagent(source, saved, ['read-0'])['data']
     archive = tmp_path / 'profile.daeri'
     backup_profile(source, 'portable', archive, PASSWORD)
     with open_bundle(archive, PASSWORD) as (manifest, packed):
@@ -189,7 +190,7 @@ def test_worker_token_and_approved_request_cannot_be_replayed_after_restore(tmp_
     store = Store(tmp_path / 'target')
     restore_profile(store, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     store.close()
-    target = Engine(tmp_path / 'target')
+    target = Runtime(tmp_path / 'target')
     try:
         task = target.store.get_task(saved['task_id'])
         assert task['state'] == 'paused'
@@ -197,7 +198,7 @@ def test_worker_token_and_approved_request_cannot_be_replayed_after_restore(tmp_
             'expected_task_revision': task['task_revision']})
         assert restored['status'] in {'ok', 'pending'}, restored
         assert target.store.get_task(saved['task_id'])['state'] in {'planning', 'awaiting_approval'}
-        denied = target.call('daeri_worker', {'operation': 'get', 'task_id': saved['task_id'],
+        denied = target.call('daeri_subagent', {'operation': 'get', 'task_id': saved['task_id'],
             'delegation_token': grant['delegation_token']})
         assert denied['error']['code'] == 'ACCESS_DENIED', denied
         args = execution(saved, approved, draft['steps'][0])
@@ -209,7 +210,7 @@ def test_worker_token_and_approved_request_cannot_be_replayed_after_restore(tmp_
 
 
 def test_newly_expired_snapshot_does_not_extend_original_deadline(tmp_path, monkeypatch):
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     profile = source.store.put_profile('portable')
     created = source.call('daeri_task_create', {'request_id': 'create', 'request_text': 'expiring', 'context': {'profile_id': profile['profile_id']}})['data']
     deadline = (datetime.now(UTC) + timedelta(days=1)).isoformat()
@@ -221,7 +222,7 @@ def test_newly_expired_snapshot_does_not_extend_original_deadline(tmp_path, monk
         @classmethod
         def now(cls, tz=None):
             return datetime.now(UTC) + timedelta(days=2)
-    monkeypatch.setattr('daeri.profile_portability.datetime', Later)
+    monkeypatch.setattr('daeri.config.profile_portability.datetime', Later)
     target = Store(tmp_path / 'target')
     restore_profile(target, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     row = target._db.execute('SELECT * FROM records').fetchone()
@@ -231,13 +232,13 @@ def test_newly_expired_snapshot_does_not_extend_original_deadline(tmp_path, monk
 
 
 def test_invalidated_memory_and_blocked_lineage_remain_unavailable(remembered, tmp_path):
-    engine, profile, saved, *_ = remembered
-    row = engine.store._db.execute('SELECT * FROM memory_versions').fetchone()
+    runtime, profile, saved, *_ = remembered
+    row = runtime.store._db.execute('SELECT * FROM memory_versions').fetchone()
     lineage = {'keys': json.loads(row['source_lineage'])['keys'], 'blocked_at': datetime.now(UTC).isoformat()}
-    engine.store._db.execute('UPDATE memory_heads SET invalidated=1')
-    engine.store._db.execute('UPDATE memory_versions SET source_lineage=?', (json.dumps(lineage),))
+    runtime.store._db.execute('UPDATE memory_heads SET invalidated=1')
+    runtime.store._db.execute('UPDATE memory_versions SET source_lineage=?', (json.dumps(lineage),))
     archive = tmp_path / 'profile.daeri'
-    backup_profile(engine, profile['profile_id'], archive, PASSWORD)
+    backup_profile(runtime, profile['profile_id'], archive, PASSWORD)
     target = Store(tmp_path / 'target')
     restore_profile(target, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     assert target._db.execute('SELECT invalidated FROM memory_heads').fetchone()[0] == 1
@@ -256,7 +257,7 @@ def test_restored_terminal_approval_is_history_and_cannot_authorize_new_memory(r
     store = Store(tmp_path / 'target')
     restore_profile(store, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     store.close()
-    target = Engine(tmp_path / 'target')
+    target = Runtime(tmp_path / 'target')
     try:
         task = target.store.get_task(saved['task_id'])
         resumed = target.call('daeri_task_resume', {'request_id': 'resume-new', 'task_id': saved['task_id'],
@@ -276,7 +277,7 @@ def test_restored_terminal_approval_is_history_and_cannot_authorize_new_memory(r
 
 
 def test_old_request_keys_are_reserved_and_safely_rejected_after_restore(tmp_path):
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     profile = source.store.put_profile('portable')
     create = {'request_id': 'original-create', 'request_text': 'hello', 'context': {'profile_id': profile['profile_id']}}
     task = source.call('daeri_task_create', create)['data']
@@ -290,7 +291,7 @@ def test_old_request_keys_are_reserved_and_safely_rejected_after_restore(tmp_pat
     target_store = Store(tmp_path / 'target')
     restore_profile(target_store, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     target_store.close()
-    target = Engine(tmp_path / 'target')
+    target = Runtime(tmp_path / 'target')
     try:
         for name, args in [('daeri_task_create', create), ('daeri_task_update', pause)]:
             replay = target.call(name, args)
@@ -303,10 +304,10 @@ def test_old_request_keys_are_reserved_and_safely_rejected_after_restore(tmp_pat
 
 def test_restored_offset_deadlines_expire_at_their_real_utc_instant(tmp_path, monkeypatch):
     from datetime import timezone
-    from daeri.portable_archive import write_bundle
-    from daeri.storage import _time
+    from daeri.config.portable_archive import write_bundle
+    from daeri.infrastructure.storage import _time
 
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     try:
         profile = source.store.put_profile('offset-expiry', embedding={'provider': 'keyword_only'})
         task = source.call('daeri_task_create', {'request_id': 'create', 'request_text': 'time-limited body',
@@ -337,7 +338,7 @@ def test_restored_offset_deadlines_expire_at_their_real_utc_instant(tmp_path, mo
             def now(cls, tz=None):
                 return deadline + timedelta(hours=1)
 
-        monkeypatch.setattr('daeri.storage.datetime', Later)
+        monkeypatch.setattr('daeri.infrastructure.storage.datetime', Later)
         with pytest.raises(StoreError, match='RECORD_EXPIRED'):
             target.read_record(task['task_id'], task['request_ref'])
         for table in ('tasks', 'records'):
@@ -347,7 +348,7 @@ def test_restored_offset_deadlines_expire_at_their_real_utc_instant(tmp_path, mo
 
 
 def test_unrelated_user_message_namespace_is_not_inferred_as_task_ownership(tmp_path):
-    source = Engine(tmp_path / 'source')
+    source = Runtime(tmp_path / 'source')
     profile = source.store.put_profile('portable')
     other = source.store.put_profile('other-profile')
     task = source.call('daeri_task_create', {'request_id': 'create', 'request_text': 'hello', 'context': {'profile_id': profile['profile_id']}})['data']
@@ -371,7 +372,7 @@ def test_restoring_api_memory_builds_keyword_index_without_transmitting(remember
     backup_profile(source, profile['profile_id'], archive, PASSWORD)
     def forbidden(*args, **kwargs):
         pytest.fail('Restoring an API profile must not transmit memory')
-    monkeypatch.setattr('daeri.memory.create_api_embedder', forbidden)
+    monkeypatch.setattr('daeri.infrastructure.memory.create_api_embedder', forbidden)
     target = Store(tmp_path / 'target')
     result = restore_profile(target, archive, PASSWORD, inspect_backup(archive, PASSWORD)['confirmation_token'])
     assert result['index']['pending'] > 0
@@ -382,8 +383,8 @@ def test_restoring_api_memory_builds_keyword_index_without_transmitting(remember
 
 @pytest.mark.skipif(os.name == 'nt', reason='POSIX directory synchronization')
 def test_directory_sync_failure_after_rename_removes_unpublished_plaintext(tmp_path, monkeypatch):
-    import daeri.storage as storage
-    source = Engine(tmp_path / 'source')
+    import daeri.infrastructure.storage as storage
+    source = Runtime(tmp_path / 'source')
     source.store.put_profile('portable', core_context=['PRIVATE_CONTEXT'])
     archive = tmp_path / 'profile.daeri'
     backup_profile(source, 'portable', archive, PASSWORD)

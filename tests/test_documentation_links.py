@@ -102,7 +102,7 @@ def test_code_block_headings_do_not_satisfy_real_anchor_links(tmp_path):
 
 def test_scans_host_instructions_skills_and_agents_without_git(tmp_path):
     for name in ('AGENTS.md', 'CLAUDE.md', 'docs/nested/guide.md',
-                 'skills/work/SKILL.md', 'agents/worker.md'):
+                 'skills/work/SKILL.md', 'agents/subagent.md'):
         write(tmp_path, name, '[깨진 문서](missing.md)')
     write(tmp_path, '.venv/README.md', '[환경 내부](missing.md)')
     write(tmp_path, 'unrelated/README.md', '[검사 범위 밖](missing.md)')
@@ -112,11 +112,11 @@ def test_scans_host_instructions_skills_and_agents_without_git(tmp_path):
     assert len(issues) == 5
     assert all(any(name + ':1:' in issue for issue in issues) for name in (
         'AGENTS.md', 'CLAUDE.md', 'docs/nested/guide.md',
-        'skills/work/SKILL.md', 'agents/worker.md'))
+        'skills/work/SKILL.md', 'agents/subagent.md'))
 
 
 def test_plugin_root_link_is_resolved_and_still_checks_missing_files(tmp_path):
-    write(tmp_path, 'agents/worker.md', '''# Worker
+    write(tmp_path, 'agents/subagent.md', '''# Subagent
 [계약](${CLAUDE_PLUGIN_ROOT}/skills/work/SKILL.md#업무)
 [잘못된 계약](${CLAUDE_PLUGIN_ROOT}/skills/work/missing.md)
 ''')

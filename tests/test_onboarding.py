@@ -4,8 +4,9 @@ import os
 
 import pytest
 
-from daeri.storage import Store, StoreError
-from daeri.onboarding import create_draft, validate_draft, apply_draft, selection_catalog
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
+from daeri.config.onboarding import create_draft, validate_draft, apply_draft, selection_catalog
 
 
 @pytest.fixture
@@ -19,7 +20,7 @@ DB = {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username'
 
 
 def edit(draft, change):
-    from daeri.setup_yaml import read_yaml, write_yaml
+    from daeri.config.setup_yaml import read_yaml, write_yaml
     from pathlib import Path
     path = Path(draft['path'])
     value = read_yaml(path)
@@ -41,7 +42,7 @@ def test_catalog_groups_all_roles_and_available_products(monkeypatch):
         'Source': '소스 코드', 'Document': '문서', 'Issue': '이슈'}
     assert {group['type']: group['instance_prefix'] for group in groups} == {
         kind: kind.lower() for kind in ('DB', 'Cache', 'Infra', 'Source', 'Document', 'Issue')}
-    from daeri import onboarding
+    import daeri.config.onboarding as onboarding
     catalog = onboarding.load_catalog()
     monkeypatch.setattr(onboarding, 'load_catalog', lambda: catalog | {
         'db-other': dict(catalog['db-postgres'], display_name='Another DB')})
@@ -54,7 +55,7 @@ def test_catalog_groups_all_roles_and_available_products(monkeypatch):
 
 def test_draft_contains_only_selected_schema_fields_and_no_service_description(store):
     draft = create_draft(store, 'production', {'primary': 'db-postgres'}, embedding='keyword_only')
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     value = read_yaml(draft['path'])
     assert set(value) == {'profile', 'resources', 'embedding'}
     assert set(value['resources']) == {'primary'}
@@ -70,7 +71,7 @@ def test_draft_contains_only_selected_schema_fields_and_no_service_description(s
 
 def test_unnamed_resources_use_category_names_and_repeat_with_stable_suffixes(store):
     from pathlib import Path
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     recipes = ['db-postgres', 'db-postgres', 'cache-redis']
     draft = create_draft(store, 'production', recipes=recipes, embedding='keyword_only')
     blocks = read_yaml(draft['path'])['resources']
@@ -85,7 +86,7 @@ def test_unnamed_resources_use_category_names_and_repeat_with_stable_suffixes(st
 
 
 def test_automatic_names_reserve_role_names_and_skip_another_product(store):
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     draft = create_draft(store, 'production', {'db': 'cache-redis', 'db-2': 'db-postgres'},
                          recipes=['db-postgres'], embedding='keyword_only')
     assert list(read_yaml(draft['path'])['resources']) == ['db', 'db-2', 'db-3']
@@ -94,8 +95,8 @@ def test_automatic_names_reserve_role_names_and_skip_another_product(store):
 
 @pytest.mark.parametrize('instance', ['db', 'team:db', 'd' * 128])
 def test_valid_connection_names_produce_stable_native_credential_references(store, instance):
-    from daeri.credentials import Credentials
-    from daeri.setup import profile_template
+    from daeri.infrastructure.credentials import Credentials
+    from daeri.config.setup import profile_template
     name = 'p' * 64
     draft = create_draft(store, name, {instance: 'db-postgres'}, embedding='keyword_only')
     edit(draft, lambda value: value['resources'][instance]['inputs'].update(DB))
@@ -113,8 +114,8 @@ def test_valid_connection_names_produce_stable_native_credential_references(stor
 
 
 def test_automatic_names_reuse_saved_default_connections_and_preserve_legacy_names(store):
-    from daeri.setup import build_setup_resource
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup import build_setup_resource
+    from daeri.config.setup_yaml import read_yaml
     resources = [build_setup_resource(store, 'db-postgres', 'production', name, DB)
                  for name in ('db', 'legacy-postgres')]
     store.put_profile('production', resources=resources, embedding={'provider': 'keyword_only'})
@@ -128,7 +129,7 @@ def test_automatic_names_reuse_saved_default_connections_and_preserve_legacy_nam
 
 
 def test_another_recipe_for_the_same_adapter_gets_a_new_default_slot(store, monkeypatch):
-    from daeri import onboarding
+    import daeri.config.onboarding as onboarding
     catalog = onboarding.load_catalog()
     monkeypatch.setattr(onboarding, 'load_catalog', lambda: catalog | {
         'db-alternative': dict(catalog['db-postgres'])})
@@ -139,7 +140,7 @@ def test_another_recipe_for_the_same_adapter_gets_a_new_default_slot(store, monk
 
 def test_automatic_names_preserve_manual_connections_outside_the_selected_recipe(store):
     import sys
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     resource = build_setup_resource(store, 'db-postgres', 'production', 'db', DB)
     resource['connection']['command'] = sys.executable
     resource['connection']['args'] = []
@@ -178,7 +179,7 @@ def test_whole_yaml_apply_is_atomic_and_idempotent(store):
 
 
 def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
-    from daeri.setup import load_catalog
+    from daeri.config.setup import load_catalog
     selections = {recipe: recipe for recipe in load_catalog()}
     draft = create_draft(store, 'production', selections, embedding='keyword_only')
     answers = {
@@ -200,7 +201,7 @@ def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
 
 
 def test_multiple_jira_domains_apply_separate_connection_only_yaml_blocks(store):
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     draft = create_draft(store, 'production', recipes=['issue-jira', 'issue-jira'], embedding='keyword_only')
     blocks = read_yaml(draft['path'])['resources']
     assert list(blocks) == ['issue', 'issue-2']
@@ -262,8 +263,8 @@ def test_validation_token_binds_the_reviewed_bytes(store):
 
 
 def test_setup_previews_generated_read_contract_refresh_before_apply(store, monkeypatch):
-    from daeri import onboarding
-    from daeri.setup import build_setup_resource
+    import daeri.config.onboarding as onboarding
+    from daeri.config.setup import build_setup_resource
     resource = build_setup_resource(store, 'db-postgres', 'production', 'primary', DB)
     resource.pop('discover_tools')
     old_constraints = {'sql_field': 'sql', 'tables': ['*'], 'columns': ['*'], 'max_rows': 100}
@@ -295,7 +296,7 @@ def test_setup_previews_generated_read_contract_refresh_before_apply(store, monk
 
 
 def test_setup_contract_preview_includes_removed_lower_tool_filter(store):
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     resource = build_setup_resource(store, 'issue-jira', 'production', 'issues', {
         'server': 'https://issues.example.test', 'auth_type': 'personal_token'})
     resource.pop('discover_tools')
@@ -314,7 +315,7 @@ def test_setup_contract_preview_includes_removed_lower_tool_filter(store):
 
 
 def test_setup_contract_preview_preserves_administrator_read_restrictions(store):
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     resource = build_setup_resource(store, 'cache-redis', 'production', 'cache', {
         'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
     resource.pop('discover_tools')
@@ -352,7 +353,7 @@ def test_reopening_preserves_edits_and_appends_only_new_selections(store):
     assert create_draft(store, 'production')['path'] == draft['path']
     assert open(draft['path']).read() == before
     create_draft(store, 'production', {'primary': 'db-postgres', 'docs': 'document-confluence'})
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     value = read_yaml(draft['path'])
     assert value['resources']['primary']['inputs'] == DB
     assert value['resources']['docs']['adapter'] == 'document-confluence'
@@ -402,7 +403,7 @@ def test_invalid_yaml_never_activates_or_echoes_values(store, change):
 
 def test_company_api_template_does_not_require_local_model_or_expose_secrets(store):
     draft = create_draft(store, 'production', embedding='openai_compatible')
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     value = read_yaml(draft['path'])
     assert value['embedding'] == {'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None,
         'model': None, 'credential_ref': 'credential:production.embedding',
@@ -416,7 +417,7 @@ def test_company_api_template_does_not_require_local_model_or_expose_secrets(sto
 
 
 def test_api_adapter_catalog_and_selected_template_share_the_registered_contract(store):
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     adapters = selection_catalog()['embedding_adapters']
     assert [adapter['adapter_id'] for adapter in adapters] == ['openai_compatible']
     assert all(adapter['label'] and adapter['description'] for adapter in adapters)
@@ -430,7 +431,7 @@ def test_api_adapter_catalog_and_selected_template_share_the_registered_contract
 @pytest.mark.parametrize('provider', ['local', 'keyword_only', 'api'])
 def test_embedding_draft_comments_explain_the_selected_fields_without_changing_values(store, provider):
     from pathlib import Path
-    from daeri.setup_yaml import parse_yaml
+    from daeri.config.setup_yaml import parse_yaml
     draft = create_draft(store, 'production', embedding=provider)
     text = Path(draft['path']).read_text(encoding='utf-8')
     lines = text.splitlines()
@@ -443,7 +444,7 @@ def test_embedding_draft_comments_explain_the_selected_fields_without_changing_v
 
 def test_api_embedding_comments_cover_connection_authentication_and_optional_fields(store):
     from pathlib import Path
-    from daeri.setup_yaml import parse_yaml
+    from daeri.config.setup_yaml import parse_yaml
     config = {'provider': 'api', 'adapter': 'openai_compatible',
         'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
         'credential_ref': 'env:COMPANY_EMBEDDING_TOKEN',
@@ -465,8 +466,8 @@ def test_api_embedding_comments_cover_connection_authentication_and_optional_fie
 
 def test_registered_api_template_uses_its_own_comments_and_nested_fields(store, monkeypatch):
     from pathlib import Path
-    from daeri.embedding import API_ADAPTERS
-    from daeri.setup_yaml import read_yaml
+    from daeri.infrastructure.embedding import API_ADAPTERS
+    from daeri.config.setup_yaml import read_yaml
 
     class CompanyFormat:
         field_comments = {'transport': '사내 API의 접속 방식입니다.'}
@@ -487,7 +488,7 @@ def test_registered_api_template_uses_its_own_comments_and_nested_fields(store, 
 
 
 def test_company_api_without_selected_adapter_stays_incomplete(store):
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     draft = create_draft(store, 'production', embedding='api')
     assert read_yaml(draft['path'])['embedding'] == {'provider': 'api', 'adapter': None}
     result = validate_draft(store, 'production')
@@ -522,7 +523,7 @@ def test_supported_api_adapter_with_incomplete_fields_reports_embedding(store):
 
 
 def test_explicit_adapter_selection_completes_a_pending_api_template(store):
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     draft = create_draft(store, 'production', embedding='api')
     create_draft(store, 'production', embedding='api', embedding_adapter='openai_compatible')
     embedding = read_yaml(draft['path'])['embedding']
@@ -570,7 +571,7 @@ def test_reopening_legacy_api_draft_preserves_user_edited_bytes(store, provider,
 
 
 def test_new_draft_reuses_existing_api_settings_for_the_same_adapter(store):
-    from daeri.setup_yaml import read_yaml
+    from daeri.config.setup_yaml import read_yaml
     profile = store.put_profile('production', embedding={'provider': 'openai_compatible',
         'endpoint': 'https://embedding.example.test/v1/embeddings', 'model': 'company-model',
         'credential_ref': 'credential:production.embedding'})
@@ -615,7 +616,7 @@ def test_profile_deletion_removes_owned_draft_and_keeps_external_copy(store, tmp
     draft = completed(store)
     apply_draft(store, 'production', validate_draft(store, 'production')['confirmation_token'])
     from pathlib import Path
-    from daeri.setup import preview_profile_deletion, delete_profile
+    from daeri.config.setup import preview_profile_deletion, delete_profile
     outside = tmp_path / 'backup.yaml'
     outside.write_bytes(Path(draft['path']).read_bytes())
     class Credentials:

@@ -7,8 +7,9 @@ import sys
 
 import pytest
 
-from daeri import setup
-from daeri.storage import Store, StoreError
+import daeri.config.setup as setup
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 def values_file(tmp_path, values):
@@ -259,7 +260,7 @@ def test_new_cache_setup_does_not_confirm_tls_without_an_answer(tmp_path):
 
 
 def test_adapter_object_field_cannot_bypass_its_nested_required_values(tmp_path, monkeypatch):
-    from daeri.adapters import get_adapter
+    from daeri.infrastructure.adapters import get_adapter
     adapter = get_adapter('postgres_read')
     fields = copy.deepcopy(adapter.setup_fields)
     fields['options'] = {'required': False, 'paths': [['target', 'options']],

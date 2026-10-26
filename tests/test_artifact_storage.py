@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 def test_managed_artifacts_have_integrity_expiry_and_no_arbitrary_paths(tmp_path):

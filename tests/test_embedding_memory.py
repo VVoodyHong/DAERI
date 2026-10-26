@@ -5,9 +5,10 @@ import json
 
 import pytest
 
-from daeri.memory import MemoryService
-from daeri.setup import export_profile, import_profile
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.memory import MemoryService
+from daeri.config.setup import export_profile, import_profile
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 from test_memory import (NumericalFixtureEmbedder, candidate, configured_resource,
                          memory_policy, save, source)
 
@@ -41,7 +42,7 @@ class RecordingAPI(NumericalFixtureEmbedder):
 @pytest.fixture
 def api(monkeypatch):
     RecordingAPI.calls = []
-    monkeypatch.setattr("daeri.memory.create_api_embedder", RecordingAPI)
+    monkeypatch.setattr("daeri.infrastructure.memory.create_api_embedder", RecordingAPI)
     return RecordingAPI
 
 
@@ -59,7 +60,7 @@ def test_profile_embedding_configuration_round_trips_and_preserves_on_update(tmp
 
 
 def test_api_selection_indexes_and_searches_without_local_model(tmp_path, api, monkeypatch):
-    monkeypatch.setattr("daeri.memory.LocalEmbedder.load", lambda *a: pytest.fail("API mode loaded a local model"))
+    monkeypatch.setattr("daeri.infrastructure.memory.LocalEmbedder.load", lambda *a: pytest.fail("API mode loaded a local model"))
     with closing(Store(tmp_path)) as store:
         selected = profile(store, embedding=api_config())
         service = MemoryService(store)
@@ -72,16 +73,16 @@ def test_api_selection_indexes_and_searches_without_local_model(tmp_path, api, m
 
 
 @pytest.mark.parametrize('pending_index', [False, True])
-def test_engine_distinguishes_complete_keyword_search_from_pending_index(tmp_path, pending_index):
-    from daeri.engine import Engine
-    with closing(Engine(tmp_path)) as engine:
-        selected = profile(engine.store, embedding={'provider': 'keyword_only'})
-        item = save(engine.memory, selected)
+def test_runtime_distinguishes_complete_keyword_search_from_pending_index(tmp_path, pending_index):
+    from daeri.application.runtime import Runtime
+    with closing(Runtime(tmp_path)) as runtime:
+        selected = profile(runtime.store, embedding={'provider': 'keyword_only'})
+        item = save(runtime.memory, selected)
         if pending_index:
-            engine.store._db.execute('DELETE FROM memory_fts WHERE memory_ref=?', (item['memory_ref'],))
-        task = engine.call('daeri_task_create', {'request_id': 'keyword-task',
+            runtime.store._db.execute('DELETE FROM memory_fts WHERE memory_ref=?', (item['memory_ref'],))
+        task = runtime.call('daeri_task_create', {'request_id': 'keyword-task',
             'request_text': 'E_CONN_001 처리 방법을 찾아줘', 'context': {'profile_id': selected['profile_id']}})
-        result = engine.call('daeri_memory_search', {'task_id': task['data']['task_id'], 'query': 'E_CONN_001'})
+        result = runtime.call('daeri_memory_search', {'task_id': task['data']['task_id'], 'query': 'E_CONN_001'})
         assert result['data']['retrieval_state'] == 'keyword_only'
         if pending_index:
             assert result['status'] == 'partial'
@@ -94,13 +95,13 @@ def test_engine_distinguishes_complete_keyword_search_from_pending_index(tmp_pat
             assert result['data']['items']
 
 
-def test_engine_returns_complete_empty_keyword_search(tmp_path):
-    from daeri.engine import Engine
-    with closing(Engine(tmp_path)) as engine:
-        selected = profile(engine.store, embedding={'provider': 'keyword_only'})
-        task = engine.call('daeri_task_create', {'request_id': 'empty-keyword-task',
+def test_runtime_returns_complete_empty_keyword_search(tmp_path):
+    from daeri.application.runtime import Runtime
+    with closing(Runtime(tmp_path)) as runtime:
+        selected = profile(runtime.store, embedding={'provider': 'keyword_only'})
+        task = runtime.call('daeri_task_create', {'request_id': 'empty-keyword-task',
             'request_text': '운영 경험을 찾아줘', 'context': {'profile_id': selected['profile_id']}})
-        result = engine.call('daeri_memory_search', {'task_id': task['data']['task_id'], 'query': '운영'})
+        result = runtime.call('daeri_memory_search', {'task_id': task['data']['task_id'], 'query': '운영'})
         assert result['status'] == 'ok'
         assert result['error'] is None
         assert result['data']['items'] == []
@@ -109,17 +110,17 @@ def test_engine_returns_complete_empty_keyword_search(tmp_path):
 
 @pytest.mark.parametrize("hide_existing", [False, True])
 def test_api_empty_eligible_search_is_complete_without_a_provider_request(tmp_path, api, hide_existing):
-    from daeri.engine import Engine
-    with closing(Engine(tmp_path)) as engine:
-        selected = profile(engine.store, embedding=api_config())
+    from daeri.application.runtime import Runtime
+    with closing(Runtime(tmp_path)) as runtime:
+        selected = profile(runtime.store, embedding=api_config())
         if hide_existing:
-            save(engine.memory, selected)
-            engine.store.put_profile("alpha", resources=selected["resources"],
+            save(runtime.memory, selected)
+            runtime.store.put_profile("alpha", resources=selected["resources"],
                 memory_policy=memory_policy(model_allowed=False))
         api.calls.clear()
-        task = engine.call("daeri_task_create", {"request_id": "empty-api", "request_text": "운영 경험 조회",
+        task = runtime.call("daeri_task_create", {"request_id": "empty-api", "request_text": "운영 경험 조회",
             "context": {"profile_id": selected["profile_id"]}})["data"]
-        result = engine.call("daeri_memory_search", {"task_id": task["task_id"], "query": "운영 경험"})
+        result = runtime.call("daeri_memory_search", {"task_id": task["task_id"], "query": "운영 경험"})
         assert result["status"] == "ok", result
         assert result["error"] is None
         assert result["data"]["items"] == []
@@ -204,14 +205,14 @@ def test_keyword_only_index_is_ready_without_pending_vector_work(tmp_path, api):
 
 
 def test_embedding_credential_is_tracked_for_profile_deletion(tmp_path):
-    from daeri.profile_deletion import resource_references
+    from daeri.config.profile_deletion import resource_references
     with closing(Store(tmp_path)) as store:
         selected = profile(store, embedding=api_config())
         assert ("credential", "credential:company-embedding") in resource_references(selected)
 
 
 def test_configure_embedding_requires_inspected_revision_and_preserves_other_settings(tmp_path):
-    from daeri.setup import configure_embedding
+    from daeri.config.setup import configure_embedding
     with closing(Store(tmp_path / "data")) as store:
         selected = profile(store)
         path = tmp_path / "embedding.json"

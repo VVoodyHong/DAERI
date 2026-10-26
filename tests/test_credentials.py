@@ -1,7 +1,7 @@
 import pytest
 
-from daeri.credentials import Credentials
-from daeri.storage import StoreError
+from daeri.infrastructure.credentials import Credentials
+from daeri.core.errors import StoreError
 
 
 class NativeStore:

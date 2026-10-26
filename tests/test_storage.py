@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -483,7 +484,7 @@ def test_replaced_special_files_never_block_storage_reads_or_startup(store, kind
     script = '''
 from pathlib import Path
 import sys
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.storage import Store, StoreError
 store = Store(Path(sys.argv[1]))
 try:
     if sys.argv[2] == 'profile':
@@ -677,7 +678,7 @@ def test_sqlite_special_files_are_rejected_without_blocking_or_replacing_them(tm
     script = '''
 from pathlib import Path
 import sys
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.storage import Store, StoreError
 try:
     store = Store(Path(sys.argv[1]))
 except StoreError as error:
@@ -777,7 +778,7 @@ def test_invalid_profile_memory_policy_never_creates_a_revision(store, policy):
 def test_windows_process_probe_never_sends_a_signal_and_closes_handles(monkeypatch, outcome, expected):
     import sys
     from types import SimpleNamespace
-    from daeri import storage
+    import daeri.infrastructure.storage as storage
     closed = []
     def open_process(access, inherit, pid):
         assert (access, inherit, pid) == (0x100000, False, 123)
@@ -799,7 +800,7 @@ def test_windows_process_probe_never_sends_a_signal_and_closes_handles(monkeypat
 @pytest.mark.parametrize('error,expected', [(None, True), (ProcessLookupError(), False), (PermissionError(), True)])
 def test_posix_process_probe_distinguishes_dead_from_uncertain_owners(monkeypatch, error, expected):
     from types import SimpleNamespace
-    from daeri import storage
+    import daeri.infrastructure.storage as storage
     def probe(pid, signal):
         assert (pid, signal) == (123, 0)
         if error:
@@ -811,7 +812,7 @@ def test_posix_process_probe_distinguishes_dead_from_uncertain_owners(monkeypatc
 
 @pytest.mark.parametrize('pid', [0, -1, 0x100000000, True])
 def test_invalid_process_ids_never_target_a_process_or_process_group(monkeypatch, pid):
-    from daeri.storage import process_alive
+    from daeri.infrastructure.storage import process_alive
     monkeypatch.setattr(os, 'kill', lambda *args: pytest.fail('Invalid owners cannot be probed'))
     with pytest.raises(ValueError):
         process_alive(pid)

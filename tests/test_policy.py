@@ -1,7 +1,7 @@
 import pytest
 
-from daeri.policy import pointer_get, pointer_set, project, selector_paths, validate_selectors
-from daeri.storage import StoreError
+from daeri.core.policy import pointer_get, pointer_set, project, selector_paths, validate_selectors
+from daeri.core.errors import StoreError
 
 
 def select(*parts):

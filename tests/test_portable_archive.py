@@ -11,8 +11,8 @@ import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-from daeri import portable_archive
-from daeri.storage import StoreError
+import daeri.config.portable_archive as portable_archive
+from daeri.core.errors import StoreError
 
 
 PASSPHRASE = 'a private archive passphrase'

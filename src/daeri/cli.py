@@ -20,7 +20,7 @@ def data_directory(value=None):
         if configured == '~' or configured.startswith('~/') or (os.name == 'nt' and configured.startswith('~\\')):
             directory = directory.expanduser()
         if not directory.is_absolute():
-            from .storage import StoreError
+            from daeri.core.errors import StoreError
             raise StoreError('INVALID_INPUT', 'DAERI_DATA_DIR must be an absolute path or a current-user home path.')
         return directory.resolve()
     if sys.platform == "darwin":
@@ -56,7 +56,6 @@ def check_environment():
         "vector_search_ready": False,
         "resource_execution_ready": False,
     }
-
 
 
 def _error(code='INVALID_INPUT'):
@@ -165,8 +164,8 @@ def _parser():
 
 
 def _auth(args):
-    from .credentials import Credentials
-    from .storage import StoreError
+    from daeri.infrastructure.credentials import Credentials
+    from daeri.core.errors import StoreError
     credentials = Credentials()
     if args.auth_command == 'set':
         credentials._name(args.reference)
@@ -202,7 +201,7 @@ def _auth(args):
 
 
 def _archive_password(args):
-    from .storage import StoreError
+    from daeri.core.errors import StoreError
     if args.password_file is not None:
         try:
             path = args.password_file
@@ -252,17 +251,17 @@ def _profile_archive(args):
     if passphrase is None:
         return {'status': 'input_required',
                 'message': '사용자 터미널의 숨김 입력이나 비공개 --password-file로 백업 암호를 제공해 주세요.'}
-    from .profile_portability import backup_profile, inspect_backup, restore_profile
+    from daeri.config.profile_portability import backup_profile, inspect_backup, restore_profile
     if args.profile_command == 'backup':
-        from .engine import Engine
-        engine = Engine(data_directory(args.data_dir))
+        from daeri.application.runtime import Runtime
+        runtime = Runtime(data_directory(args.data_dir))
         try:
-            return backup_profile(engine, args.name_or_id, args.archive_file, passphrase)
+            return backup_profile(runtime, args.name_or_id, args.archive_file, passphrase)
         finally:
-            engine.close()
+            runtime.close()
     if args.confirm is None:
         return inspect_backup(args.archive_file, passphrase)
-    from .storage import Store
+    from daeri.infrastructure.storage import Store
     store = Store(data_directory(args.data_dir))
     try:
         return restore_profile(store, args.archive_file, passphrase, args.confirm)
@@ -271,15 +270,15 @@ def _profile_archive(args):
 
 
 def _with_store(args):
-    from .storage import Store
-    from .security import redact
-    from .setup import export_profile, import_profile, login_resource, prepare_resource
+    from daeri.infrastructure.storage import Store
+    from daeri.core.security import redact
+    from daeri.config.setup import export_profile, import_profile, login_resource, prepare_resource
     store = Store(data_directory(args.data_dir))
     try:
         if args.command == 'setup':
-            from .onboarding import create_draft, validate_draft, apply_draft
+            from daeri.config.onboarding import create_draft, validate_draft, apply_draft
             if args.setup_command == 'draft':
-                from .storage import StoreError
+                from daeri.core.errors import StoreError
                 selected, recipes = {}, []
                 for value in args.resource:
                     if '=' not in value:
@@ -296,7 +295,7 @@ def _with_store(args):
             return apply_draft(store, args.profile, args.confirm)
         if args.command == 'profile':
             if args.profile_command == 'delete':
-                from .setup import delete_profile, preview_profile_deletion
+                from daeri.config.setup import delete_profile, preview_profile_deletion
                 return (delete_profile(store, args.name_or_id, args.confirm) if args.confirm is not None
                         else preview_profile_deletion(store, args.name_or_id))
             if args.profile_command == 'create':
@@ -309,7 +308,7 @@ def _with_store(args):
             return store.get_profile(args.name_or_id)
         if args.command == 'resource':
             if args.resource_command == 'configure':
-                from .setup import configure_resource
+                from daeri.config.setup import configure_resource
                 return configure_resource(store, args.recipe, args.profile, args.instance,
                                           args.values_file, expected_revision=args.expected_revision,
                                           refresh_contract=args.refresh_contract)
@@ -318,18 +317,18 @@ def _with_store(args):
                                       sso_region=args.sso_region, role=args.role, no_browser=args.no_browser)
             if args.resource_command == 'prepare':
                 return prepare_resource(store, args.profile, args.instance, args.recipe)
-            from .resources import ResourceRegistry
-            from .credentials import Credentials
+            from daeri.infrastructure.resources import ResourceRegistry
+            from daeri.infrastructure.credentials import Credentials
             return ResourceRegistry(store, Credentials().get).diagnose(store.get_profile(args.profile), args.instance)
-        from .memory import LocalEmbedder, MemoryService
+        from daeri.infrastructure.memory import LocalEmbedder, MemoryService
         if args.command == 'cleanup':
             return {'records': store.cleanup(), 'memory': MemoryService(store, auto_load=False).cleanup()}
         if args.memory_command == 'configure':
-            from .setup import configure_embedding
+            from daeri.config.setup import configure_embedding
             return configure_embedding(store, args.profile, args.config_file, expected_revision=args.expected_revision)
         selected = store.get_profile(args.profile) if args.profile else None
         if args.memory_command == 'prepare':
-            from .storage import StoreError
+            from daeri.core.errors import StoreError
             if selected and selected['embedding']['provider'] != 'local':
                 raise StoreError('INVALID_INPUT', 'Only a local embedding profile can prepare a local model.')
             embedder = LocalEmbedder.prepare(store.data_dir / 'models')
@@ -359,7 +358,7 @@ def main():
             code = 0 if result['ready'] else 1
         elif args.command == 'setup' and args.setup_command in {'catalog', 'status'}:
             from types import SimpleNamespace
-            from .onboarding import selection_catalog, draft_status
+            from daeri.config.onboarding import selection_catalog, draft_status
             result = (selection_catalog() if args.setup_command == 'catalog' else
                       draft_status(SimpleNamespace(data_dir=data_directory(args.data_dir)), args.profile))
             code = 0
@@ -369,7 +368,7 @@ def main():
             result, code = _profile_archive(args), 0
         elif args.command == 'resource' and args.resource_command in {'catalog', 'template', 'setup-schema', 'validate-setup'}:
             from types import SimpleNamespace
-            from .setup import load_catalog, profile_template, setup_schema, validate_setup
+            from daeri.config.setup import load_catalog, profile_template, setup_schema, validate_setup
             if args.resource_command == 'catalog': result = load_catalog()
             elif args.resource_command == 'setup-schema': result = setup_schema(args.recipe)
             elif args.resource_command == 'validate-setup': result = validate_setup(args.recipe, args.values_file)

@@ -6,9 +6,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from daeri.knowledge import replay, source_leaves, update
-from daeri.memory import MemoryService
-from daeri.storage import Store, StoreError
+from daeri.application.knowledge import replay, source_leaves, update
+from daeri.infrastructure.memory import MemoryService
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 def select(*parts):
@@ -19,7 +20,7 @@ def timestamp(days=0):
     return (datetime.now(UTC) + timedelta(days=days)).isoformat()
 
 
-class LocalEngine:
+class LocalRuntime:
     def __init__(self, directory):
         self.store = Store(directory)
         target = {"server": "https://git.example.test", "project": "team/service"}
@@ -84,13 +85,13 @@ class LocalEngine:
 
 @pytest.fixture
 def runtime(tmp_path):
-    engine = LocalEngine(tmp_path)
-    yield engine
-    engine.store.close()
+    runtime = LocalRuntime(tmp_path)
+    yield runtime
+    runtime.store.close()
 
 
-def arguments(engine, references, **changes):
-    return {"request_id": "update-one", "task_id": engine.task["task_id"], "expected_task_revision": engine.task["task_revision"],
+def arguments(runtime, references, **changes):
+    return {"request_id": "update-one", "task_id": runtime.task["task_id"], "expected_task_revision": runtime.task["task_revision"],
         "operation": "store", "source_refs": references, "reason": "확인한 서비스 용어 재사용",
         "draft": {"category": "service_rule", "statement": "결제 완료는 확인한 상태 필드로 판단한다", "applicability": "이 서비스의 주문 집계",
                   "instance_ids": ["source-one"], "verification_method": "실제 조회한 필드 의미와 대조"}, **changes}
@@ -117,11 +118,11 @@ def test_memory_does_not_bypass_plan_actual_source_or_owner(runtime, which):
     ref = runtime.record()
     args = arguments(runtime, [ref])
     if which == "memory_source_fields":
-        runtime.plan["draft"]["output"]["resource_rules"][0]["memory"]["source_fields"] = [select("rows", Ellipsis, "term")]
+        runtime.plan["draft"]["output"]["resource_rules"][0]["memory"]["source_fields"] = []
     elif which == "provided_retention":
-        runtime.records[ref]["retained_paths"] = ["/rows/0/term"]
+        runtime.records[ref]["retained_paths"] = []
     elif which == "current_access":
-        runtime.records[ref]["allowed_paths"] = ["/rows/0/term"]
+        runtime.records[ref]["allowed_paths"] = []
     elif which == "category":
         runtime.plan["draft"]["output"]["resource_rules"][0]["memory"]["categories"] = ["lesson"]
     elif which == "approval":
@@ -138,6 +139,22 @@ def test_memory_does_not_bypass_plan_actual_source_or_owner(runtime, which):
         update(runtime, args, runtime.task)
     assert runtime.store._db.execute("SELECT count(*) FROM memory_versions").fetchone()[0] == 0
     assert runtime.task["task_revision"] == 1
+
+
+@pytest.mark.parametrize("restriction", ["memory_source_fields", "provided_retention", "current_access", "projected_source"])
+def test_curated_memory_uses_permitted_sources_without_inheriting_an_unused_field(runtime, restriction):
+    reference = runtime.record()
+    if restriction == "memory_source_fields":
+        runtime.plan["draft"]["output"]["resource_rules"][0]["memory"]["source_fields"] = [select("rows", Ellipsis, "term")]
+    else:
+        key = "retained_paths" if restriction == "provided_retention" else "allowed_paths"
+        runtime.records[reference][key] = ["/rows/0/term"]
+        if restriction == "projected_source":
+            runtime.records[reference]["result"] = {"rows": [{"term": "결제 완료 기준"}]}
+    saved = update(runtime, arguments(runtime, [reference]), runtime.task)
+    memory = runtime.memory.get(runtime.profile["profile_id"], saved["data"]["memory_ref"])
+    assert memory["sources"][0]["fields"] == [select("rows", 0, "term")]
+    assert memory["statement"] == "결제 완료는 확인한 상태 필드로 판단한다"
 
 
 def test_user_context_requires_explicit_context_source_permission(runtime):

@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from daeri.setup import (export_profile, import_profile, load_catalog, profile_template,
-                         prepare_resource, prepared_executable)
-from daeri.storage import Store, StoreError
+from daeri.config.setup import export_profile, import_profile, load_catalog, profile_template, prepare_resource, prepared_executable
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 @pytest.fixture
@@ -61,10 +61,27 @@ def test_import_and_export_keep_only_portable_configuration(store, tmp_path):
     assert import_profile(store, config_file(tmp_path, config))['revision'] == 2
 
 
+@pytest.mark.parametrize('url', [['https://mcp.example.test/mcp'], {'url': 'https://mcp.example.test/mcp'}, 1,
+                                 'https://[invalid'])
+def test_import_cli_returns_invalid_input_for_malformed_remote_urls(tmp_path, monkeypatch, capsys, url):
+    from daeri.cli import main
+
+    item = resource()
+    item['connection'] = {'transport': 'streamable_http', 'url': url}
+    path = config_file(tmp_path, {'name': 'service', 'resources': [item]})
+    monkeypatch.setattr(sys, 'argv', ['daeri', '--data-dir', str(tmp_path / 'private'), 'profile', 'import', str(path)])
+    assert main() == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)['error']['code'] == 'INVALID_INPUT'
+    assert captured.err == ''
+    with closing(Store(tmp_path / 'private')) as store:
+        assert store.list_profiles() == []
+
+
 @pytest.mark.parametrize('origin', ['posix', 'windows'])
 def test_import_relocates_managed_recipe_commands_without_changing_configuration(store, tmp_path, origin):
     from pathlib import PureWindowsPath
-    from daeri.setup import build_setup_resource
+    from daeri.config.setup import build_setup_resource
     answers = {
         'db-postgres': {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'},
         'cache-redis': {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True},
@@ -244,7 +261,7 @@ def test_template_uses_registered_adapter_target_without_sharing_mutable_values(
     adapter = SimpleNamespace(adapter_id='postgres_read', resource_type='DB',
                               target_template={'host': 'SET-ME', 'port': 6000,
                                                'options': {'read_only': True}})
-    monkeypatch.setattr('daeri.setup.get_adapter', lambda identifier: adapter)
+    monkeypatch.setattr('daeri.config.setup.get_adapter', lambda identifier: adapter)
     template = profile_template(store, 'db-postgres', 'service', 'database')['resources'][0]
     assert template['target'] == {'host': 'SET-ME', 'port': 6000, 'options': {'read_only': True}}
     template['target']['options']['read_only'] = False
@@ -256,7 +273,7 @@ def test_template_uses_registered_adapter_target_without_sharing_mutable_values(
 def test_template_rejects_unknown_adapter_or_wrong_resource_type(store, monkeypatch, changes):
     catalog = load_catalog()
     catalog['db-postgres'].update(changes)
-    monkeypatch.setattr('daeri.setup.load_catalog', lambda: catalog)
+    monkeypatch.setattr('daeri.config.setup.load_catalog', lambda: catalog)
     with pytest.raises(StoreError):
         profile_template(store, 'db-postgres', 'service', 'database')
 
@@ -284,7 +301,7 @@ def prepared_resource(store):
 def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store, tmp_path, private_uv, monkeypatch):
     from contextlib import asynccontextmanager
     from mcp.types import ListToolsResult, Tool
-    from daeri.resources import ResourceRegistry
+    from daeri.infrastructure.resources import ResourceRegistry
 
     prepared_resource(store)
     exported = config_file(tmp_path, export_profile(store, 'service'))
@@ -305,7 +322,7 @@ def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store
                 return subprocess.CompletedProcess(args, 0, stdout='0.21.0\n', stderr='')
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
-        monkeypatch.setattr('daeri.setup.subprocess.run', run)
+        monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
         ready = prepare_resource(destination, 'service', 'source-one', 'source-gitlab')
         assert ready['ready'] is True and ready['reused'] is False
         assert ready['command'] == str(command) and command.is_file()
@@ -328,8 +345,8 @@ def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store
                                                     'ref': {'type': 'string'}, 'file_path': {'type': 'string'}},
                     'required': ['project_id', 'ref', 'file_path'], 'additionalProperties': False})])
 
-        monkeypatch.setattr('daeri.resources.stdio_client', transport)
-        monkeypatch.setattr('daeri.resources.ClientSession', Session)
+        monkeypatch.setattr('daeri.infrastructure.resources.stdio_client', transport)
+        monkeypatch.setattr('daeri.infrastructure.resources.ClientSession', Session)
         registry = ResourceRegistry(destination, lambda ref: 'local-private')
         diagnosed = registry.diagnose(imported, 'source-one')
         assert diagnosed['ready'] is True and diagnosed['capability_count'] == 1
@@ -358,7 +375,7 @@ def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, 
         elif args[1:3] == ['-I', '-c']:
             return subprocess.CompletedProcess(args, 0, stdout='0.21.0\n', stderr='')
         return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
-    monkeypatch.setattr('daeri.setup.subprocess.run', run)
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
     result = prepare_resource(store, 'service', 'source-one', 'source-gitlab')
     assert result['ready'] is True
     assert Path(result['command']).is_file()
@@ -376,7 +393,7 @@ def test_failed_prepare_never_changes_profile_or_publishes_program(store, privat
     revision = store.get_profile('service')['revision']
     def failed(*args, **kwargs):
         raise subprocess.TimeoutExpired('uv', 300)
-    monkeypatch.setattr('daeri.setup.subprocess.run', failed)
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', failed)
     with pytest.raises(StoreError):
         prepare_resource(store, 'service', 'source-one', 'source-gitlab')
     assert store.get_profile('service')['revision'] == revision
@@ -385,7 +402,7 @@ def test_failed_prepare_never_changes_profile_or_publishes_program(store, privat
 
 @pytest.mark.parametrize('changed', [{'port': 6380}, {'db': 1}, {'tls': False}])
 def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp_path, monkeypatch, changed):
-    from daeri.setup import configure_resource, validate_setup
+    from daeri.config.setup import configure_resource, validate_setup
     values = {'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'tls': True, **changed}
     path = config_file(tmp_path, values)
     assert validate_setup('cache-redis', path)['complete'] is True
@@ -406,7 +423,7 @@ def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp
             return subprocess.CompletedProcess(args, 0, stdout='0.5.1\n', stderr='')
         return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
-    monkeypatch.setattr('daeri.setup.subprocess.run', run)
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
     result = prepare_resource(store, 'service', 'cache-one', 'cache-redis')
     assert result['ready'] is True
     assert Path(result['command']).is_file()
@@ -416,7 +433,7 @@ def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp
 def test_prepare_still_rejects_a_disabled_recipe_safety_setting(store, private_uv, monkeypatch):
     configured = prepared_resource(store)
     configured['connection']['env']['MCP_READ_ONLY'] = 'false'
-    monkeypatch.setattr('daeri.setup.subprocess.run', lambda *args, **kwargs:
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', lambda *args, **kwargs:
                         pytest.fail('Unsafe recipe settings must not start program preparation'))
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
         store.put_profile('service', resources=[configured])
@@ -424,7 +441,7 @@ def test_prepare_still_rejects_a_disabled_recipe_safety_setting(store, private_u
 
 @pytest.mark.parametrize('invalid_response', [None, 'prompt-profile', 'result-account', 'extra-field'])
 def test_login_forwards_only_public_device_authorization_and_keeps_profile_revision(store, monkeypatch, invalid_response):
-    from daeri.setup import login_resource
+    from daeri.config.setup import login_resource
     value = profile_template(store, 'infra-aws', 'service', 'infra-one')['resources'][0]
     value['target'] = {'profile': 'operations', 'region': 'ap-northeast-2', 'account': '111111111111'}
     value['connection']['env'].update(AWS_PROFILE='operations', AWS_REGION='ap-northeast-2')
@@ -446,9 +463,9 @@ print(json.dumps({'status':'ok','data':completion,'error':None}),flush=True)
 """
     monkeypatch.setenv('PYTHONHOME', '/unrelated-python')
     monkeypatch.setenv('UV_PROJECT_ENVIRONMENT', '/unrelated-environment')
-    monkeypatch.setattr('daeri.setup.subprocess.Popen', lambda args, **kwargs:
+    monkeypatch.setattr('daeri.config.setup.subprocess.Popen', lambda args, **kwargs:
                         real_popen([sys.executable, *args[1:-1], '-c', child], **kwargs))
-    monkeypatch.setattr('daeri.setup._verify', lambda environment, item: None)
+    monkeypatch.setattr('daeri.config.setup._verify', lambda environment, item: None)
     events = []
     if invalid_response is None:
         result = login_resource(store, 'service', 'infra-one', role='Reader', emit=events.append)
@@ -465,16 +482,16 @@ print(json.dumps({'status':'ok','data':completion,'error':None}),flush=True)
 
 
 def test_login_rejects_adapters_without_a_registered_login_hook(store, monkeypatch):
-    from daeri.setup import login_resource
+    from daeri.config.setup import login_resource
     prepared_resource(store)
-    monkeypatch.setattr('daeri.setup._verify', lambda *args: pytest.fail('Unsupported login must not inspect or start a prepared program'))
+    monkeypatch.setattr('daeri.config.setup._verify', lambda *args: pytest.fail('Unsupported login must not inspect or start a prepared program'))
     with pytest.raises(StoreError) as caught:
         login_resource(store, 'service', 'source-one')
     assert caught.value.code == 'INVALID_INPUT'
 
 
 def test_preparation_child_drops_program_overrides_but_keeps_explicit_user_context(tmp_path, monkeypatch):
-    from daeri.setup import _run
+    from daeri.config.setup import _run
     overrides = {
         'PYTHONPATH': str(tmp_path / 'foreign-packages'),
         'PYTHONHOME': str(tmp_path / 'foreign-python'),
@@ -500,7 +517,7 @@ def test_preparation_child_drops_program_overrides_but_keeps_explicit_user_conte
 
 
 def test_resource_verification_ignores_current_directory_imports(tmp_path, monkeypatch):
-    from daeri.setup import _verify
+    from daeri.config.setup import _verify
     import venv
     environment = tmp_path / 'tool'
     venv.EnvBuilder(with_pip=False).create(environment)

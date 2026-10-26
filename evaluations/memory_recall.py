@@ -14,11 +14,12 @@ from time import perf_counter
 from unittest.mock import patch
 from uuid import UUID
 
-from daeri.embedding import validate_embedding_config
-from daeri.memory import LocalEmbedder, MemoryService
-from daeri.policy import effective_profile_memory_policy, effective_resource_policy
-from daeri.setup_yaml import read_yaml
-from daeri.storage import Store, StoreError
+from daeri.infrastructure.embedding import validate_embedding_config
+from daeri.infrastructure.memory import LocalEmbedder, MemoryService
+from daeri.core.policy import effective_profile_memory_policy, effective_resource_policy
+from daeri.config.setup_yaml import read_yaml
+from daeri.infrastructure.storage import Store
+from daeri.core.errors import StoreError
 
 
 DATASET = Path(__file__).with_suffix('.json')
@@ -146,7 +147,7 @@ def evaluate(dataset, embedding, *, model_cache=None, top_k=5):
             service = MemoryService(store, embedder=embedder, auto_load=False)
             # Canonical tie breaks use refs; stable fixture UUIDs make repeated rankings comparable.
             sequence = count(1)
-            with patch('daeri.memory.uuid4', side_effect=lambda: UUID(int=next(sequence))):
+            with patch('daeri.infrastructure.memory.uuid4', side_effect=lambda: UUID(int=next(sequence))):
                 profile_id, references, permitted, indexed = _seed(service, dataset, embedding)
             names = {reference: name for name, reference in references.items()}
             cases = []

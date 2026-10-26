@@ -14,7 +14,7 @@ profile은 대화 입력, 선택·확인은 호스트 질문 도구, 접속 정�
 `../../`는 설치된 플러그인 루트다.
 macOS는 `DAERI_MANAGE="<루트>/scripts/manage.sh"`로 스크립트 경로를 정하고 `sh "$DAERI_MANAGE" check`처럼 각 관리 인수를 분리해 전달한다.
 Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\manage.ps1"` 뒤에 각 관리 인수를 전달한다.
-실행기가 반환한 `setup_required`는 정상적인 첫 준비 상태다.
+runtime이 반환한 `setup_required`는 정상적인 첫 준비 상태다.
 상세 계약이 필요한 단계에서는 링크한 해당 절을 호스트의 파일 읽기 도구로 확인한다.
 
 ## 시작 로고
@@ -29,7 +29,7 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
  / /_/ / ___ |/ /___/ _, _// /
 /_____/_/  |_/_____/_/ |_/___/
 
-       AI OPERATIONS AGENT
+   MULTI ORCHESTRATION AGENT
 ```
 
 ## 세팅 순서
@@ -42,7 +42,7 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    `setup_required`이면 macOS는 `sh "<루트>/scripts/setup.sh" --prepare`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\setup.ps1" -Prepare`로 준비한다.
    `check`의 `version`과 플러그인 `pyproject.toml`의 버전을 대조하고 차이가 있으면 확인한 세팅 범위에서 환경을 준비한다.
    준비 완료 뒤 `check`의 `ready`·버전 일치를 확인하고 `profile list`로 기존 설정을 읽는다.
-   `ready: true`여도 `operations` 도구가 열거되지 않았으면 루트 `.mcp.json`의 존재를 확인한다.
+   `ready: true`여도 `runtime` 서버의 도구가 열거되지 않았으면 루트 `.mcp.json`의 존재를 확인한다.
    파일이 없으면 이미 시작에 동의한 세팅 범위에서 위 준비 명령을 다시 실행한다.
    준비 과정이 생성한 MCP 연결 구성은 [호스트별 다시 읽기](../../docs/spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)로 반영한다.
    실제 MCP 초기화·도구 목록 확인은 로컬 준비 결과와 구분하고, 현재 대화에서 연결이 아직 준비되지 않았으면 관리 진입으로 설정을 이어간다.
@@ -67,9 +67,9 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    규격 확인이 남으면 미완료 API 초안을 보존하고 회사 API 계약 확인 또는 키워드 검색 전환으로 이어간다.
 5. 제품별 확인 개수만큼 연결을 구성해 `setup draft PROFILE`을 실행한다.
    각 연결은 선택한 `recipe_id`로 `--resource RECIPE`를, 사용자가 역할 이름을 지정했으면 `--resource INSTANCE=RECIPE`를 전달한다.
-   연결 이름은 실행기의 [이름 규칙](../../docs/spec/configuration/profiles.md#공통-구조와-어댑터-입력)을 사용한다.
+   연결 이름은 runtime의 [이름 규칙](../../docs/spec/configuration/profiles.md#공통-구조와-어댑터-입력)을 사용한다.
    새 임베딩 선택은 `--embedding`, 회사 API의 확인한 연결 방식은 `--embedding-adapter`로 전달한다.
-   기존 설정의 재개는 `setup draft PROFILE`로 경로를 확인하고 이전 위치의 파일은 실행기의 이관 결과를 사용한다.
+   기존 설정의 재개는 `setup draft PROFILE`로 경로를 확인하고 이전 위치의 파일은 runtime의 이관 결과를 사용한다.
    제품별 연결 개수와 반환한 파일 위치를 안내하고 접속 정보·인증값을 작성한 뒤 알려 달라고 요청한다.
    파일 내용은 로컬 DAERI의 검증·적용 결과로 확인하고 호스트는 인증 참조·등록 상태를 사용한다.
 6. 작성 완료 응답은 `setup validate PROFILE`로 이어간다.

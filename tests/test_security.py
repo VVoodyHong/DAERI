@@ -1,6 +1,6 @@
 import pytest
 
-from daeri.security import redact
+from daeri.core.security import redact
 
 
 @pytest.mark.parametrize("value", [

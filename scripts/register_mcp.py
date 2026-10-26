@@ -15,7 +15,7 @@ def main():
         raise RuntimeError('The plugin runtime is unavailable.')
     if destination.is_symlink():
         raise RuntimeError('The MCP configuration must belong to this installation.')
-    config = {'mcpServers': {'operations': {
+    config = {'mcpServers': {'runtime': {
         'command': str(python),
         'args': ['-I', '-m', 'daeri.server'],
         'env': {'__PYVENV_LAUNCHER__': ''},
