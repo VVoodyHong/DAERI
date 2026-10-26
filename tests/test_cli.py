@@ -318,8 +318,8 @@ def test_catalog_and_template_are_local_and_do_not_create_user_store(tmp_path):
     directory = tmp_path / 'absent'
     catalog = run_cli('--data-dir', str(directory), 'resource', 'catalog')
     assert catalog.returncode == 0, catalog.stdout + catalog.stderr
-    assert 'source-gitlab' in json.loads(catalog.stdout)
-    template = run_cli('--data-dir', str(directory), 'resource', 'template', 'source-gitlab',
+    assert 'source-local' in json.loads(catalog.stdout)
+    template = run_cli('--data-dir', str(directory), 'resource', 'template', 'source-local',
                        '--profile', 'service', '--instance', 'source-one')
     assert template.returncode == 0, template.stdout + template.stderr
     value = json.loads(template.stdout)

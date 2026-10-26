@@ -41,19 +41,14 @@
     "source": "https://awslabs.github.io/mcp/servers/aws-api-mcp-server/",
     "discover_tools": true
   },
-  "source-gitlab": {
-    "display_name": "GitLab",
+  "source-local": {
+    "display_name": "로컬 소스 코드",
     "type": "Source",
-    "adapter": "gitlab_read",
-    "package": "mcp-gitlab",
-    "version": "0.21.0",
-    "executable": "mcp-gitlab",
-    "args": [],
-    "env": {"MCP_READ_ONLY": "true", "GITLAB_URL": "", "GITLAB_SSL_VERIFY": "true"},
-    "auth_env": ["GITLAB_TOKEN"],
-    "capabilities": [{"capability_id": "read-file", "tool_name": "gitlab_get_file", "constraints": {}}],
-    "source": "https://github.com/vish288/mcp-gitlab",
-    "discover_tools": true
+    "adapter": "local_source",
+    "transport": "host",
+    "auth_env": [],
+    "capabilities": [{"capability_id": "source-observe", "tool_name": "source_observe", "constraints": {}}],
+    "discover_tools": false
   },
   "document-confluence": {
     "display_name": "Confluence",

@@ -55,13 +55,14 @@ def approve(store, vault):
 
 def test_selected_connections_generate_editable_credentials_with_registered_comments(store):
     draft = create_draft(store, 'production', recipes=['db-postgres', 'cache-redis', 'infra-aws',
-        'source-gitlab', 'document-confluence', 'issue-jira'], embedding='api',
+        'source-local', 'document-confluence', 'issue-jira'], embedding='api',
         embedding_adapter='openai_compatible')
     value = read_yaml(draft['path'])
     assert value['resources']['db']['credentials'] == {'password': None}
     assert value['resources']['cache']['credentials'] == {'password': None}
     assert 'credentials' not in value['resources']['infra']
-    for instance in ('source', 'document', 'issue'):
+    assert 'credentials' not in value['resources']['source']
+    for instance in ('document', 'issue'):
         assert value['resources'][instance]['credentials'] == {'token': None}
     assert value['embedding']['credentials'] == {'api_key': None}
     text = Path(draft['path']).read_text(encoding='utf-8')

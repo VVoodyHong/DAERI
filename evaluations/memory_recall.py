@@ -74,11 +74,11 @@ def score_case(expected, retrieved, top_k):
 
 
 def _resource(instance):
-    return {'instance_id': instance, 'type': 'Source', 'adapter': 'source_read',
+    return {'instance_id': instance, 'type': 'Document', 'adapter': 'document_read',
             'target': {'server': 'https://source.example.test', 'project': instance},
             'identity_ref': 'test:synthetic',
             'connection': {'transport': 'stdio', 'command': sys.executable, 'args': ['-c', 'pass']},
-            'capabilities': [{'capability_id': 'read', 'tool_name': 'get_repository_file', 'constraints': {}}]}
+            'capabilities': [{'capability_id': 'read', 'tool_name': 'confluence_get_page', 'constraints': {}}]}
 
 
 def _seed(service, dataset, embedding):

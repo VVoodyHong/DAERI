@@ -38,7 +38,8 @@ description: DAERI profile을 대상으로 새 업무를 요청하거나 저장�
    `daeri_approval_request`에 `task_id`·표시한 `plan_id`·해석한 `decision`·실제 `user_response`를 전달한다.
    조건 변경은 수정 계획, 모호한 답변은 미결 결정으로 연결한다.
 5. 승인한 범위 안에서 도구·질의·후속 페이지·분석·재시도·위임과 다음 행동을 자율적으로 선택한다.
-   실제 리소스 호출은 `daeri_capability_execute`의 `task_id`·`step_id`·`parameters`를 사용한다.
+   외부 리소스 조회는 `daeri_capability_execute`의 `task_id`·`step_id`·`parameters`를 사용한다.
+   로컬 소스 코드는 등록 디렉터리에서 호스트의 기존 파일·검색·실행·Git 도구로 조사한 뒤 `source-observe`에 확인한 요약과 상대 경로를 전달해 [관찰을 등록](../../docs/spec/mcp/resources.md#로컬-source-관찰-등록)한다.
    읽기 묶음이면 선택한 실제 `capability_id`도 전달한다.
    조회 실패는 영향을 받는 결과에 반영하고 독립적인 수행은 이어간다.
    범위 확대는 수정 계획을 보여 주고 새 승인을 받는다.
@@ -64,6 +65,7 @@ description: DAERI profile을 대상으로 새 업무를 요청하거나 저장�
 2. 현재 호스트의 네이티브 도구로 실제 하위 에이전트를 생성한다.
    Claude Code는 `daeri:subagent`, Codex는 기본 하위 에이전트에 [공통 하위 에이전트 지침](references/subagent.md)의 설치된 절대 경로를 전달한다.
    지시에는 `task_id`·`delegation_token`·할당·필요한 근거와 기대 결과를 포함한다.
+   로컬 Source를 배정하면 `daeri_resource_list`에서 확인한 연결별 `target.path`도 전달한다.
 3. 호스트의 진행·대기 도구와 `daeri_subagent.get`으로 진행을 확인한다.
    같은 승인 단계도 하위 목표로 나누어 병렬 조사할 수 있다.
    하위 에이전트는 배정 범위의 도구·방법·다음 행동을 선택하고 `complete`로 실제 근거·제한을 반환한다.

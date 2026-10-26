@@ -30,12 +30,12 @@ class FakeCredentials:
 
 
 def resource(instance, credential):
-    return {'instance_id': instance, 'type': 'Source', 'adapter': 'gitlab_read',
-            'target': {'server': 'https://git.example.invalid', 'project': 'team/service'},
+    return {'instance_id': instance, 'type': 'Document', 'adapter': 'confluence_read',
+            'target': {'server': 'https://docs.example.invalid/wiki', 'project': 'team/service'},
             'identity_ref': 'identity:reader', 'connection': {'transport': 'stdio',
-            'command': sys.executable, 'args': [], 'env': {'GITLAB_URL': 'https://git.example.invalid'},
-            'auth_env': {'GITLAB_TOKEN': credential}}, 'capabilities': [{
-            'capability_id': 'read', 'tool_name': 'gitlab_get_file', 'constraints': {
+            'command': sys.executable, 'args': [], 'env': {'CONFLUENCE_URL': 'https://docs.example.invalid/wiki'},
+            'auth_env': {'CONFLUENCE_API_TOKEN': credential}}, 'capabilities': [{
+            'capability_id': 'read', 'tool_name': 'confluence_get_page', 'constraints': {
                 'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
                 'path_prefixes': {'file_path': ['src']}}}], 'policy': {}}
 
@@ -175,7 +175,7 @@ def test_resource_diagnosis_cannot_publish_after_profile_deletion(store, monkeyp
     async def tools(*args):
         entered.set()
         assert release.wait(5)
-        return [{'name': 'gitlab_get_file', 'inputSchema': {'type': 'object', 'properties': {}}}]
+        return [{'name': 'confluence_get_page', 'inputSchema': {'type': 'object', 'properties': {}}}]
     monkeypatch.setattr(registry, '_session', session)
     monkeypatch.setattr(registry, '_tools', tools)
     preview = setup.preview_profile_deletion(store, 'alpha')

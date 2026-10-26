@@ -17,11 +17,11 @@ from daeri.infrastructure.adapters import get_adapter, normalize as interpret
 
 
 def config():
-    return {"instance_id": "source-one", "type": "Source", "adapter": "source_read",
-            "target": {"server": "https://git.example.test", "project": "team/service"},
+    return {"instance_id": "source-one", "type": "Document", "adapter": "document_read",
+            "target": {"server": "https://docs.example.test/wiki", "project": "team/service"},
             "identity_ref": "identity:reader", "connection": {"transport": "stdio", "command": sys.executable,
-            "args": [str(Path(__file__).parent / "fixtures" / "resource_mcp.py")], "env": {"GITLAB_URL": "https://git.example.test"}},
-            "capabilities": [{"capability_id": "read-file", "tool_name": "get_repository_file",
+            "args": [str(Path(__file__).parent / "fixtures" / "resource_mcp.py")], "env": {"CONFLUENCE_URL": "https://docs.example.test/wiki"}},
+            "capabilities": [{"capability_id": "read-file", "tool_name": "confluence_get_page",
                 "constraints": {"fixed": {"project_id": "team/service"},
                                 "allowed_values": {"ref": ["main"]},
                                 "path_prefixes": {"file_path": ["src"]}, "max_values": {"limit": 100}}}]}
@@ -172,15 +172,16 @@ def test_normalized_argument_limit_covers_fixed_and_default_values(registry, tmp
     assert registry.execute(invocation)['result'] == {'data': {'padding_bytes': 65509}}
 
 
-def test_connection_only_source_recipe_requires_approved_project_revision_and_path(registry):
+def test_connection_only_document_recipe_keeps_explicit_task_argument_scope(registry):
     from daeri.config.setup import build_setup_resource
-    resource = build_setup_resource(registry.store, 'source-gitlab', 'service', 'source-one',
-                                    {'server': 'https://git.example.test'})
+    resource = build_setup_resource(registry.store, 'document-confluence', 'service', 'source-one',
+                                    {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'})
     assert resource['capabilities'][0]['constraints'] == {}
     # Use the isolated fixture's executable and tool; retain the recipe's access constraints.
     resource['connection'].update(command=sys.executable,
                                   args=config()['connection']['args'], auth_env={})
-    resource['capabilities'][0]['tool_name'] = 'get_repository_file'
+    resource['capabilities'][0]['tool_name'] = 'confluence_get_page'
+    resource['capabilities'][0]['capability_id'] = 'read-file'
     p = profile(resource)
     parameters = {'project_id': 'team/service', 'ref': 'main', 'file_path': 'src/main.py'}
     with pytest.raises(StoreError, match='CONNECTION_NOT_READY'):
@@ -398,7 +399,7 @@ def test_credential_rotation_keeps_diagnosed_connection_and_inflight_read(regist
     secrets = {"auth_one": "credential-first"}
     registry.resolve = secrets.__getitem__
     resource = config()
-    resource["connection"]["auth_env"] = {"GITLAB_TOKEN": "auth_one"}
+    resource["connection"]["auth_env"] = {"CONFLUENCE_API_TOKEN": "auth_one"}
     p = profile(resource)
     registry.diagnose(p, "source-one")
     before = registry.get(p, "source-one", "read-file")["contract_ref"]
@@ -413,9 +414,9 @@ def test_credential_rotation_keeps_diagnosed_connection_and_inflight_read(regist
     assert "credential-first" not in "".join(path.read_text() for path in registry.directory.glob("*.json"))
 
 
-def test_source_target_mismatch_is_rejected_without_starting_lower_mcp(registry):
+def test_document_target_mismatch_is_rejected_without_starting_lower_mcp(registry):
     resource = config()
-    resource["connection"]["env"]["GITLAB_URL"] = "https://other.test"
+    resource["connection"]["env"]["CONFLUENCE_URL"] = "https://other.test"
     with pytest.raises(StoreError, match="CONTEXT_CHANGED"):
         registry.diagnose(profile(resource), "source-one")
 
@@ -600,18 +601,18 @@ def test_legacy_json_and_sql_literals_preserve_actual_types():
     from mcp.types import CallToolResult, TextContent
     def result(text):
         return CallToolResult(content=[TextContent(type="text", text=text)])
-    assert get_adapter('source_read').legacy_result(result('[{"id":9007199254740993,"amount":"10.25"}]')) == {"data": [{"id": 9007199254740993, "amount": "10.25"}]}
+    assert get_adapter('document_read').legacy_result(result('[{"id":9007199254740993,"amount":"10.25"}]')) == {"data": [{"id": 9007199254740993, "amount": "10.25"}]}
     assert get_adapter('sql_read').legacy_result(result("[{'id': 1, 'active': True, 'memo': None}]")) == {"data": [{"id": 1, "active": True, "memo": None}]}
     expression = "[{'created': datetime.date(2026, 1, 1)}]"
     assert get_adapter('sql_read').legacy_result(result(expression)) == {"data": expression}
-    assert get_adapter('source_read').legacy_result(result("[{'id':1}]")) == {"data": "[{'id':1}]"}
+    assert get_adapter('document_read').legacy_result(result("[{'id':1}]")) == {"data": "[{'id':1}]"}
 
 
 @pytest.mark.parametrize("text", ['{"key":1,"key":2}', '[NaN]', '[Infinity]'])
 def test_legacy_json_ambiguity_is_not_usable_data(text):
     from mcp.types import CallToolResult, TextContent
     with pytest.raises(StoreError, match="RESULT_VALIDATION_FAILED"):
-        get_adapter('source_read').legacy_result(CallToolResult(content=[TextContent(type='text', text=text)]))
+        get_adapter('document_read').legacy_result(CallToolResult(content=[TextContent(type='text', text=text)]))
 
 
 def test_lower_provider_error_conventions_are_failures():
@@ -749,9 +750,9 @@ def test_resource_environment_cannot_inject_programs_or_proxy_credentials(variab
         validate_resource(resource)
 
 
-def test_prepared_source_cli_cannot_override_registered_connection():
+def test_prepared_document_cli_cannot_override_registered_connection():
     resource = config()
-    resource["connection"]["command"] = "/prepared/mcp-gitlab"
+    resource["connection"]["command"] = "/prepared/mcp-atlassian"
     resource["connection"]["args"] = ["--url", "https://other.test"]
     with pytest.raises(StoreError):
         validate_resource(resource)
@@ -759,7 +760,7 @@ def test_prepared_source_cli_cannot_override_registered_connection():
 
 def test_auth_references_cannot_replace_a_registered_endpoint():
     resource = config()
-    resource["connection"]["auth_env"] = {"GITLAB_URL": "auth_other_endpoint"}
+    resource["connection"]["auth_env"] = {"CONFLUENCE_URL": "auth_other_endpoint"}
     with pytest.raises(StoreError, match="UNSUPPORTED_CONSTRAINT"):
         validate_resource(resource)
 
@@ -773,7 +774,7 @@ def test_remote_auth_headers_cannot_change_http_authority():
 
 def test_canonical_product_adapter_preserves_registered_configuration():
     resource = config()
-    resource["adapter"] = "gitlab_read"
+    resource["adapter"] = "confluence_read"
     original = copy.deepcopy(resource)
     assert validate_resource(resource) == original
     assert resource == original

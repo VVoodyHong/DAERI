@@ -44,7 +44,12 @@ import sys
 sys.path.insert(0, sys.argv[1])
 from daeri.config.setup import _recipe, load_catalog
 package = pathlib.Path(sys.argv[1]) / 'daeri'
-for name in load_catalog():
+catalog = load_catalog()
+assert catalog['source-local']['transport'] == 'host'
+assert not (package / 'recipes/source-local').exists()
+for name, entry in catalog.items():
+    if entry.get('transport') == 'host':
+        continue
     item, project, lock = _recipe(name)
     assert project == package / 'recipes' / name
     assert lock and item['adapter']

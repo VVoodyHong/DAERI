@@ -46,6 +46,8 @@ def check_metadata(root):
         issues.append('.claude-plugin/marketplace.json: plugin version differs from pyproject.toml')
     catalog = json.loads((root / 'src/daeri/config/catalog.json').read_text(encoding='utf-8'))
     for name, item in catalog.items():
+        if item.get('transport') == 'host':
+            continue
         recipe = _toml(root / 'recipes' / name / 'pyproject.toml')['project']
         if recipe['dependencies'] != [item['package'] + '==' + item['version']]:
             issues.append(f'recipes/{name}: direct dependency differs from catalog')

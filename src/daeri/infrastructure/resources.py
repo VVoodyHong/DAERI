@@ -1,4 +1,4 @@
-"""Lower MCP discovery and request interpretation, separated from task approval."""
+"""Resource discovery and request interpretation, separated from task approval."""
 
 import asyncio
 import copy
@@ -176,6 +176,9 @@ def validate_resource(config):
                 _fail()
         if any(_SECRET_NAME.search(key) for key in connection.get("env", {})):
             _fail("Credential values belong in auth_env references, not env.")
+    elif transport == "host":
+        if set(connection) != {"transport"} or config["adapter"] != "local_source":
+            _fail("Host connections require the local source adapter.")
     elif transport == "streamable_http":
         if set(connection) - {"transport", "url", "auth_headers"}:
             _fail()
@@ -193,7 +196,7 @@ def validate_resource(config):
         if any(key.lower() not in {"authorization", "x-api-key", "private-token"} for key in headers):
             _fail("Remote authentication headers cannot override HTTP routing or protocol headers.")
     else:
-        _fail("Only stdio and HTTPS Streamable HTTP are supported.")
+        _fail("Choose a supported MCP transport or local host connection.")
     capabilities = config["capabilities"]
     if not isinstance(capabilities, list) or not 1 <= len(capabilities) <= 128:
         _fail()
@@ -316,8 +319,11 @@ class ResourceRegistry:
                 capabilities.append({key: bundle[key] for key in ('capability_id', 'contract_ref', 'description')} | {'changes_state': False})
             except StoreError:
                 capabilities = []
-            items.append({"instance_id": resource["instance_id"], "type": resource["type"], "label": resource["instance_id"],
-                          "capability_summaries": capabilities})
+            item = {"instance_id": resource["instance_id"], "type": resource["type"], "label": resource["instance_id"],
+                    "capability_summaries": capabilities}
+            if resource["connection"].get("transport") == "host":
+                item["target"] = copy.deepcopy(resource["target"])
+            items.append(item)
         return items
 
     def get(self, profile, instance_id, capability_id):
@@ -403,13 +409,18 @@ class ResourceRegistry:
     def _diagnose(self, profile, instance_id, timeout):
         config = self._resource(profile, instance_id)
         credentials = self._credentials(config)
+        adapter = get_adapter(config['adapter'])
         async def run():
             async with asyncio.timeout(timeout):
                 async with AsyncExitStack() as stack:
                     session, _ = await self._session(stack, config, timeout, credentials)
                     return await self._tools(session)
         try:
-            tools = asyncio.run(run())
+            if config['connection']['transport'] == 'host':
+                adapter.check_available(config)
+                tools = adapter.host_tools()
+            else:
+                tools = asyncio.run(run())
         except StoreError:
             raise
         except Exception as error:
@@ -417,7 +428,6 @@ class ResourceRegistry:
             if known:
                 raise known from None
             raise StoreError("CONNECTION_NOT_READY", "Resource diagnosis failed; check the executable, authentication, and connection.") from None
-        adapter = get_adapter(config['adapter'])
         capabilities = copy.deepcopy(config['capabilities'])
         selected_names = {item['tool_name'] for item in capabilities}
         selected_ids = {item['capability_id'] for item in capabilities}
@@ -461,7 +471,7 @@ class ResourceRegistry:
         return {"instance_id": instance_id, "ready": True, "capability_count": len(descriptors), "contract_refs": [item["contract_ref"] for item in descriptors]}
 
     def _descriptor(self, config, capability, tool, contract_ref):
-        return {"instance_id": config["instance_id"], "capability_id": capability["capability_id"], "contract_ref": contract_ref,
+        descriptor = {"instance_id": config["instance_id"], "capability_id": capability["capability_id"], "contract_ref": contract_ref,
                 "description": capability.get("description", tool.get("description", capability["tool_name"])),
                 "input_schema": tool["inputSchema"], "output_schema": get_adapter(config["adapter"]).output_schema(tool),
                 "scope_schema": {"type": "object", "properties": {field: {"type": "object"} for field in _SCOPE}, "additionalProperties": False,
@@ -474,6 +484,10 @@ class ResourceRegistry:
                 "verification": {"supported": False, "capability_ids": [], "external_reference_pointers": []},
                 "continuation": {"supported": False, "cursor_input_pointer": None, "next_cursor_output_pointer": None, "has_more_output_pointer": None, "consistency": "live", "validity": None},
                 "metadata_discovery_allowed": True}
+        if config['connection']['transport'] == 'host':
+            descriptor['effects']['side_effects'] = []
+            descriptor['idempotency']['scope'] = 'Host observations are recorded by the runtime.'
+        return descriptor
 
     def normalize(self, profile, instance_id, capability_id, parameters, scope):
         if capability_id == '*':
@@ -515,6 +529,16 @@ class ResourceRegistry:
         credentials = self._credentials(invocation.resource)
         if invocation.connection != invocation.resource["connection"]:
             raise StoreError("CONTEXT_CHANGED", "The connection changed after request validation.")
+        if invocation.connection['transport'] == 'host':
+            current = next((tool for tool in adapter.host_tools() if tool['name'] == invocation.operation), None)
+            if current is None or _tool_contract(current) != _tool_contract(invocation.tool_contract):
+                raise StoreError('CONTEXT_CHANGED', 'The host observation contract changed after approval.')
+            result = redact(adapter.observe(invocation.resource, invocation.prepared_request['arguments']))
+            _validate(result, invocation.tool_contract['outputSchema'], 'RESULT_VALIDATION_FAILED')
+            return {'result': result, 'value_types': {}, 'units': {},
+                    'warnings': ['Host-reported observation; the runtime validates referenced paths.'],
+                    'source_complete': None, 'external_requests': 0,
+                    'runtime_ms': max(0, int((monotonic() - started) * 1000))}
         async def run():
             async with asyncio.timeout(timeout):
                 async with AsyncExitStack() as stack:

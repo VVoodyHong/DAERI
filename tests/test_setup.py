@@ -34,13 +34,13 @@ def private_uv(tmp_path, monkeypatch):
 
 
 def resource():
-    return {'instance_id': 'source-one', 'type': 'Source', 'adapter': 'source_read',
+    return {'instance_id': 'source-one', 'type': 'Document', 'adapter': 'document_read',
             'target': {'server': 'https://git.example.test', 'project': 'team/service'},
             'identity_ref': 'identity:reader',
             'connection': {'transport': 'stdio', 'command': sys.executable,
-                           'args': ['fake_mcp.py'], 'env': {'GITLAB_URL': 'https://git.example.test'},
-                           'auth_env': {'GITLAB_TOKEN': 'credential:service.source'}},
-            'capabilities': [{'capability_id': 'read-file', 'tool_name': 'get_repository_file',
+                           'args': ['fake_mcp.py'], 'env': {'CONFLUENCE_URL': 'https://git.example.test', 'CONFLUENCE_USERNAME': 'reader'},
+                           'auth_env': {'CONFLUENCE_API_TOKEN': 'credential:service.source'}},
+            'capabilities': [{'capability_id': 'read-file', 'tool_name': 'confluence_get_page',
                               'constraints': {'fixed': {'project_id': 'team/service'},
                                               'allowed_values': {'ref': ['main']},
                                               'path_prefixes': {'file_path': ['src']}}}],
@@ -87,24 +87,23 @@ def test_import_relocates_managed_recipe_commands_without_changing_configuration
         'db-postgres': {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'},
         'cache-redis': {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True},
         'infra-aws': {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
-        'source-gitlab': {'server': 'https://git.example.test'},
         'document-confluence': {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
         'issue-jira': {'server': 'https://issues.example.test', 'auth_type': 'personal_token'},
     }
     resources = [build_setup_resource(store, recipe, 'service', recipe, values)
                  for recipe, values in answers.items()]
-    source = next(value for value in resources if value['instance_id'] == 'source-gitlab')
-    source['adapter'] = 'source_read'
+    source = next(value for value in resources if value['instance_id'] == 'document-confluence')
+    source['adapter'] = 'document_read'
     source['identity_ref'] = 'identity:shared-source'
     source['target']['project'] = 'team/service'
-    source['connection']['auth_env']['GITLAB_TOKEN'] = 'credential:shared.source'
+    source['connection']['auth_env']['CONFLUENCE_API_TOKEN'] = 'credential:shared.source'
     source['capabilities'][0]['constraints'] = {'fixed': {'project_id': 'team/service'}}
     source['policy'] = {'allowed_model_fields': [{'segments': [{'key': 'body'}]}], 'export_fields': []}
     manual = resource()
     manual['instance_id'] = 'manual'
     store.put_profile('service', resources=[*resources, manual], core_context=['UTC 운영'],
                       retention_days=15, long_term_memory_days=90,
-                      memory_policy={'categories': ['lesson'], 'instance_ids': ['source-gitlab'],
+                      memory_policy={'categories': ['lesson'], 'instance_ids': ['document-confluence'],
                                      'model_allowed': True, 'retain_allowed': False},
                       embedding={'provider': 'keyword_only'})
     exported = export_profile(store, 'service')
@@ -125,7 +124,7 @@ def test_import_relocates_managed_recipe_commands_without_changing_configuration
 
 @pytest.mark.parametrize('change', ['outside-tools', 'unknown-pin'])
 def test_import_preserves_explicit_manual_recipe_executables(store, tmp_path, change):
-    configured = profile_template(store, 'source-gitlab', 'service', 'source-one')['resources'][0]
+    configured = profile_template(store, 'document-confluence', 'service', 'source-one')['resources'][0]
     command = Path(configured['connection']['command'])
     if change == 'outside-tools':
         command = tmp_path / 'custom' / command.name
@@ -228,7 +227,7 @@ def test_import_size_limit_is_applied_before_parsing(store, tmp_path):
 
 def test_plaintext_authentication_is_rejected_before_profile_write(store, tmp_path):
     config = resource()
-    config['connection']['auth_env']['GITLAB_TOKEN'] = 'PRIVATE_SENTINEL'
+    config['connection']['auth_env']['CONFLUENCE_API_TOKEN'] = 'PRIVATE_SENTINEL'
     with pytest.raises(StoreError):
         import_profile(store, config_file(tmp_path, {'name': 'service', 'resources': [config]}))
     assert store.list_profiles() == []
@@ -243,6 +242,9 @@ def test_templates_use_catalog_pins_and_let_plans_define_data_permissions(store)
         assert template['long_term_memory_days'] is None
         configured = template['resources'][0]
         assert configured['policy'] is None
+        if item.get('transport') == 'host':
+            assert configured['connection'] == {'transport': 'host'}
+            continue
         assert configured['connection']['command'] == str(prepared_executable(store, recipe_id))
         assert configured['connection']['args'] == item['args']
         assert all(value.startswith('credential:') for value in configured['connection']['auth_env'].values())
@@ -251,7 +253,7 @@ def test_templates_use_catalog_pins_and_let_plans_define_data_permissions(store)
 def test_templates_use_product_specific_adapter_identifiers(store):
     expected = {
         'db-postgres': 'postgres_read', 'cache-redis': 'redis_read', 'infra-aws': 'aws_read',
-        'source-gitlab': 'gitlab_read', 'document-confluence': 'confluence_read', 'issue-jira': 'jira_read',
+        'source-local': 'local_source', 'document-confluence': 'confluence_read', 'issue-jira': 'jira_read',
     }
     for recipe, adapter_id in expected.items():
         template = profile_template(store, recipe, 'service', 'resource-one')
@@ -283,15 +285,15 @@ def test_prepare_refuses_unselected_recipe_and_arbitrary_command(store):
     value = resource()
     store.put_profile('service', resources=[value])
     with pytest.raises(StoreError):
-        prepare_resource(store, 'service', 'source-one', 'source-gitlab')
+        prepare_resource(store, 'service', 'source-one', 'document-confluence')
     with pytest.raises(StoreError):
         prepare_resource(store, 'service', 'source-one', '../../outside')
 
 
 def prepared_resource(store):
-    value = profile_template(store, 'source-gitlab', 'service', 'source-one')['resources'][0]
+    value = profile_template(store, 'document-confluence', 'service', 'source-one')['resources'][0]
     value['target'] = {'server': 'https://git.example.test', 'project': 'team/service'}
-    value['connection']['env']['GITLAB_URL'] = 'https://git.example.test'
+    value['connection']['env']['CONFLUENCE_URL'] = 'https://git.example.test'
     value['capabilities'][0]['constraints'] = {'fixed': {'project_id': 'team/service'},
                                               'allowed_values': {'ref': ['main']},
                                               'path_prefixes': {'file_path': ['src']}}
@@ -318,21 +320,21 @@ def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store
                 environment = Path(kwargs['env']['UV_PROJECT_ENVIRONMENT'])
                 (environment / 'bin').mkdir()
                 (environment / 'bin/python').touch()
-                (environment / 'bin/mcp-gitlab').touch()
+                (environment / 'bin/mcp-atlassian').touch()
             elif args[1:3] == ['-I', '-c']:
-                return subprocess.CompletedProcess(args, 0, stdout='0.21.0\n', stderr='')
+                return subprocess.CompletedProcess(args, 0, stdout=load_catalog()['document-confluence']['version'] + '\n', stderr='')
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
 
         monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
-        ready = prepare_resource(destination, 'service', 'source-one', 'source-gitlab')
+        ready = prepare_resource(destination, 'service', 'source-one', 'document-confluence')
         assert ready['ready'] is True and ready['reused'] is False
         assert ready['command'] == str(command) and command.is_file()
 
         @asynccontextmanager
         async def transport(parameters, **kwargs):
             assert parameters.command == str(command)
-            assert parameters.env['GITLAB_URL'] == 'https://git.example.test'
-            assert parameters.env['GITLAB_TOKEN'] == 'local-private'
+            assert parameters.env['CONFLUENCE_URL'] == 'https://git.example.test'
+            assert parameters.env['CONFLUENCE_API_TOKEN'] == 'local-private'
             yield None, None
 
         class Session:
@@ -341,7 +343,7 @@ def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store
             async def __aexit__(self, *args): pass
             async def initialize(self): pass
             async def list_tools(self, cursor=None):
-                return ListToolsResult(tools=[Tool(name='gitlab_get_file', inputSchema={
+                return ListToolsResult(tools=[Tool(name='confluence_get_page', inputSchema={
                     'type': 'object', 'properties': {'project_id': {'type': 'string'},
                                                     'ref': {'type': 'string'}, 'file_path': {'type': 'string'}},
                     'required': ['project_id', 'ref', 'file_path'], 'additionalProperties': False})])
@@ -351,14 +353,14 @@ def test_imported_managed_connection_can_be_prepared_and_diagnosed_locally(store
         registry = ResourceRegistry(destination, lambda ref: 'local-private')
         diagnosed = registry.diagnose(imported, 'source-one')
         assert diagnosed['ready'] is True and diagnosed['capability_count'] == 1
-        descriptor = registry.get(imported, 'source-one', 'read-file')
+        descriptor = registry.get(imported, 'source-one', 'read-page')
         assert descriptor['scope_schema']['x-daeri-access-constraints'] == {
             'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
             'path_prefixes': {'file_path': ['src']}}
         assert destination.get_profile('service') == imported
 
 
-@pytest.mark.parametrize('adapter_id', ['source_read', 'gitlab_read'])
+@pytest.mark.parametrize('adapter_id', ['document_read', 'confluence_read'])
 def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, private_uv, monkeypatch, adapter_id):
     configured = prepared_resource(store)
     configured['adapter'] = adapter_id
@@ -372,17 +374,17 @@ def test_prepare_uses_frozen_recipe_and_marks_only_verified_installation(store, 
             candidate = Path(kwargs['env']['UV_PROJECT_ENVIRONMENT'])
             (candidate / 'bin').mkdir()
             (candidate / 'bin/python').touch()
-            (candidate / 'bin/mcp-gitlab').touch()
+            (candidate / 'bin/mcp-atlassian').touch()
         elif args[1:3] == ['-I', '-c']:
-            return subprocess.CompletedProcess(args, 0, stdout='0.21.0\n', stderr='')
+            return subprocess.CompletedProcess(args, 0, stdout=load_catalog()['document-confluence']['version'] + '\n', stderr='')
         return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
     monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
-    result = prepare_resource(store, 'service', 'source-one', 'source-gitlab')
+    result = prepare_resource(store, 'service', 'source-one', 'document-confluence')
     assert result['ready'] is True
     assert Path(result['command']).is_file()
     assert any('--frozen' in call for call in calls)
     count = len(calls)
-    assert prepare_resource(store, 'service', 'source-one', 'source-gitlab')['reused'] is True
+    assert prepare_resource(store, 'service', 'source-one', 'document-confluence')['reused'] is True
     assert len(calls) == count + 1
     profile = store.get_profile('service')
     assert profile['revision'] == 2
@@ -396,7 +398,7 @@ def test_failed_prepare_never_changes_profile_or_publishes_program(store, privat
         raise subprocess.TimeoutExpired('uv', 300)
     monkeypatch.setattr('daeri.config.setup.subprocess.run', failed)
     with pytest.raises(StoreError):
-        prepare_resource(store, 'service', 'source-one', 'source-gitlab')
+        prepare_resource(store, 'service', 'source-one', 'document-confluence')
     assert store.get_profile('service')['revision'] == revision
     assert not Path(configured['connection']['command']).exists()
 
@@ -433,7 +435,7 @@ def test_prepare_accepts_explicit_cache_connection_values(store, private_uv, tmp
 
 def test_prepare_still_rejects_a_disabled_recipe_safety_setting(store, private_uv, monkeypatch):
     configured = prepared_resource(store)
-    configured['connection']['env']['MCP_READ_ONLY'] = 'false'
+    configured['connection']['env']['READ_ONLY_MODE'] = 'false'
     monkeypatch.setattr('daeri.config.setup.subprocess.run', lambda *args, **kwargs:
                         pytest.fail('Unsafe recipe settings must not start program preparation'))
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
@@ -464,27 +466,26 @@ def fake_preparation(private_uv, monkeypatch):
                 pytest.fail('Only registered recipe installation commands may run')
             return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
         assert args[1:3] == ['-I', '-c']
-        item = next(item for item in catalog.values() if item['package'] == args[-1])
+        item = next(item for item in catalog.values() if item.get('package') == args[-1])
         return subprocess.CompletedProcess(args, 0, stdout=item['version'] + '\n', stderr='')
 
     monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
     return failures
 
 
-def test_prepare_resources_derives_all_profile_instances_and_reuses_shared_recipes(store, fake_preparation):
+def test_prepare_resources_derives_all_profile_instances_and_reuses_shared_recipes(store, fake_preparation, tmp_path):
     from daeri.config.setup import build_setup_resource
     selections = [
         ('db-postgres', 'primary', {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'}),
         ('cache-redis', 'sessions', {'host': 'cache.example.test', 'port': 6380, 'db': 1, 'tls': True}),
         ('infra-aws', 'cloud', {'profile': 'operations', 'region': 'ap-northeast-2', 'account': '111111111111'}),
-        ('source-gitlab', 'repository', {'server': 'https://git.example.test'}),
+        ('source-local', 'repository', {'path': str(tmp_path)}),
         ('document-confluence', 'knowledge', {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'}),
         ('issue-jira', 'tickets', {'server': 'https://issues.example.test', 'auth_type': 'personal_token'}),
         ('db-postgres', 'reference', {'host': 'reference.example.test', 'port': 5433, 'database': 'reference', 'username': 'reader'}),
     ]
     resources = [build_setup_resource(store, recipe, 'service', instance, values)
                  for recipe, instance, values in selections]
-    resources[3]['adapter'] = 'source_read'
     profile = store.put_profile('service', resources=resources)
 
     result = setup.prepare_resources(store, 'service')
@@ -492,11 +493,14 @@ def test_prepare_resources_derives_all_profile_instances_and_reuses_shared_recip
     assert result['ready'] is True
     assert [(item['instance_id'], item['recipe']) for item in result['resources']] == [
         ('primary', 'db-postgres'), ('sessions', 'cache-redis'), ('cloud', 'infra-aws'),
-        ('repository', 'source-gitlab'), ('knowledge', 'document-confluence'),
+        ('repository', 'source-local'), ('knowledge', 'document-confluence'),
         ('tickets', 'issue-jira'), ('reference', 'db-postgres')]
-    assert [item['reused'] for item in result['resources']] == [False] * 6 + [True]
-    assert all(item['ready'] and Path(item['command']).is_file() for item in result['resources'])
+    assert [item['reused'] for item in result['resources']] == [False, False, False, True, False, False, True]
+    assert all(item['ready'] for item in result['resources'])
     for item in result['resources']:
+        if item.get('transport') == 'host':
+            continue
+        assert Path(item['command']).is_file()
         marker = Path(item['command']).parents[2] / 'prepared.json'
         assert json.loads(marker.read_text())['recipe'] == item['recipe']
     assert store.get_profile('service') == profile
@@ -512,18 +516,18 @@ def test_prepare_resources_collects_installation_failure_and_continues(store, fa
     cache = build_setup_resource(store, 'cache-redis', 'service', 'sessions',
                                  {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
     profile = store.put_profile('service', resources=[source, cache])
-    fake_preparation['mcp-gitlab'] = subprocess.TimeoutExpired('PRIVATE_SENTINEL', 300)
+    fake_preparation['mcp-atlassian'] = subprocess.TimeoutExpired('PRIVATE_SENTINEL', 300)
 
     result = setup.prepare_resources(store, 'service')
 
     assert result['ready'] is False
-    assert result['resources'][0] == {'instance_id': 'source-one', 'recipe': 'source-gitlab',
+    assert result['resources'][0] == {'instance_id': 'source-one', 'recipe': 'document-confluence',
                                       'ready': False, 'error': {'code': 'CONNECTION_NOT_READY'}}
     assert result['resources'][1]['instance_id'] == 'sessions'
     assert result['resources'][1]['ready'] is True
     assert Path(result['resources'][1]['command']).is_file()
     assert not Path(source['connection']['command']).exists()
-    assert not list((store.data_dir / 'tools/source-gitlab').glob('.prepare*'))
+    assert not list((store.data_dir / 'tools/document-confluence').glob('.prepare*'))
     assert 'PRIVATE_SENTINEL' not in json.dumps(result)
     assert store.get_profile('service') == profile
 
@@ -534,14 +538,14 @@ def test_prepare_resources_preserves_obstructing_file_and_prepares_other_connect
     cache = build_setup_resource(store, 'cache-redis', 'service', 'sessions',
                                  {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
     profile = store.put_profile('service', resources=[source, cache])
-    obstruction = store.data_dir / 'tools/source-gitlab'
+    obstruction = store.data_dir / 'tools/document-confluence'
     obstruction.parent.mkdir()
     obstruction.write_text('Keep this existing file.\n')
 
     result = setup.prepare_resources(store, 'service')
 
     assert result['ready'] is False
-    assert result['resources'][0] == {'instance_id': 'source-one', 'recipe': 'source-gitlab',
+    assert result['resources'][0] == {'instance_id': 'source-one', 'recipe': 'document-confluence',
                                       'ready': False, 'error': {'code': 'CONNECTION_NOT_READY'}}
     assert result['resources'][1]['instance_id'] == 'sessions'
     assert result['resources'][1]['ready'] is True
@@ -562,7 +566,7 @@ def test_prepare_resources_rejects_connections_outside_registered_recipe(store, 
         if mismatch == 'command':
             configured['connection']['command'] = sys.executable
         else:
-            configured['connection']['env'].pop('GITLAB_SSL_VERIFY')
+            configured['connection']['env'].pop('READ_ONLY_MODE')
     profile = store.put_profile('service', resources=[configured])
     monkeypatch.setattr('daeri.config.setup.subprocess.run', lambda *args, **kwargs:
                         pytest.fail('Unmatched or unsafe connections must not execute a command'))
@@ -571,7 +575,7 @@ def test_prepare_resources_rejects_connections_outside_registered_recipe(store, 
 
     assert result == {'ready': False, 'resources': [{
         'instance_id': configured['instance_id'],
-        'recipe': 'source-gitlab' if mismatch == 'fixed-env' else None,
+        'recipe': 'document-confluence' if mismatch == 'fixed-env' else None,
         'ready': False, 'error': {'code': 'INVALID_INPUT'}}]}
     assert store.get_profile('service') == profile
     assert not (store.data_dir / 'tools').exists()
@@ -594,7 +598,7 @@ def test_resource_prepare_profile_cli_prepares_saved_connections(store, fake_pre
                                  {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
     profile = store.put_profile('service', resources=[source, cache])
     if fail_first:
-        fake_preparation['mcp-gitlab'] = subprocess.TimeoutExpired('PRIVATE_SENTINEL', 300)
+        fake_preparation['mcp-atlassian'] = subprocess.TimeoutExpired('PRIVATE_SENTINEL', 300)
     monkeypatch.setattr(sys, 'argv', ['daeri', '--data-dir', str(store.data_dir), 'resource', 'prepare', 'service'])
 
     assert main() == (1 if fail_first else 0)
@@ -749,6 +753,6 @@ def test_resource_prepare_requires_private_uv_even_when_global_uv_exists(store, 
     monkeypatch.setenv('PATH', str(commands))
     monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'unprepared-plugin' / '.venv'))
     with pytest.raises(StoreError) as caught:
-        prepare_resource(store, 'service', 'source-one', 'source-gitlab')
+        prepare_resource(store, 'service', 'source-one', 'document-confluence')
     assert not marker.exists()
     assert caught.value.code == 'CONNECTION_NOT_READY'

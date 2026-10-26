@@ -41,6 +41,14 @@ def test_metadata_versions_and_recipes_match(repository):
     assert any('.codex-plugin/plugin.json' in issue for issue in check.check_metadata(repository))
 
 
+def test_host_resource_catalog_needs_no_installed_recipe(repository):
+    catalog = repository / 'src/daeri/config/catalog.json'
+    value = json.loads(catalog.read_text())
+    value['source-local'] = {'adapter': 'local_source', 'transport': 'host'}
+    catalog.write_text(json.dumps(value))
+    assert check.check_metadata(repository) == []
+
+
 def test_catalog_and_lock_version_drift_are_reported(repository):
     lock = repository / 'uv.lock'
     lock.write_text(lock.read_text().replace(f'name = "daeri-agent"\nversion = "{VERSION}"',
@@ -151,7 +159,7 @@ def test_validation_commands_isolate_user_data_and_check_every_lock(monkeypatch,
     env = check.check_environment()
     assert 'DAERI_DATA_DIR' not in env and 'DAERI_TEST_MODEL_CACHE' not in env
     commands = check.lock_commands(ROOT, 'uv')
-    assert len(commands) == 7
+    assert len(commands) == 6
     assert all('--check' in command for command in commands)
     assert all('--no-python-downloads' in command for command in commands)
 

@@ -42,7 +42,7 @@ def test_explicit_field_restrictions_still_apply_to_free_queries():
 ])
 def test_explicit_constraints_require_values_instead_of_unknown_provider_defaults(guards):
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
-        get_adapter('gitlab_read').normalize({'project_id': 'team/service'}, guards, {})
+        get_adapter('confluence_read').normalize({'project_id': 'team/service'}, guards, {})
 
 
 @pytest.mark.parametrize('policy', [
@@ -52,7 +52,6 @@ def test_explicit_constraints_require_values_instead_of_unknown_provider_default
 @pytest.mark.parametrize('adapter,parameters', [
     ('postgres_read', {'sql': 'SELECT * FROM private.users'}),
     ('redis_read', {'key': 'private:users'}),
-    ('gitlab_read', {'project_id': 'private/users'}),
     ('confluence_read', {'page_id': '123'}),
     ('jira_read', {'jql': 'project = PRIVATE'}),
     ('aws_read', {'cli_command': 'aws ec2 describe-instances'}),
@@ -126,15 +125,16 @@ def test_aws_configured_command_region_cannot_disagree_with_connection_target(re
         validate_resource(resource)
 
 
-def test_source_provider_defaults_and_repository_root_are_available_within_broad_scope():
-    adapter = get_adapter('gitlab_read')
-    arguments = {'project_id': 'team/service', 'path': ''}
-    adapter.prepare_parameters(arguments, {'properties': {'ref': {'default': None}, 'path': {'default': ''}}})
-    assert adapter.normalize(arguments, {}, {}) == {'fields': ['path', 'project_id']}
+def test_document_optional_arguments_remain_unspecified_within_broad_scope():
+    adapter = get_adapter('confluence_read')
+    arguments = {'query': 'space = OPS'}
+    adapter.prepare_parameters(arguments, {'properties': {'query': {'type': 'string'}, 'limit': {'default': None}}})
+    assert adapter.normalize(arguments, {}, {}) == {'fields': ['query']}
+    assert arguments == {'query': 'space = OPS'}
 
 
 def test_a_lower_tool_explicitly_marked_as_mutating_is_not_registered_as_read():
-    assert not get_adapter('gitlab_read').is_read_tool({'name': 'gitlab_get_file',
+    assert not get_adapter('confluence_read').is_read_tool({'name': 'confluence_get_page',
                                                        'annotations': {'readOnlyHint': False}})
 
 
@@ -181,7 +181,6 @@ asyncio.run(main())
 @pytest.mark.parametrize('recipe,inputs,primary,extra,write', [
     ('db-postgres', {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'}, 'execute_sql', 'list_schemas', 'drop_database'),
     ('cache-redis', {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True}, 'get', 'scan_keys', 'set'),
-    ('source-gitlab', {'server': 'https://git.example.test'}, 'gitlab_get_file', 'gitlab_search_code', 'gitlab_delete_project'),
     ('document-confluence', {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'}, 'confluence_get_page', 'confluence_search', 'confluence_delete_page'),
 ])
 def test_new_setup_discovers_read_tools_and_keeps_existing_capability_alias(registry, tmp_path, recipe, inputs, primary, extra, write):
@@ -251,7 +250,6 @@ def test_read_bundle_pins_the_diagnosed_members_and_cannot_be_dispatched(registr
 
 
 @pytest.mark.parametrize('recipe,inputs,field', [
-    ('source-gitlab', {'server': 'https://git.example.test'}, 'MCP_READ_ONLY'),
     ('document-confluence', {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'}, 'READ_ONLY_MODE'),
     ('issue-jira', {'server': 'https://jira.example.test', 'auth_type': 'api_token', 'username': 'reader@example.test'}, 'READ_ONLY_MODE'),
 ])
@@ -279,7 +277,7 @@ def test_native_structured_schema_does_not_silently_discard_nontext_content():
                             structuredContent={'id': '123'})
     tool = {'outputSchema': {'type': 'object', 'properties': {'id': {'type': 'string'}}, 'required': ['id']}}
     with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-        get_adapter('gitlab_read').decode_result(result, tool, {})
+        get_adapter('confluence_read').decode_result(result, tool, {})
 
 
 @pytest.mark.parametrize('body', ['Error getting field x from hash cache: WRONGTYPE',

@@ -23,7 +23,8 @@
 | 삭제·저장 | profile 귀속 자료 cascade·사용 차단·실패 재시도, SQLite·파일·기한·해시 | [삭제](../../tests/test_profile_delete.py)·[저장](../../tests/test_storage.py)·[파일](../../tests/test_artifact_storage.py) |
 | 전체 이관 | 단일 profile의 허용 이력·기억·파일 암호화, 검증·확인 후 새 공간 복원·새 실행 권한 확인 | [통합](../../tests/test_profile_portability.py)·[논리 검증](../../tests/test_profile_bundle_validation.py)·[암호화](../../tests/test_portable_archive.py)·[CLI](../../tests/test_profile_portability_cli.py) |
 | 업무·승인 | 접수·보완·복구·불변 계획·실제 대화 응답·재승인·자동 기록 | [업무](../../tests/test_runtime.py)·[계획](../../tests/test_planning.py) |
-| 자율 읽기 | 진단한 기존 MCP 도구 탐색·선택, 읽기 묶음·실제 기능·스키마·명시 범위 검사 | [등록](../../tests/test_resources.py)·[자율 조회](../../tests/test_resource_autonomy.py)·[경계](../../tests/test_resource_boundary_regressions.py) |
+| 자율 읽기 | 기존 MCP 도구 탐색·선택, 읽기 묶음·스키마·명시 범위 검사 | [등록](../../tests/test_resources.py)·[자율 조회](../../tests/test_resource_autonomy.py)·[경계](../../tests/test_resource_boundary_regressions.py) |
+| 로컬 소스 코드 | 복수 경로·제품 교체·무설치 준비, 호스트 관찰·경로 검사와 보고·기억 근거 연결 | [설정](../../tests/test_setup_local_source.py)·[관찰·근거](../../tests/test_local_source.py)·[소스 원본 보존·설정 이관](../../tests/test_local_source_portability.py) |
 | 하위 에이전트 | 하위 에이전트 게이트웨이의 위임·배정·병렬 기능 선택·실제 근거 반환·철회·복구 | [위임](../../tests/test_subagents.py)·[패키징](../../tests/test_subagent_packaging.py) |
 | 결과 | 호스트의 완료 판단·원출처 연결, 임의 형식 파일 등록·재전달·현재 권한 조회 | [호스트 결과](../../tests/test_host_results.py)·[실행](../../tests/test_execution_flow.py)·[현재 정책](../../tests/test_derived_visibility.py) |
 | 페이지 사용 | 호스트가 기존 MCP의 다음 페이지를 조회하고 파일·보고·기억 후보를 제출 | [페이지 stdio](../../tests/test_paged_execution.py) |
@@ -46,6 +47,7 @@
 형식별 시험 바이트 검사는 등록 전후 동일성과 메타데이터를 확인한다.
 XLSX·PDF 등의 실제 문서 구조·내용·호스트 생성 품질은 해당 작성 도구로 확인한다.
 실제 호스트의 설치·자연어 승인 해석·도구 선택·파일 작성·하위 에이전트 시작·UI는 별도 검증 대상이다.
+로컬 Source의 자동 검증은 가상 디렉터리·호스트 관찰 등록과 근거 연결을 대상으로 하며 실제 호스트의 파일·Git 조사 수행과는 구분한다.
 회사 리소스의 실제 계정 권한·네트워크·SSO·회사 임베딩 API와 캐시 없는 PC의 전체 준비도 해당 환경의 근거가 필요하다.
 Windows 스크립트·구성·가짜 API 회귀는 있으나 실제 Windows 실행·정책·인증 UI 검증은 별도다.
 로컬 모델 검사는 준비한 모델 경로가 있는 경우만 실행한다.

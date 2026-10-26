@@ -15,7 +15,7 @@ server = Server("resource-fixture")
 @server.list_tools()
 async def tools():
     mode = os.environ.get("FIXTURE_MODE", "normal")
-    tool = dict(name="get_repository_file", description="fixture " + mode,
+    tool = dict(name="confluence_get_page", description="fixture " + mode,
                  inputSchema={"type": "object", "properties": {
                      "project_id": {"type": "string"}, "ref": {"type": "string"},
                      "file_path": {"type": "string"}, "limit": {"type": "integer", "default": 20}},
@@ -35,7 +35,7 @@ async def call(name, arguments):
         return CallToolResult(content=[TextContent(type="text", text="password=should-not-leak")], isError=True)
     value = {"body": "password=remove-this " + json.dumps(arguments, sort_keys=True)}
     if arguments.get("file_path") == "src/auth.py":
-        value = {"body": "rotated" if os.environ.get("GITLAB_TOKEN") == "credential-second" else "initial"}
+        value = {"body": "rotated" if os.environ.get("CONFLUENCE_API_TOKEN") == "credential-second" else "initial"}
     if arguments.get("file_path") == "src/invalid.py":
         value = {"unexpected": 1}
     return CallToolResult(content=[TextContent(type="text", text=json.dumps(value))], structuredContent=value)

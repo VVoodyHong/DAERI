@@ -44,9 +44,9 @@ def test_setup_describes_every_target_field_without_collecting_secrets(adapter):
     ('aws_read', 'account', '123'), ('aws_read', 'account', 12345678901),
     ('aws_read', 'account', 1234567890123), ('aws_read', 'account', -123456789012),
     ('aws_read', 'account', True),
-    ('gitlab_read', 'server', 'http://git.example.test'),
-    ('gitlab_read', 'server', 'https://user:password@git.example.test'),
-    ('gitlab_read', 'server', 'https://git.example.test/\x00private'),
+    ('local_source', 'path', 'relative/project'),
+    ('local_source', 'path', '/project\x00private'),
+    ('local_source', 'path', ''),
     ('confluence_read', 'server', 'https://docs.example.test\\private'),
 ])
 def test_setup_rejects_values_that_cannot_represent_the_selected_binding(adapter, name, value):
@@ -62,7 +62,7 @@ def test_infra_setup_accepts_twelve_digit_account_strings_and_integers(account):
     ('postgres_read', {'host', 'port', 'database', 'username'}),
     ('redis_read', {'host', 'port', 'db', 'tls', 'username'}),
     ('aws_read', {'profile', 'region', 'account'}),
-    ('gitlab_read', {'server'}),
+    ('local_source', {'path'}),
     ('confluence_read', {'server', 'username'}),
     ('jira_read', {'server', 'auth_type', 'username'}),
 ])

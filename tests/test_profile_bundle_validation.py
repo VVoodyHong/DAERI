@@ -56,11 +56,11 @@ def validate(value, entries=None):
 
 
 def memory(value):
-    resource = {'instance_id': 'source', 'type': 'Source', 'adapter': 'source_read',
-                'target': {'server': 'https://git.example.test', 'project': 'team/service'},
+    resource = {'instance_id': 'source', 'type': 'Document', 'adapter': 'document_read',
+                'target': {'server': 'https://docs.example.test/wiki', 'project': 'team/service'},
                 'identity_ref': 'identity:reader',
                 'connection': {'transport': 'stdio', 'command': sys.executable, 'args': ['-c', 'pass']},
-                'capabilities': [{'capability_id': 'read', 'tool_name': 'get_repository_file',
+                'capabilities': [{'capability_id': 'read', 'tool_name': 'confluence_get_page',
                                   'constraints': {'fixed': {'project_id': 'team/service'}}}]}
     value['profile']['resources'] = [resource]
     value['tasks'][0]['metadata']['profile_snapshot']['resources'] = [copy.deepcopy(resource)]

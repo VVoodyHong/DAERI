@@ -1,6 +1,6 @@
 # 리소스 범주와 연결 기준
 
-상태: 기존 MCP의 읽기 기능 재사용·자동 탐색·연결별 승인 묶음 구현; 고정 패키지 원문·로컬 시험 MCP 검증, 실제 회사 연결은 별도
+상태: 기존 MCP 읽기 기능과 로컬 Source의 호스트 관찰 등록; 고정 패키지·로컬 계약 검증, 실제 회사·호스트 연결은 별도
 
 리소스의 역할·실제 연결·읽기 판정과 현재 지원 한계를 설명한다.
 호스트는 사용자 목표와 승인 범위 안에서 기능·질의·페이지·분석 방법을 선택하며 공통 원칙은 [리소스 계약](contract.md)을 따른다.
@@ -16,18 +16,19 @@
 | DB | 구조 탐색·조건 조회·집계 |
 | Cache | 키 탐색·여러 자료형·상태 조회 |
 | Infra | 구성·로그·지표·자원 상태 조회 |
-| Source | 저장소·파일·변경·파이프라인 탐색 |
+| Source | 로컬 소스 코드·파일·Git 이력 조사와 관찰 근거 연결 |
 | Document | 문서 검색·본문·구조·이력 조회 |
 | Issue | 이슈 검색·상태·업무 이력 조회 |
 
 범주·제품·연결 개수는 [setup 질문 계약](../hosts/plugins.md#setup의-정형-질문)에서 선택한다.
 에이전트별 업무 구성과 위임은 [구조](../../architecture/overview.md#오케스트레이션과-자율-수행)를 따른다.
 
-## 기존 MCP 선택 기준
+## 기존 도구 선택 기준
 
 기존 MCP의 실제 기능·입출력·권한·실행 위치·배포 출처·복구 조건을 먼저 확인한다.
 DAERI는 연결·인증·대상·자료 제공과 읽기 효과 분류에 필요한 부분만 보완한다.
 `readOnlyHint`는 탐색 메타데이터이며 실제 강제 수단은 제품의 읽기 모드·서비스 권한과 검증한 구현이다.
+로컬 Source는 호스트의 기존 파일·검색·실행·Git 도구를 사용하고 아래 [로컬 소스 코드](#로컬-소스-코드) 계약으로 관찰을 등록한다.
 
 제품·정확한 패키지 버전·실행 파일·기본 환경·호환 기능 ID는 [카탈로그](../../../src/daeri/config/catalog.json)가 소유한다.
 `recipes/<recipe-id>/pyproject.toml`·`uv.lock`은 하위 MCP의 별도 설치 조합이며 [개발 의존성](../../development/dependencies.md)을 따른다.
@@ -44,8 +45,9 @@ DAERI는 연결·인증·대상·자료 제공과 읽기 효과 분류에 필요
 ## 첫 버전의 실제 연결 방식
 
 공통 입력은 stdio와 HTTPS Streamable HTTP 형식을 해석한다.
-현재 내장 어댑터는 실제 리소스 대상·인증 주체를 바인딩할 수 있는 로컬 stdio 연결을 지원한다.
-내장 어댑터로 원격 MCP를 등록하면 `UNSUPPORTED_CONSTRAINT`로 반환한다.
+외부 서비스용 내장 어댑터는 실제 리소스 대상·인증 주체를 바인딩할 수 있는 로컬 stdio 연결을 지원한다.
+이 어댑터로 원격 MCP를 등록하면 `UNSUPPORTED_CONSTRAINT`로 반환한다.
+로컬 Source는 `host` 연결로 등록한 디렉터리와 호스트 도구를 연결한다.
 
 로컬 연결은 준비한 실행 파일의 절대 경로·인수 배열과 별도 빈 작업 디렉터리를 사용한다.
 프로그램 주입·암시적 프록시·대체 인증·TLS 검증 해제·연결을 바꾸는 실행 인수를 검사한다.
@@ -92,12 +94,12 @@ DB 역할·스키마 권한·행 정책, Redis ACL, AWS IAM과 서비스 토큰 
 | `postgres_read` | 고정 `postgres-mcp` restricted 실행과 DB 읽기 권한을 사용; SQL 원문을 그대로 전달하고 구조 탐색·실행 계획·상태 조회 도구도 등록 |
 | `redis_read` | 고정 패키지의 읽기 도구 효과 메타데이터를 보완; 키 탐색·검색·자료형 읽기·상태 조회를 등록 |
 | `aws_read` | `call_aws`의 단일·배치 명령을 사용; 하위 `READ_OPERATIONS_ONLY` 판정으로 읽기 연산을 결정 |
-| `gitlab_read` | 하위 읽기 모드와 read annotation으로 파일·트리·MR·코드검색·파이프라인 등 읽기 도구 탐색 |
+| `local_source` | 등록 디렉터리의 접근 상태를 확인하고 호스트가 조사한 관찰을 `source_observe`로 등록 |
 | `confluence_read` | 하위 읽기 모드와 read annotation으로 검색·본문·구조·이력 등 읽기 도구 탐색 |
 | `jira_read` | 하위 읽기 모드와 read annotation으로 이슈·검색·프로젝트·업무 이력 등 읽기 도구 탐색 |
 
-새 기능의 실제 사용 가능성은 해당 하위 도구의 존재·스키마·서비스 권한으로 결정한다.
-과거 `sql_read`·`source_read`·`document_read` 식별자는 각각 PostgreSQL·GitLab·Confluence 어댑터의 호환 이름이다.
+외부 서비스 기능의 실제 사용 가능성은 해당 하위 도구의 존재·스키마·서비스 권한으로 결정한다.
+과거 `sql_read`·`document_read` 식별자는 각각 PostgreSQL·Confluence 어댑터의 호환 이름이다.
 기존 ID와 당시 기록은 보존한다.
 
 PostgreSQL은 고정 하위 패키지의 restricted driver로 문법·읽기 전용 트랜잭션·자체 timeout을 강제한다.
@@ -113,12 +115,29 @@ AWS 읽기 연산은 하위 MCP가 제공자 메타데이터와 읽기 모드로
 등록한 profile·위치의 기본값과 같은 명시 위치를 허용하고 대체 profile·endpoint·TLS 검증 해제·로컬 파일 접근을 차단한다.
 서로 다른 위치·계정이 필요하면 해당 연결과 승인 범위를 사용한다.
 
-Source는 하위 MCP의 기본 개정과 저장소 루트 조회를 사용할 수 있다.
-명시한 프로젝트·개정·경로 조건이 있으면 계속 적용하며 경로의 상위 이동·모호한 인코딩·간접 URL을 검사한다.
 Document 검색의 자연어·CQL과 Issue의 JQL은 선택한 하위 도구의 입력 계약으로 전달한다.
 선택한 연결의 서버·인증을 사용하고 대체 서버·URL 인수는 `SCOPE_VIOLATION`이다.
 Confluence의 `page_id`는 숫자로 구성한 문자열, Jira의 `issue_key`·`project_key`는 명시적 키 문법으로 검사한다.
 Jira 입력 스키마에 `update_history`가 있으면 false로 정규화한다.
+
+### 로컬 소스 코드
+
+Source 포트의 현재 제품은 `source-local`(로컬 소스 코드), runtime 어댑터는 `local_source`다.
+한 연결에 존재하는 디렉터리의 절대 경로 하나를 `target.path`로 등록한다.
+setup은 심볼릭 링크를 해소한 실제 경로를 저장하며 이후 루트가 다른 디렉터리로 바뀌면 경로를 다시 설정·진단한다.
+같은 profile에 여러 경로를 각각 등록하며 [사용자 YAML](../configuration/profiles.md#공통-구조와-어댑터-입력)은 `source`·`source-2`처럼 연결을 구분한다.
+연결은 `connection.transport: host`, 주체는 `identity_ref: local-user`를 사용한다.
+준비·진단은 현재 디렉터리의 존재·읽기·탐색 접근과 관찰 기능 확인으로 완료한다.
+
+호스트는 승인한 계획 범위에서 기존 파일·검색·실행·Git 도구로 소스를 조사한다.
+로컬 파일 편집·Git 작업은 해당 호스트 도구의 실행·권한과 기존 Git 인증을 사용한다.
+runtime의 Source 기능은 조사 결과를 받는 `source-observe`이며 실제 도구 이름은 `source_observe`다.
+등록된 관찰은 기존 호출·보고·파일·기억의 출처로 사용할 수 있다.
+
+호스트는 조사 후 확인한 요약과 선택한 상대 경로를 [관찰 입력](../mcp/resources.md#로컬-source-관찰-등록)으로 전달한다.
+runtime은 호출 때 현재 루트의 접근 상태와 각 경로의 존재·루트 포함 관계를 검사한다.
+요약의 의미·충분성과 실제 호스트 도구 실행 여부는 호스트가 확인한다.
+파일·Git 실행은 호스트가, 경로 검사와 관찰 보존은 runtime이 담당한다.
 
 ## 실제 접속 대상과 인증 문맥
 
@@ -130,7 +149,8 @@ Jira 입력 스키마에 `update_history`가 있으면 false로 정규화한다.
 |---|---|
 | PostgreSQL | 단일 host·port·database·사용자와 password 또는 단일 URI; 대체 접속 옵션 검사 |
 | Redis | host·port·db와 명시 인증; 등록 환경으로 실행 인수 생성 |
-| GitLab·Confluence·Jira | 등록 서버와 해당 토큰·계정; 대체 tenant·OAuth·서버 설정 검사 |
+| Confluence·Jira | 등록 서버와 해당 토큰·계정; 대체 tenant·OAuth·서버 설정 검사 |
+| 로컬 Source | 등록 디렉터리와 현재 OS 사용자; 호스트 도구의 접근 권한 |
 | AWS | 제공자 profile·region·SSO 또는 역할의 등록 계정 |
 
 DB의 새 setup은 공개 접속 정보와 비밀번호 참조를 사용한다.
@@ -141,7 +161,7 @@ URI의 TLS 옵션을 생략한 기존 설정은 하위 연결의 기본값을 �
 비밀번호·기존 URI 중 인증 참조 한 개를 선택하며 두 방식이 함께 있으면 `UNSUPPORTED_CONSTRAINT`다.
 
 Redis는 등록 host·port·db와 TLS·선택 username으로 실제 실행 인수를 구성한다.
-GitLab·Confluence·Jira는 등록한 서버의 명시적 토큰 참조를 해소하며 Jira의 토큰 선택은 [setup 인증](../configuration/profiles.md#공통-구조와-어댑터-입력)을 따른다.
+Confluence·Jira는 등록한 서버의 명시적 토큰 참조를 해소하며 Jira의 토큰 선택은 [setup 인증](../configuration/profiles.md#공통-구조와-어댑터-입력)을 따른다.
 
 AWS 인증은 등록 계정과 일치하는 제공자 SSO 또는 명시 역할의 표준 설정·캐시를 사용한다.
 credential process·간접 토큰 파일·endpoint·CLI 플러그인·별칭 같은 대체 실행·인증 설정은 `UNSUPPORTED_CONSTRAINT`다.

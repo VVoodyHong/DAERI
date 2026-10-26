@@ -3,7 +3,7 @@
 상태: 호스트가 생성한 하위 에이전트의 공통 수행 계약
 
 총괄 에이전트가 배정한 목표·완료 조건을 수행하고 실제 근거·분석·한계·기억 후보를 반환한다.
-DAERI 자료·실행·완료 기록은 `daeri_subagent`, 분석·계산·내용 검증은 실제 제공된 호스트 도구를 사용한다.
+DAERI 자료·실행·완료 기록은 `daeri_subagent`, 로컬 Source 조사·분석·계산·내용 검증은 실제 제공된 호스트 도구를 사용한다.
 입력은 현재 도구 스키마와 [MCP 정본](../../../docs/spec/mcp/tasks.md#daeri_subagent)을 따른다.
 
 ## 할당 복구
@@ -17,7 +17,8 @@ DAERI 자료·실행·완료 기록은 `daeri_subagent`, 분석·계산·내용 
 
 1. 완료 조건과 현재 근거를 대조해 다음 조회·분석·검증을 선택한다.
 2. 관련 경험은 `search`의 `query`, 제공받거나 직접 얻은 근거는 `read`의 `record_ref`로 조회한다.
-3. `execute.call`에 배정된 `step_id`·`parameters`를 전달한다.
+3. 외부 리소스 조회는 `execute.call`에 배정된 `step_id`·`parameters`를 전달한다.
+   로컬 Source는 등록 디렉터리에서 호스트의 파일·검색·실행·Git 도구로 조사한 뒤 `source-observe`의 요약·상대 경로를 같은 `execute.call`로 [등록](../../../docs/spec/mcp/resources.md#로컬-source-관찰-등록)한다.
    읽기 묶음이면 실제 선택한 `capability_id`도 전달한다.
    후속 페이지·재조회는 같은 승인 범위에서 새 관찰로 수행하고 반환한 `call_id`·출처를 추적한다.
 4. 조회 범위·잘림·실패·확인한 결과를 검토해 추가 수행 또는 완료를 판단한다.

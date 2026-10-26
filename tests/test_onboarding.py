@@ -178,7 +178,7 @@ def test_whole_yaml_apply_is_atomic_and_idempotent(store):
     assert apply_draft(store, 'production', again['confirmation_token'])['revision'] == 1
 
 
-def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
+def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store, tmp_path):
     from daeri.config.setup import load_catalog
     selections = {recipe: recipe for recipe in load_catalog()}
     draft = create_draft(store, 'production', selections, embedding='keyword_only')
@@ -186,7 +186,7 @@ def test_all_current_resource_categories_share_the_same_yaml_apply_flow(store):
         'db-postgres': DB,
         'cache-redis': {'host': 'cache.example.test'},
         'infra-aws': {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
-        'source-gitlab': {'server': 'https://git.example.test'},
+        'source-local': {'path': str(tmp_path)},
         'document-confluence': {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'},
         'issue-jira': {'server': 'https://issues.example.test', 'auth_type': 'api_token', 'username': 'reader@example.test'},
     }
@@ -347,7 +347,7 @@ def test_existing_changes_and_new_profile_creation_conflict_until_explicit_refre
     assert result['long_term_memory_days'] is None
 
 
-def test_reopening_preserves_edits_and_appends_only_new_selections(store):
+def test_reopening_preserves_edits_until_a_product_is_explicitly_replaced(store):
     draft = completed(store)
     before = open(draft['path']).read()
     assert create_draft(store, 'production')['path'] == draft['path']
@@ -357,8 +357,12 @@ def test_reopening_preserves_edits_and_appends_only_new_selections(store):
     value = read_yaml(draft['path'])
     assert value['resources']['primary']['inputs'] == DB
     assert value['resources']['docs']['adapter'] == 'document-confluence'
-    with pytest.raises(StoreError):
-        create_draft(store, 'production', {'primary': 'cache-redis'})
+    create_draft(store, 'production', {'primary': 'cache-redis'})
+    replaced = read_yaml(draft['path'])['resources']
+    assert replaced['primary']['adapter'] == 'cache-redis'
+    assert replaced['primary']['inputs']['host'] is None
+    assert 'database' not in replaced['primary']['inputs']
+    assert replaced['docs'] == value['resources']['docs']
 
 
 def test_missing_blocks_and_fields_preserve_existing_values_and_policies(store):

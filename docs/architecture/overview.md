@@ -34,7 +34,7 @@ flowchart TB
         subgraph Host[Claude Code 또는 Codex]
             H[총괄 에이전트 + work Skill]
             W[필요한 수의 하위 에이전트]
-            T[호스트 도구: 분석·보고·파일 작성·검증]
+            T[호스트 도구: Source 조사·분석·보고·파일 작성·검증]
             H <-->|목표 배정·근거 회수| W
             H <--> T
             W <--> T
@@ -44,7 +44,8 @@ flowchart TB
         C[OS·제공자 인증 저장소]
         M[profile별 공유 기억: SQLite·FTS5·벡터]
         E[선택한 임베딩 제공자]
-        A[리소스 포트·제품별 어댑터·하위 MCP]
+        A[외부 서비스 어댑터·하위 MCP]
+        LS[Source: 로컬 소스 코드 디렉터리]
         H <-->|계획·승인·실행·보고·지식 후보| D
         W <-->|배정 범위의 검색·실행·근거| D
         D <--> S
@@ -52,16 +53,18 @@ flowchart TB
         D <-->|검색·자동 저장·색인| M
         M <--> E
         D -->|승인한 읽기| A
+        T -->|기존 파일·검색·Git 도구| LS
+        H -->|Source 관찰 등록| D
     end
     U <-->|요청·계획 승인·피드백·결과| H
-    A --> R[DB · Cache · Infra · Source · Document · Issue]
+    A --> R[DB · Cache · Infra · Document · Issue]
     E --> L[준비한 로컬 임베딩 모델]
     E --> API[회사 임베딩 API]
 ```
 
 | 구성 | 책임 |
 |---|---|
-| 호스트 도구 | 계산·보고·표·파일 내용 작성·검증과 하위 에이전트 생성 |
+| 호스트 도구 | 로컬 Source 조사, 계산·보고·표·파일 내용 작성·검증과 하위 에이전트 생성 |
 | 플러그인·Skill | 업무 진입·역할 지침·호스트별 runtime 연결 |
 | DAERI runtime | 연결·승인·범위·현재 상태 검사, 실행·보고·파일·기억 보존 |
 | 포트·어댑터 | 실제 제품의 대상·입출력·읽기 의미를 공통 기능에 연결 |
@@ -104,9 +107,11 @@ SQLite는 업무·profile별 기억 정본과 벡터를 보관하고 FTS5·sqlit
 회사 API는 OpenAI 호환 규격을 사용하며 설정 적용은 해당 API의 검색·색인 전송 선택을 포함한다.
 정본·벡터는 로컬에 유지하고 profile·실제 대상·현재 제공 조건·기한으로 기억을 구분한다.
 
-리소스 연결은 [기존 MCP 재사용](../spec/resources/contract.md)을 기본으로 한다.
-DAERI는 호스트에는 MCP 서버, 하위 리소스에는 MCP 클라이언트로 동작한다.
+리소스 연결은 [기존 도구 재사용](../spec/resources/contract.md)을 기본으로 한다.
+DAERI는 호스트에는 MCP 서버, 외부 서비스의 하위 리소스에는 MCP 클라이언트로 동작한다.
 어댑터는 제품별 대상·입출력·읽기 의미를 해소한다.
+로컬 Source는 호스트가 등록 디렉터리를 기존 도구로 조사하고 `local_source` 어댑터가 그 관찰을 업무 근거로 연결한다.
+로컬 편집·실행·Git 작업의 권한과 인증은 호스트 환경을 따르며 [Source 지원 범위](../spec/resources/initial-adapters.md#로컬-소스-코드)를 따른다.
 
 ## 업무와 설정의 연결
 

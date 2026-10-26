@@ -18,11 +18,11 @@
 | `daeri_memory_search` | 같은 profile의 관련 기억 검색 | [기억](tasks.md#daeri_memory_search) |
 | `daeri_memory_update` | 기억 저장·정정·무효화 | [기억](tasks.md#daeri_memory_update) |
 | `daeri_resource_list` | 등록 연결·기능 요약 조회 | [리소스](resources.md#daeri_resource_list) |
-| `daeri_capability_get` | 읽기 기능·묶음의 스키마 조회 | [리소스](resources.md#daeri_capability_get) |
+| `daeri_capability_get` | 읽기·관찰 기능과 묶음의 스키마 조회 | [리소스](resources.md#daeri_capability_get) |
 | `daeri_plan_submit` | 계획 저장과 승인 대기 생성 | [계획](plans.md#daeri_plan_submit) |
 | `daeri_plan_get` | 저장 계획·승인 상태 조회 | [계획](plans.md#daeri_plan_get) |
 | `daeri_approval_request` | 실제 사용자 응답을 계획에 연결 | [승인](plans.md#daeri_approval_request) |
-| `daeri_capability_execute` | 승인 단계의 읽기 기능 실행 | [리소스](resources.md#daeri_capability_execute) |
+| `daeri_capability_execute` | 승인 단계의 읽기 실행·Source 관찰 등록 | [리소스](resources.md#daeri_capability_execute) |
 | `daeri_result_submit` | 보고·파일과 선별 기억 저장 | [결과](tasks.md#daeri_result_submit) |
 | `daeri_result_get` | 보존 기록·파일 조회 | [결과](tasks.md#daeri_result_get) |
 

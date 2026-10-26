@@ -150,6 +150,8 @@ def _recipe(recipe_id):
     item = catalog[recipe_id]
     _require(item['type'] == get_adapter(item['adapter']).resource_type,
              'The preparation recipe resource type differs from its registered adapter.')
+    if item.get('transport') == 'host':
+        return item, None, None
     package = Path(__file__).resolve().parents[1]
     bundled = package / 'recipes'
     root = bundled if bundled.is_dir() else package.parents[1] / 'recipes'
@@ -192,6 +194,8 @@ def _relocate_managed_resource(store, resource):
         if tools != 'tools' or recipe not in catalog or environment != '.venv' or programs != directory:
             continue
         item = catalog[recipe]
+        if item.get('transport') == 'host':
+            continue
         if (executable == item['executable'] + extension and pin == _tool_directory(store, recipe).name
                 and resource.get('type') == item['type']
                 and get_adapter(resource.get('adapter')).adapter_id == get_adapter(item['adapter']).adapter_id
@@ -204,16 +208,18 @@ def profile_template(store, recipe_id, profile_name, instance_id):
     item, _, _ = _recipe(recipe_id)
     _require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', profile_name)))
     _require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}', instance_id)))
-    identity = 'identity:' + profile_name + ':' + instance_id
+    identity = 'local-user' if item.get('transport') == 'host' else 'identity:' + profile_name + ':' + instance_id
     if len(identity) > 128:
         identity = 'identity:' + hashlib.sha256(json.dumps([profile_name, instance_id]).encode()).hexdigest()
+    connection = ({'transport': 'host'} if item.get('transport') == 'host' else
+                  {'transport': 'stdio', 'command': str(prepared_executable(store, recipe_id)),
+                   'args': copy.deepcopy(item['args']), 'env': copy.deepcopy(item['env']),
+                   'auth_env': {name: resource_reference(profile_name, instance_id, name)
+                                for name in item['auth_env']}})
     resource = {'instance_id': instance_id, 'type': item['type'], 'adapter': item['adapter'],
                 'target': copy.deepcopy(get_adapter(item['adapter']).target_template),
                 'identity_ref': identity,
-                'connection': {'transport': 'stdio', 'command': str(prepared_executable(store, recipe_id)),
-                               'args': copy.deepcopy(item['args']), 'env': copy.deepcopy(item['env']),
-                               'auth_env': {name: resource_reference(profile_name, instance_id, name)
-                                            for name in item['auth_env']}},
+                'connection': connection,
                 'capabilities': copy.deepcopy(item['capabilities']),
                 'discover_tools': item.get('discover_tools', False), 'policy': None}
     return {'name': profile_name, 'core_context': [], 'resources': [resource],
@@ -314,6 +320,32 @@ def _current_setup_values(resource, contract):
     return values
 
 
+def _matches_adapter(resource, adapter_id):
+    if resource['adapter'] == adapter_id:
+        return True
+    try:
+        return get_adapter(resource['adapter']).adapter_id == adapter_id
+    except StoreError:
+        return False
+
+
+def _check_setup_compatibility(existing, template):
+    """Check stored recipe identity without requiring its target to be available."""
+    _require(existing['instance_id'] == template['instance_id']
+             and _matches_adapter(existing, template['adapter']),
+             'The existing resource uses a different adapter or instance.')
+    connection = existing['connection']
+    expected = template['connection']
+    compatible = (connection == expected if expected['transport'] == 'host' else
+                  connection['transport'] == 'stdio'
+                  and connection['command'] == expected['command']
+                  and connection.get('args', []) == expected['args'])
+    _require(compatible
+             and [(c['capability_id'], c['tool_name']) for c in existing['capabilities']]
+             == [(c['capability_id'], c['tool_name']) for c in template['capabilities']],
+             'Use configuration import for connections outside this preparation recipe.')
+
+
 def build_setup_resource(store, recipe_id, profile_name, instance_id, values, existing=None, *, refresh_contract=False):
     """Return a validated recipe resource copy with explicit input changes applied."""
     from daeri.core.policy import pointer_set
@@ -322,15 +354,11 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
     values = get_adapter(contract['adapter']).normalize_setup_values(values)
     template = profile_template(store, recipe_id, profile_name, instance_id)['resources'][0]
     if existing is not None:
-        _require(existing['instance_id'] == instance_id
-                 and get_adapter(existing['adapter']).adapter_id == contract['adapter'],
-                 'An existing resource cannot be replaced with a different adapter or instance.')
-        _require(existing['connection']['transport'] == 'stdio'
-                 and existing['connection']['command'] == template['connection']['command']
-                 and existing['connection'].get('args', []) == template['connection']['args']
-                 and [(c['capability_id'], c['tool_name']) for c in existing['capabilities']]
-                 == [(c['capability_id'], c['tool_name']) for c in template['capabilities']],
-                 'Use configuration import for connections outside this preparation recipe.')
+        _require(existing['instance_id'] == instance_id, 'An existing resource must keep its selected instance.')
+        if not _matches_adapter(existing, contract['adapter']):
+            existing = None
+    if existing is not None:
+        _check_setup_compatibility(existing, template)
     merged = _current_setup_values(existing, contract) if existing is not None else {}
     merged.update(values)
     _require(_validate_setup_values(contract, merged)['complete'], 'Required setup answers are missing or invalid.')
@@ -355,7 +383,7 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
         if not custom_limits and recipe_id in {'document-confluence', 'issue-jira'} and env.get('ENABLED_TOOLS') == previous_filter:
             env.pop('ENABLED_TOOLS')
         if not custom_limits:
-            resource['discover_tools'] = True
+            resource['discover_tools'] = template['discover_tools']
     for name, value in values.items():
         for destination in contract['configuration_paths'][name]:
             bound = str(value).lower() if type(value) is bool else str(value)
@@ -439,9 +467,10 @@ def prepare_resources(store, profile_name):
                 recipe_id = next((identifier for identifier, item in catalog.items()
                                   if resource['type'] == item['type']
                                   and adapter_id == get_adapter(item['adapter']).adapter_id
-                                  and connection['transport'] == 'stdio'
-                                  and connection.get('args', []) == item['args']
-                                  and connection['command'] == str(prepared_executable(store, identifier))), None)
+                                  and ((item.get('transport') == 'host' and connection == {'transport': 'host'})
+                                       or (item.get('transport') != 'host' and connection['transport'] == 'stdio'
+                                           and connection.get('args', []) == item['args']
+                                           and connection['command'] == str(prepared_executable(store, identifier))))), None)
                 _require(recipe_id is not None, 'The selected resource does not use a registered preparation recipe.')
                 results.append(_prepare_resource(store, profile_name, resource['instance_id'], recipe_id))
             except (StoreError, OSError) as error:
@@ -463,6 +492,12 @@ def _prepare_resource(store, profile_name, instance_id, recipe_id):
     resource = next((value for value in profile['resources'] if value['instance_id'] == instance_id), None)
     _require(resource is not None, 'Select an instance registered in the requested profile.')
     connection = resource['connection']
+    if item.get('transport') == 'host':
+        _require(resource['adapter'] == item['adapter'] and resource['type'] == item['type'],
+                 'The selected resource does not use this host connection.')
+        get_adapter(item['adapter']).check_available(resource)
+        return {'recipe': recipe_id, 'instance_id': instance_id, 'ready': True,
+                'reused': True, 'transport': 'host'}
     expected = prepared_executable(store, recipe_id)
     _require(get_adapter(resource['adapter']).adapter_id == get_adapter(item['adapter']).adapter_id and
              resource['type'] == item['type'] and

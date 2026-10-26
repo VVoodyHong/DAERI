@@ -27,7 +27,7 @@ def test_claude_subagent_has_a_resolvable_single_gateway_allowlist(plugin_enviro
     servers = json.loads((plugin_environment / ".mcp.json").read_text())["mcpServers"]
     assert "runtime" in servers
     gateway = f"mcp__plugin_{manifest['name']}_runtime__daeri_subagent"
-    assert set(agent["tools"]) == {"Read", "ToolSearch", gateway}
+    assert set(agent["tools"]) == {"Read", "Grep", "Glob", "Bash", "ToolSearch", gateway}
     assert "daeri_subagent" in INPUT_MODELS
     reference = "${CLAUDE_PLUGIN_ROOT}/skills/work/references/subagent.md"
     assert reference in body

@@ -3,7 +3,7 @@
 from daeri.infrastructure.adapters.aws import AwsReadAdapter
 from daeri.infrastructure.adapters.base import ReadAdapter, clean_path
 from daeri.infrastructure.adapters.confluence import ConfluenceReadAdapter
-from daeri.infrastructure.adapters.gitlab import GitlabReadAdapter
+from daeri.infrastructure.adapters.local_source import LocalSourceAdapter
 from daeri.infrastructure.adapters.jira import JiraReadAdapter
 from daeri.infrastructure.adapters.postgres import PostgresReadAdapter
 from daeri.infrastructure.adapters.redis import RedisReadAdapter
@@ -25,7 +25,7 @@ def _build_registry(adapters):
 
 
 BUILTIN_ADAPTERS = _build_registry((
-    PostgresReadAdapter(), RedisReadAdapter(), AwsReadAdapter(), GitlabReadAdapter(), ConfluenceReadAdapter(), JiraReadAdapter(),
+    PostgresReadAdapter(), RedisReadAdapter(), AwsReadAdapter(), LocalSourceAdapter(), ConfluenceReadAdapter(), JiraReadAdapter(),
 ))
 
 

@@ -3,6 +3,9 @@ name: subagent
 description: DAERI work 총괄 에이전트가 위임한 단계의 조사·분석·검증을 수행하고 출처가 연결된 결과를 반환한다.
 tools:
   - Read
+  - Grep
+  - Glob
+  - Bash
   - ToolSearch
   - mcp__plugin_daeri_runtime__daeri_subagent
 ---

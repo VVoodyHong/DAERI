@@ -244,6 +244,7 @@ runtime은 [초안 생성 계약](../configuration/profiles.md#생성과-파일-
 호출 인자는 현재 질문 도구 스키마에 선언된 필드로 구성한다.
 
 시작 확인은 해당 profile 세팅에 필요한 전용 환경과 선택한 연결의 준비를 포함한다.
+소스 코드 제품은 “로컬 소스 코드”로 표시하고 개수만큼 디렉터리 경로 입력을 생성하며 [Source 준비](../configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치)에서 접근 상태를 확인한다.
 로컬 임베딩 모델 선택은 기기 모델 준비, 회사 API 선택은 인증·API 진단, 키워드 선택은 FTS 검색 준비로 이어간다.
 회사 API의 설정 적용 요약에는 endpoint·모델과 허용 기억 본문·검색 질의의 전송을 표시한다.
 
@@ -309,6 +310,7 @@ work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 
 총괄 에이전트는 `daeri_subagent`의 `create`로 승인된 단계·하위 목표·완료 조건·허용 출처를 배정하고 발급된 위임 토큰을 해당 호스트 하위 에이전트의 작업 지시에 전달한다.
 작업 지시에는 공통 지침의 설치된 절대 경로와 업무·위임·할당·계획 참조·필요한 근거 요약·기대 반환 형식도 포함한다.
+로컬 Source를 배정하면 `daeri_resource_list`에서 확인한 연결별 `target.path`도 호스트 작업 지시에 전달한다.
 실제 하위 에이전트 생성·모델 추론·대기는 호스트가 수행하고 DAERI 도구는 위임과 실행을 관리한다.
 
 | 호스트 | 현재 패키지의 연결 방식 |
@@ -317,8 +319,9 @@ work는 관련 자연어 요청과 사용자의 명시 호출에 적용한다.
 | Codex | 네이티브 하위 에이전트 생성 도구의 기본 하위 에이전트를 사용하고 공통 지침의 설치된 절대 경로를 지시로 전달 |
 
 Claude Code의 기본 탐색 위치는 [플러그인 규격](https://code.claude.com/docs/en/plugins-reference#plugin-directory-structure), 플러그인 이름 범위와 도구 제한은 [하위 에이전트 규격](https://code.claude.com/docs/en/sub-agents)을 따른다.
-현재 `agents/subagent.md`는 `Read`, `ToolSearch`, `mcp__plugin_daeri_runtime__daeri_subagent`를 제공하므로 조회·분석 근거를 반환하고 파일 작성은 총괄 에이전트가 담당한다.
-`Read`는 `${CLAUDE_PLUGIN_ROOT}/skills/work/references/subagent.md`와 필요한 제품 계약을 읽고, DAERI 업무 자료·실행·완료 기록은 단일 `daeri_subagent` 게이트웨이로 처리한다.
+현재 `agents/subagent.md`는 `Read`·`Grep`·`Glob`·`Bash`와 `ToolSearch`·`mcp__plugin_daeri_runtime__daeri_subagent`를 제공한다.
+하위 에이전트는 호스트 도구로 로컬 Source를 조사하고 조회·분석 근거를 반환하며 파일 작성은 총괄 에이전트가 담당한다.
+`Read`는 `${CLAUDE_PLUGIN_ROOT}/skills/work/references/subagent.md`와 필요한 제품 계약을 읽고, DAERI 업무 자료·관찰·완료 기록은 단일 `daeri_subagent` 게이트웨이로 처리한다.
 Claude 플러그인 정의는 기본 `agents/` 디렉터리 탐색을 사용한다.
 
 Codex의 생성·후속 지시·대기·종료는 [호스트 하위 에이전트 도구](https://learn.chatgpt.com/docs/agent-configuration/subagents#orchestration-and-thread-controls)를 사용한다.

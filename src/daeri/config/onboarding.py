@@ -24,7 +24,9 @@ from daeri.core.security import redact
 from daeri.config.setup import (
     PROFILE_FIELDS,
     REFERENCE,
+    _check_setup_compatibility,
     _current_setup_values,
+    _matches_adapter,
     _no_secrets,
     _require,
     _validate_setup_values,
@@ -238,9 +240,9 @@ def _resource_block(store, name, instance, recipe, profile):
     contract = setup_schema(recipe)
     existing = next((r for r in profile['resources'] if r['instance_id'] == instance), None) if profile else None
     values = {}
-    if existing:
+    if existing and _matches_adapter(existing, contract['adapter']):
         # Reuse the common compatibility check rather than rewriting a manual connection.
-        build_setup_resource(store, recipe, name, instance, {}, existing=existing)
+        _check_setup_compatibility(existing, profile_template(store, recipe, name, instance)['resources'][0])
         values = _current_setup_values(existing, contract)
     for field, schema in contract['input_schema']['properties'].items():
         if field not in values and ('default' in schema or field in contract['input_schema']['required']):
@@ -303,10 +305,13 @@ def _credential_slots(store, name, document, profile):
         if (not isinstance(block, dict) or not isinstance(block.get('adapter'), str)
                 or block['adapter'] not in load_catalog()):
             continue
-        resource = existing.get(instance) or profile_template(store, block['adapter'], name, instance)['resources'][0]
+        template = profile_template(store, block['adapter'], name, instance)['resources'][0]
+        previous = existing.get(instance)
+        reuse = previous is not None and _matches_adapter(previous, template['adapter'])
+        resource = previous if reuse else template
         fields[instance] = resource_credential_fields(resource)
         if fields[instance] and 'credentials' not in block:
-            block['credentials'] = {field: {'ref': spec['reference']} if instance in existing else None
+            block['credentials'] = {field: {'ref': spec['reference']} if reuse else None
                                     for field, spec in fields[instance].items()}
             changed = True
     embedding = document.get('embedding')
@@ -339,7 +344,8 @@ def _automatic_resources(store, name, selections, recipes, blocks, profile):
                         break
                 else:
                     try:
-                        build_setup_resource(store, recipe, name, instance, {}, existing=existing[instance])
+                        template = profile_template(store, recipe, name, instance)['resources'][0]
+                        _check_setup_compatibility(existing[instance], template)
                     except StoreError:
                         pass
                     else:
@@ -376,8 +382,15 @@ def create_draft(store, name, selections=None, *, recipes=None, embedding=None, 
             profile_template(store, recipe, name, instance)
             block = document['resources'].get(instance)
             if instance in document['resources']:
-                _require(isinstance(block, dict) and block.get('adapter') == recipe,
-                         '기존 연결을 다른 제품으로 바꿀 수 없습니다.')
+                _require(isinstance(block, dict) and isinstance(block.get('adapter'), str),
+                         '기존 리소스 설정 형식을 확인하세요.')
+                if block.get('adapter') != recipe:
+                    previous_recipe = block.get('adapter')
+                    document['resources'][instance] = _resource_block(store, name, instance, recipe, profile)
+                    if not any(isinstance(value, dict) and value.get('adapter') == previous_recipe
+                               for value in document['resources'].values()):
+                        meta['schemas'].pop(previous_recipe, None)
+                    changed = True
             else:
                 document['resources'][instance] = _resource_block(store, name, instance, recipe, profile)
                 changed = True
@@ -498,6 +511,7 @@ def _configuration(store, name, document, profile, meta):
         recipe = block['adapter']
         existing = next((r for r in config['resources'] if r['instance_id'] == instance), None)
         contract = setup_schema(recipe)
+        reuse = existing is not None and _matches_adapter(existing, contract['adapter'])
         partial = _validate_setup_values(contract, block['inputs'])
         if not partial['valid']:
             for issue in partial['issues']:
@@ -506,7 +520,7 @@ def _configuration(store, name, document, profile, meta):
                 path = field + '.inputs' + ('.' + key if key in contract['input_schema']['properties'] else '')
                 issues.append(_issue(path, message='접속 필수값·타입·허용 조건을 확인하세요.'))
             continue
-        merged = _current_setup_values(existing, contract) if existing else {}
+        merged = _current_setup_values(existing, contract) if reuse else {}
         merged.update(block['inputs'])
         missing = _validate_setup_values(contract, merged)['missing_fields']
         if missing:
@@ -517,7 +531,7 @@ def _configuration(store, name, document, profile, meta):
                                             refresh_contract=True)
             credential_fields = resource_credential_fields(resource)
             supplied = copy.deepcopy(block.get('credentials', {}))
-            if existing and isinstance(supplied, dict):
+            if reuse and isinstance(supplied, dict):
                 previous = resource_credential_fields(existing)
                 for key, spec in credential_fields.items():
                     old = previous.get(key)

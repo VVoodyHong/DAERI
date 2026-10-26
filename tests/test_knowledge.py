@@ -23,13 +23,13 @@ def timestamp(days=0):
 class LocalRuntime:
     def __init__(self, directory):
         self.store = Store(directory)
-        target = {"server": "https://git.example.test", "project": "team/service"}
+        target = {"server": "https://docs.example.test/wiki", "project": "team/service"}
         target_hash = hashlib.sha256(json.dumps(target, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
         memory_rule = {"categories": ["service_rule", "lesson"], "source_fields": [select()],
                        "context_sources": ["request", "clarification"], "retention": "long_term", "allow_model_recall": True}
-        self.resource = {"instance_id": "source-one", "type": "Source", "adapter": "source_read", "target": target,
+        self.resource = {"instance_id": "source-one", "type": "Document", "adapter": "document_read", "target": target,
             "identity_ref": "identity:reader", "connection": {"transport": "stdio", "command": sys.executable, "args": ["-c", "pass"]},
-            "capabilities": [{"capability_id": "read", "tool_name": "get_repository_file", "constraints": {"fixed": {"project_id": "team/service"}}}],
+            "capabilities": [{"capability_id": "read", "tool_name": "confluence_get_page", "constraints": {"fixed": {"project_id": "team/service"}}}],
             "policy": {"allowed_model_fields": [select()], "export_fields": [select()], "retained_fields": [select()], "masking": [], "memory": memory_rule}}
         self.profile = self.store.put_profile("knowledge-profile", resources=[self.resource], memory_policy={
             "categories": ["service_rule", "lesson"], "instance_ids": ["source-one"], "target_bindings": {"source-one": target_hash},
@@ -274,7 +274,7 @@ def test_replay_returns_current_index_state_without_new_version_or_retention(run
 def test_counter_observation_for_another_actual_target_does_not_invalidate_memory(runtime):
     stored = update(runtime, arguments(runtime, [runtime.record()]), runtime.task)
     other = copy.deepcopy(runtime.resource)
-    other.update(instance_id="source-other", target={"server": "https://git.example.test", "project": "another/service"})
+    other.update(instance_id="source-other", target={"server": "https://docs.example.test/wiki", "project": "another/service"})
     runtime.profile["resources"].append(other)
     reference = runtime.record()
     runtime.records[reference]["instance_id"] = "source-other"

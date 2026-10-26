@@ -33,7 +33,7 @@ DAERI runtime은 승인·호출 범위·근거·자료 권한·보존·무결성
 | P-10 | 필요한 프로그램·버전을 확인하고 누락·비호환 환경을 설치 기능으로 준비한다. | [환경 준비](installation/environment.md) |
 | P-11 | Windows·macOS 지원을 설계하고 최초 구현·실행 검증은 사용자의 Mac에서 진행한다. | [환경 준비](installation/environment.md) |
 | P-12 | DB·Cache·Infra·Source·Document·Issue 등 필요한 리소스 범주를 어댑터로 연결하고 추가 범주로 확장한다. | [리소스 범주](resources/initial-adapters.md) |
-| P-13 | 리소스 연결은 기존 MCP 재사용을 기본으로 하고 필요한 부족분만 보완한다. | [MCP 재사용](resources/contract.md#연결-구조) |
+| P-13 | 리소스 연결은 기존 MCP와 호스트 도구를 재사용하고 필요한 연결·기록 기능만 보완한다. | [연결 구조](resources/contract.md#연결-구조) |
 | P-14 | 서비스별 profile에 여러 인프라·리소스와 연결 정보를 등록해 관리한다. | [profile 구성](configuration/profiles.md) |
 | P-15 | profile별 기억을 계획 전에 조회하고 보고와 선별 지식의 자동 저장·색인을 연결해 다음 업무에 활용한다. | [기억·검색·보존](tasks/memory.md) |
 | P-16 | setup에서 리소스 종류·제품·개수를 선택하고 접속·인증 YAML을 편집한다. 검증·확인 뒤 인증 등록과 설정 적용을 수행하며 업무별 조회 대상은 계획에서 승인받는다. | [setup YAML 설계](configuration/profiles.md#사용자용-setup-yaml) |
@@ -61,9 +61,9 @@ runtime은 기여 자료의 현재 내보내기 허용·기한과 파일 경로�
 
 | 역할 | 사용 예정 환경 |
 |---|---|
-| DAERI 소스·마켓플레이스 배포 저장소 | GitLab |
+| DAERI 소스·마켓플레이스 배포 저장소 | 사내외 Git 저장소 |
 | 사용자 호스트 | Codex 또는 Claude Code |
-| profile의 Source | GitLab |
+| profile의 Source | 사용자 PC의 로컬 소스 코드 디렉터리; 복수 등록 |
 | profile의 Infra | AWS |
 | profile의 DB | PostgreSQL |
 | profile의 Cache | Redis |
@@ -72,6 +72,9 @@ runtime은 기여 자료의 현재 내보내기 허용·기한과 파일 경로�
 
 DAERI 자체의 배포 저장소와 profile에서 분석할 Source 리소스는 서로 다른 설정이다.
 배포 위치를 바꾸거나 리소스 제품을 교체해도 공통 업무·승인 계약을 유지한다.
+Source는 등록한 로컬 경로에서 호스트의 기존 도구로 조사하고 확인한 관찰을 업무·보고·기억의 근거로 연결한다.
+로컬 파일 편집·프로그램 실행·Git 작업과 그 인증·권한은 Codex·Claude Code의 실행 환경을 따른다.
+현재 DAERI의 Source 기능은 [경로 등록·진단과 호스트 관찰 등록](resources/initial-adapters.md#로컬-소스-코드)이다.
 
 ## 범용성의 의미와 한계
 

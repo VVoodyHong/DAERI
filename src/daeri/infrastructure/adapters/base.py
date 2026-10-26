@@ -1,4 +1,4 @@
-"""Trusted read-adapter contract and product-independent request/result checks."""
+"""Trusted adapter contract for resource reads and host observations."""
 
 import copy
 import json
@@ -59,7 +59,7 @@ def json_text(value):
 
 
 class ReadAdapter:
-    """Only trusted registered subclasses may interpret an external read tool."""
+    """Interpret resource arguments and results through a trusted registered adapter."""
 
     adapter_id = ""
     aliases = ()

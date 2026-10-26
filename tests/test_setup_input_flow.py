@@ -18,8 +18,8 @@ def values_file(tmp_path, values):
     return path
 
 
-def source_values():
-    return {'server': 'https://git.example.invalid'}
+def document_values():
+    return {'server': 'https://git.example.invalid', 'username': 'reader'}
 
 
 def cache_resource(store, instance='cache-one'):
@@ -82,19 +82,19 @@ def test_configure_adds_one_resource_and_preserves_profile_settings(tmp_path):
     try:
         before = with_store.put_profile('service', core_context=['기존 운영 맥락'], retention_days=17,
                                         long_term_memory_days=80, memory_policy={'model_allowed': False})
-        after = setup.configure_resource(with_store, 'source-gitlab', 'service', 'source-one',
-                                          values_file(tmp_path, source_values()), expected_revision=1)
+        after = setup.configure_resource(with_store, 'document-confluence', 'service', 'source-one',
+                                          values_file(tmp_path, document_values()), expected_revision=1)
         assert after['revision'] == 2
         assert after['core_context'] == before['core_context']
         assert after['retention_days'] == 17 and after['long_term_memory_days'] == 80
         assert after['memory_policy'] == before['memory_policy']
         resource = after['resources'][0]
         assert resource['target'] == {'server': 'https://git.example.invalid'}
-        assert resource['connection']['env']['GITLAB_URL'] == 'https://git.example.invalid'
+        assert resource['connection']['env']['CONFLUENCE_URL'] == 'https://git.example.invalid'
         assert resource['capabilities'][0]['constraints'] == {}
         assert resource['policy'] is None
         assert resource['connection']['auth_env'] == {
-            'GITLAB_TOKEN': 'credential:service.source-one.gitlab_token'}
+            'CONFLUENCE_API_TOKEN': 'credential:service.source-one.confluence_api_token'}
         assert not (with_store.data_dir / 'tools').exists()
     finally:
         with_store.close()
@@ -103,21 +103,22 @@ def test_configure_adds_one_resource_and_preserves_profile_settings(tmp_path):
 def test_repeated_setup_updates_only_supplied_fields_and_preserves_other_resources(tmp_path):
     store = Store(tmp_path / 'private')
     try:
-        source = setup.profile_template(store, 'source-gitlab', 'service', 'source-one')['resources'][0]
-        source['adapter'] = 'source_read'
+        source = setup.profile_template(store, 'document-confluence', 'service', 'source-one')['resources'][0]
+        source['adapter'] = 'document_read'
         source['target'] = {'server': 'https://git.example.invalid'}
-        source['connection']['env']['GITLAB_URL'] = 'https://git.example.invalid'
+        source['connection']['env']['CONFLUENCE_URL'] = 'https://git.example.invalid'
+        source['connection']['env']['CONFLUENCE_USERNAME'] = 'reader'
         source['capabilities'][0]['constraints'] = {
             'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['release']},
             'path_prefixes': {'file_path': ['lib']}}
         source['policy'] = {'masking': []}
         cache = cache_resource(store)
         before = store.put_profile('service', resources=[source, cache], retention_days=12)
-        after = setup.configure_resource(store, 'source-gitlab', 'service', 'source-one',
+        after = setup.configure_resource(store, 'document-confluence', 'service', 'source-one',
                                           values_file(tmp_path, {'server': 'https://new-git.example.invalid'}), expected_revision=1)
         expected = copy.deepcopy(before['resources'])
         expected[0]['target']['server'] = 'https://new-git.example.invalid'
-        expected[0]['connection']['env']['GITLAB_URL'] = 'https://new-git.example.invalid'
+        expected[0]['connection']['env']['CONFLUENCE_URL'] = 'https://new-git.example.invalid'
         assert after['resources'] == expected
         assert after['retention_days'] == 12
     finally:
@@ -127,9 +128,9 @@ def test_repeated_setup_updates_only_supplied_fields_and_preserves_other_resourc
 def test_resource_builder_creates_complete_resource_without_publishing_a_profile(tmp_path):
     store = Store(tmp_path / 'private')
     try:
-        values = source_values()
+        values = document_values()
         supplied = copy.deepcopy(values)
-        resource = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values)
+        resource = setup.build_setup_resource(store, 'document-confluence', 'service', 'source-one', values)
         assert resource['target'] == {'server': 'https://git.example.invalid'}
         assert resource['capabilities'][0]['constraints'] == {}
         assert resource['policy'] is None
@@ -185,14 +186,14 @@ def test_infra_account_validation_rejects_values_without_a_twelve_digit_identifi
 def test_resource_builder_merges_partial_values_without_mutating_existing_resource(tmp_path):
     store = Store(tmp_path / 'private')
     try:
-        existing = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', source_values())
+        existing = setup.build_setup_resource(store, 'document-confluence', 'service', 'source-one', document_values())
         existing['policy'] = {'masking': []}
         existing['capabilities'][0]['constraints'] = {
             'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
             'path_prefixes': {'file_path': ['src']}}
         before = copy.deepcopy(existing)
         values = {'server': 'https://new-git.example.invalid'}
-        result = setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one', values, existing)
+        result = setup.build_setup_resource(store, 'document-confluence', 'service', 'source-one', values, existing)
         assert result['target'] == {'server': 'https://new-git.example.invalid'}
         assert result['capabilities'][0]['constraints'] == {
             'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
@@ -207,11 +208,11 @@ def test_resource_builder_merges_partial_values_without_mutating_existing_resour
         store.close()
 
 
-def test_resource_builder_rejects_missing_new_resource_values_before_any_publication(tmp_path):
+def test_resource_builder_rejects_missing_new_redocument_values_before_any_publication(tmp_path):
     store = Store(tmp_path / 'private')
     try:
         with pytest.raises(StoreError, match='INVALID_INPUT'):
-            setup.build_setup_resource(store, 'source-gitlab', 'service', 'source-one',
+            setup.build_setup_resource(store, 'document-confluence', 'service', 'source-one',
                                        {})
         assert store.list_profiles() == []
     finally:
@@ -221,7 +222,7 @@ def test_resource_builder_rejects_missing_new_resource_values_before_any_publica
 @pytest.mark.parametrize('values,revision,code', [
     ({}, 1, 'INVALID_INPUT'),
     ({'unexpected': 'value'}, 1, 'INVALID_INPUT'),
-    (source_values(), 0, 'REVISION_CONFLICT'),
+    (document_values(), 0, 'REVISION_CONFLICT'),
 ])
 def test_failed_setup_keeps_active_profile_and_published_files(tmp_path, values, revision, code):
     store = Store(tmp_path / 'private')
@@ -229,7 +230,7 @@ def test_failed_setup_keeps_active_profile_and_published_files(tmp_path, values,
         before = store.put_profile('service', core_context=['保留'], retention_days=7)
         files = sorted((store.data_dir / 'profiles').iterdir())
         with pytest.raises(StoreError) as caught:
-            setup.configure_resource(store, 'source-gitlab', 'service', 'source-one',
+            setup.configure_resource(store, 'document-confluence', 'service', 'source-one',
                                      values_file(tmp_path, values), expected_revision=revision)
         assert caught.value.code == code
         assert store.get_profile('service') == before
@@ -238,15 +239,17 @@ def test_failed_setup_keeps_active_profile_and_published_files(tmp_path, values,
         store.close()
 
 
-def test_configure_refuses_replacing_another_adapter_at_the_same_instance(tmp_path):
+def test_configure_explicitly_replaces_another_adapter_at_the_same_instance(tmp_path):
     store = Store(tmp_path / 'private')
     try:
         cache = cache_resource(store, 'shared')
         before = store.put_profile('service', resources=[cache])
-        with pytest.raises(StoreError):
-            setup.configure_resource(store, 'source-gitlab', 'service', 'shared',
-                                     values_file(tmp_path, source_values()), expected_revision=1)
-        assert store.get_profile('service') == before
+        saved = setup.configure_resource(store, 'document-confluence', 'service', 'shared',
+                                         values_file(tmp_path, document_values()), expected_revision=1)
+        expected = setup.build_setup_resource(store, 'document-confluence', 'service', 'shared', document_values())
+        assert saved['resources'] == [expected]
+        assert saved['revision'] == before['revision'] + 1
+        assert before['resources'] == [cache]
     finally:
         store.close()
 
@@ -286,8 +289,8 @@ def test_adapter_object_field_cannot_bypass_its_nested_required_values(tmp_path,
      {'profile': 'operations-reader', 'region': 'ap-northeast-2', 'account': '111111111111'},
      {'AWS_PROFILE': 'operations-reader', 'AWS_REGION': 'ap-northeast-2'},
      {'command_field': 'cli_command', 'region': 'ap-northeast-2'}),
-    ('source-gitlab', {'server': 'https://git.example.invalid'},
-     {'server': 'https://git.example.invalid'}, {'GITLAB_URL': 'https://git.example.invalid'}, {}),
+    ('document-confluence', {'server': 'https://git.example.invalid', 'username': 'reader'},
+     {'server': 'https://git.example.invalid'}, {'CONFLUENCE_URL': 'https://git.example.invalid'}, {}),
     ('document-confluence', {'server': 'https://docs.example.invalid/wiki',
                              'username': 'reader@example.invalid'},
      {'server': 'https://docs.example.invalid/wiki'},
@@ -318,8 +321,8 @@ def test_configure_cli_requires_the_inspected_revision_and_saves_only_valid_answ
     created = subprocess.run([sys.executable, '-m', 'daeri.cli', '--data-dir', str(tmp_path / 'absent'),
                               'profile', 'create', 'service'], text=True, capture_output=True, timeout=20)
     assert created.returncode == 0, created.stdout + created.stderr
-    path = values_file(tmp_path, source_values())
-    args = ('configure', 'source-gitlab', '--profile', 'service', '--instance', 'source-one',
+    path = values_file(tmp_path, document_values())
+    args = ('configure', 'document-confluence', '--profile', 'service', '--instance', 'source-one',
             '--values', str(path))
     assert cli(tmp_path, *args).returncode == 2
     saved = cli(tmp_path, *args, '--expected-revision', '1')
@@ -336,7 +339,7 @@ def test_configure_cli_requires_the_inspected_revision_and_saves_only_valid_answ
      {'sql_field': 'sql', 'tables': ['public.health'], 'columns': ['id'], 'max_rows': 25}),
     ('cache-redis', {'host': 'cache.example.invalid', 'port': 6379, 'db': 0, 'tls': True},
      {'allowed_values': {'key': ['service:status']}}),
-    ('source-gitlab', {'server': 'https://git.example.invalid'},
+    ('document-confluence', {'server': 'https://git.example.invalid', 'username': 'reader'},
      {'fixed': {'project_id': 'team/service'}, 'allowed_values': {'ref': ['main']},
       'path_prefixes': {'file_path': ['src']}}),
     ('document-confluence', {'server': 'https://docs.example.invalid', 'username': 'reader'},
@@ -347,7 +350,7 @@ def test_connection_setup_preserves_imported_resource_restrictions(tmp_path, rec
     try:
         resource = setup.profile_template(store, recipe, 'service', 'resource-one')['resources'][0]
         resource['capabilities'][0]['constraints'] = constraints
-        if recipe == 'source-gitlab':
+        if recipe == 'document-confluence':
             resource['target']['project'] = 'team/service'
         if recipe == 'document-confluence':
             resource['target']['space'] = 'OPS'
@@ -372,7 +375,7 @@ def test_connection_setup_preserves_imported_resource_restrictions(tmp_path, rec
 @pytest.mark.parametrize('recipe,values', [
     ('db-postgres', {'tables': ['public.orders'], 'columns': ['id'], 'max_rows': 10}),
     ('cache-redis', {'keys': ['service:status']}),
-    ('source-gitlab', {'project': 'team/service', 'refs': ['main'], 'path_prefixes': ['src']}),
+    ('document-confluence', {'project': 'team/service', 'refs': ['main'], 'path_prefixes': ['src']}),
     ('document-confluence', {'space': 'OPS', 'page_ids': ['123456']}),
 ])
 def test_setup_keeps_work_scope_out_of_connection_input(tmp_path, recipe, values):

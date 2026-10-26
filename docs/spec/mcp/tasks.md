@@ -142,6 +142,7 @@ step_ids는 1~100개, 완료 조건은 1~20개이며 참조는 실제 제공한 
 
 SubagentCall은 `step_id:ID`, `parameters:JsonObject`와 선택 `capability_id:ID`다.
 읽기 묶음의 실제 기능은 capability_id로 선택한다.
+로컬 Source는 호스트 도구로 조사한 뒤 [관찰 입력](resources.md#로컬-source-관찰-등록)을 `execute.call`에 전달한다.
 SubagentResult는 `summary:string`, `evidence_refs:RecordRef[]`, `limitations:string[]`다.
 
 ### 생성과 호출 허용 조건

@@ -13,15 +13,15 @@ from daeri.infrastructure.storage import Store
 from daeri.core.errors import StoreError
 
 
-TARGET = {"server": "https://git.example.test", "project": "team/service"}
+TARGET = {"server": "https://docs.example.test/wiki", "project": "team/service"}
 TARGET_HASH = hashlib.sha256(json.dumps(TARGET, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
 def configured_resource():
     root = {"segments": []}
-    return {"instance_id": "primary-db", "type": "Source", "adapter": "source_read", "target": dict(TARGET),
+    return {"instance_id": "primary-db", "type": "Document", "adapter": "document_read", "target": dict(TARGET),
         "identity_ref": "test:reader", "connection": {"transport": "stdio", "command": sys.executable, "args": ["-c", "pass"]},
-        "capabilities": [{"capability_id": "read", "tool_name": "get_repository_file", "constraints": {"fixed": {"project_id": "team/service"}}}],
+        "capabilities": [{"capability_id": "read", "tool_name": "confluence_get_page", "constraints": {"fixed": {"project_id": "team/service"}}}],
         "policy": {"allowed_model_fields": [root], "export_fields": [root], "retained_fields": [root], "masking": [],
             "memory": {"categories": ["service_rule", "resource_structure", "procedure", "lesson"], "source_fields": [root],
                 "context_sources": ["request", "clarification"], "retention": "long_term", "allow_model_recall": True}}}
@@ -341,12 +341,12 @@ def test_actual_local_multilingual_model_retrieves_without_network(memory, monke
 
 
 def exportable_source(service, profile, *, proven=True, kind="call_result"):
-    target = {"server": "https://git.example.test", "project": "team/service"}
+    target = {"server": "https://docs.example.test/wiki", "project": "team/service"}
     binding = hashlib.sha256(json.dumps(target, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     root = {"segments": []}
-    resource = {"instance_id": "primary-db", "type": "Source", "adapter": "source_read", "target": target,
+    resource = {"instance_id": "primary-db", "type": "Document", "adapter": "document_read", "target": target,
         "identity_ref": "test:reader", "connection": {"transport": "stdio", "command": sys.executable, "args": ["-c", "pass"]},
-        "capabilities": [{"capability_id": "read", "tool_name": "get_repository_file", "constraints": {"fixed": {"project_id": "team/service"}}}],
+        "capabilities": [{"capability_id": "read", "tool_name": "confluence_get_page", "constraints": {"fixed": {"project_id": "team/service"}}}],
         "policy": {"allowed_model_fields": [root], "export_fields": [root], "retained_fields": [root], "masking": [],
             "memory": {"categories": ["lesson"], "source_fields": [root], "context_sources": ["request"], "retention": "long_term", "allow_model_recall": True}}}
     current = service.store.put_profile("alpha", resources=[resource], memory_policy=memory_policy(

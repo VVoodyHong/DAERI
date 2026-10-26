@@ -11,14 +11,14 @@
 |---|---|
 | [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | runtime Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
 | [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
-| [연결 카탈로그](../../src/daeri/config/catalog.json) | 첫 리소스 recipe의 제품·패키지·실행 이름·고정 안전 설정 |
+| [연결 카탈로그](../../src/daeri/config/catalog.json) | 연결 제품·입력·준비 방식과 외부 프로그램의 패키지·실행 이름·고정 안전 설정 |
 | `infrastructure/adapters/`의 setup 계약 | 어댑터별 공개·인증 입력 스키마, 저장 표현·목적지와 선택한 인증 방식의 최종 구성 |
 | `infrastructure/embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
 | `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
 | [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
 
 버전·출처·잠금 조합은 위 정본에서 관리하고 문서·호스트·Skill은 이를 참조한다.
-카탈로그의 패키지와 recipe의 직접 의존성이 다르면 준비를 거부한다.
+외부 프로그램은 카탈로그의 패키지와 recipe의 직접 의존성이 다르면 준비를 거부한다.
 각 recipe의 격리 환경에서 해당 SDK 주 버전을 설치하고 앱은 자체 잠금 조합을 유지한다.
 
 | 구성 | 사용하는 이유 |
@@ -170,7 +170,7 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 | `profile delete` | [삭제 미리보기·확인·사용 차단·연관 자료 정리·최종 삭제](../spec/configuration/profiles.md#profile-삭제) |
 | `profile backup/restore` | [단일 profile의 암호화 이동·검증·확인 후 새 공간 복원](../spec/configuration/profiles.md#이관백업복원) |
 | `resource catalog/template/setup-schema/validate-setup/configure` | [제품·입력 스키마·접속 정보 검증·개정 검사·명시적 기능 계약 갱신](../spec/configuration/profiles.md#리소스-설정-입력과-검증) |
-| `resource prepare/diagnose` | [잠긴 하위 MCP 준비·대상 확인·읽기 기능 등록](../spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치) |
+| `resource prepare/diagnose` | [하위 MCP 준비 또는 로컬 Source 경로 확인·기능 등록](../spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치) |
 | `resource login`·`auth set/status/delete` | [제공자 로그인·인증 참조 입력·상태·삭제](../spec/configuration/profiles.md#인증-저장과-전달) |
 | `memory configure/status/diagnose/prepare/reindex` | [임베딩 선택·준비·시험 진단·재색인](../spec/installation/environment.md#임베딩-선택과-준비) |
 | `cleanup` | [기한이 지난 본문·기억·색인과 작업 파일 정리](../spec/configuration/profiles.md#삭제와-만료) |
@@ -210,7 +210,7 @@ runtime 선택은 설치한 플러그인의 전용 Python 절대 경로로 고�
 준비·로그인 요청은 관리 진입으로 연결한다.
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 runtime이 저장 상태·정책과 대조한다.
-실제 리소스 요청은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
+실제 리소스 요청과 호스트의 Source 관찰 등록은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
 총괄 에이전트·하위 에이전트의 판단·조정과 실행 검사의 경계는 [멀티 오케스트레이션 에이전트 아키텍처](../architecture/overview.md#오케스트레이션과-자율-수행)가 설명한다.
 구현은 같은 로컬 배포 안에서 역할별 패키지로 나눈다.
 공개 실행 모듈은 `daeri.cli`와 `daeri.server`다.
@@ -231,7 +231,7 @@ src/daeri/
 | 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#초기-도구-목록)를 받아 설정·업무 처리로 전달 |
 | `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 필드·기억·보존 정책, 공통 오류, 인증 문자열 보조 검사와 정규 JSON 표현 |
 | `application/` | `runtime.py`·`planning.py`·`subagents.py`·`results.py`·`knowledge.py`·`automatic_memory.py` | 업무·계획·승인·위임·읽기 실행, 보고·파일의 근거 연결, 기억 후보 검증·갱신·재시도 |
-| `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP와 인증, 기억 검색·색인과 임베딩 제공자 연결 |
+| `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP·인증·Source 경로와 관찰 등록, 기억 검색·색인과 임베딩 제공자 연결 |
 | `infrastructure/adapters/` | 공통 `base.py`와 제품별 모듈 | 제품별 설정 스키마·대상·인증·로그인·읽기 의미·요청과 결과 검사 |
 | `config/` | `setup.py`·`onboarding.py`·`setup_yaml.py`·`catalog.json`·`profile_*.py`·`portable_archive.py` | 접속·인증 YAML과 recipe 준비·진단, profile 개정·삭제·암호화 백업·검증·복원 |
 

@@ -17,7 +17,7 @@ def registry(tmp_path):
     store.close()
 
 
-def remote_resource(adapter='gitlab_read', resource_type='Source', tool='get_repository_file'):
+def remote_resource(adapter='confluence_read', resource_type='Document', tool='confluence_get_page'):
     return {
         'instance_id': 'remote', 'type': resource_type, 'adapter': adapter,
         'target': {'server': 'https://resource.example.test'},
@@ -30,7 +30,7 @@ def remote_resource(adapter='gitlab_read', resource_type='Source', tool='get_rep
 
 @pytest.mark.parametrize('adapter,resource_type,tool', [
     ('postgres_read', 'DB', 'execute_sql'), ('redis_read', 'Cache', 'get'),
-    ('aws_read', 'Infra', 'call_aws'), ('gitlab_read', 'Source', 'get_repository_file'),
+    ('aws_read', 'Infra', 'call_aws'),
     ('confluence_read', 'Document', 'confluence_get_page'), ('jira_read', 'Issue', 'jira_get_issue'),
 ])
 def test_builtin_adapters_reject_remote_bindings_they_cannot_verify(adapter, resource_type, tool):
@@ -48,7 +48,7 @@ def test_remote_tool_metadata_and_endpoint_host_do_not_prove_resource_identity(r
         return object(), []
 
     async def tools(session):
-        return [{'name': 'get_repository_file', 'inputSchema': {'type': 'object'}}]
+        return [{'name': 'confluence_get_page', 'inputSchema': {'type': 'object'}}]
 
     monkeypatch.setattr(registry, '_session', metadata_only_session)
     monkeypatch.setattr(registry, '_tools', tools)

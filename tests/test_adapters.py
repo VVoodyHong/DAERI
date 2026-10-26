@@ -21,16 +21,16 @@ def registry(tmp_path):
 
 def resource_config(adapter_id):
     return {
-        "instance_id": "source-one", "type": "Source", "adapter": adapter_id,
+        "instance_id": "source-one", "type": "Document", "adapter": adapter_id,
         "target": {"server": "https://git.example.test", "project": "team/service"},
         "identity_ref": "identity:reader",
         "connection": {
             "transport": "stdio", "command": sys.executable,
             "args": [str(Path(__file__).parent / "fixtures" / "resource_mcp.py")],
-            "env": {"GITLAB_URL": "https://git.example.test"},
+            "env": {"CONFLUENCE_URL": "https://git.example.test"},
         },
         "capabilities": [{
-            "capability_id": "read-file", "tool_name": "get_repository_file",
+            "capability_id": "read-file", "tool_name": "confluence_get_page",
             "constraints": {
                 "fixed": {"project_id": "team/service"},
                 "allowed_values": {"ref": ["main"]},
@@ -61,7 +61,7 @@ def exercise_stdio_read(registry, resource):
         "project_id": "team/service", "ref": "main", "file_path": "src/main.py", "limit": 20,
     }
     assert invocation.prepared_request == {
-        "tool_name": "get_repository_file", "arguments": expected_arguments,
+        "tool_name": "confluence_get_page", "arguments": expected_arguments,
     }
     assert invocation.access == {"fields": ["file_path", "limit", "project_id", "ref"]}
     assert profile == original_profile
@@ -78,7 +78,7 @@ def exercise_stdio_read(registry, resource):
     ("postgres_read", "DB", "execute_sql"),
     ("redis_read", "Cache", "get"),
     ("aws_read", "Infra", "call_aws"),
-    ("gitlab_read", "Source", "get_repository_file"),
+    ("local_source", "Source", "source_observe"),
     ("confluence_read", "Document", "confluence_get_page"),
     ("jira_read", "Issue", "jira_get_issue"),
 ])
@@ -105,7 +105,7 @@ def test_builtin_registry_maps_canonical_ids_to_the_selected_instances():
     registered = getattr(adapters, "BUILTIN_ADAPTERS")
     assert isinstance(registered, dict)
     assert set(registered) == {
-        "postgres_read", "redis_read", "aws_read", "gitlab_read", "confluence_read", "jira_read",
+        "postgres_read", "redis_read", "aws_read", "local_source", "confluence_read", "jira_read",
     }
     for adapter_id, adapter in registered.items():
         assert get_adapter(adapter_id) is adapter
@@ -113,7 +113,6 @@ def test_builtin_registry_maps_canonical_ids_to_the_selected_instances():
 
 @pytest.mark.parametrize("legacy,canonical", [
     ("sql_read", "postgres_read"),
-    ("source_read", "gitlab_read"),
     ("document_read", "confluence_read"),
 ])
 def test_legacy_names_select_the_same_adapter_instance(legacy, canonical):
@@ -126,7 +125,7 @@ def test_legacy_names_select_the_same_adapter_instance(legacy, canonical):
 
 
 @pytest.mark.parametrize("adapter_id", [
-    "unknown_read", "", None, 1, True, [], {}, b"source_read",
+    "unknown_read", "", None, 1, True, [], {}, b"document_read",
 ])
 def test_unknown_and_nonstring_adapter_ids_are_invalid_input(adapter_id):
     import daeri.infrastructure.adapters as adapters
@@ -137,10 +136,10 @@ def test_unknown_and_nonstring_adapter_ids_are_invalid_input(adapter_id):
     assert caught.value.code == "INVALID_INPUT"
 
 
-@pytest.mark.parametrize("adapter_id", ["gitlab_read", "source_read"])
+@pytest.mark.parametrize("adapter_id", ["confluence_read", "document_read"])
 def test_resource_category_must_match_the_selected_adapter(adapter_id):
     resource = resource_config(adapter_id)
-    resource["type"] = "Document"
+    resource["type"] = "Source"
     original = copy.deepcopy(resource)
     with pytest.raises(StoreError) as caught:
         validate_resource(resource)
@@ -148,8 +147,8 @@ def test_resource_category_must_match_the_selected_adapter(adapter_id):
     assert resource == original
 
 
-@pytest.mark.parametrize("adapter_id", ["gitlab_read", "source_read"])
-def test_canonical_and_legacy_gitlab_configs_execute_without_rewriting(registry, adapter_id):
+@pytest.mark.parametrize("adapter_id", ["confluence_read", "document_read"])
+def test_canonical_and_legacy_document_configs_execute_without_rewriting(registry, adapter_id):
     exercise_stdio_read(registry, resource_config(adapter_id))
 
 
@@ -161,8 +160,8 @@ def test_registered_read_adapter_subclass_uses_the_common_stdio_pipeline(registr
 
     class FixtureReadAdapter(ReadAdapter):
         adapter_id = "fixture_read"
-        resource_type = "Source"
-        read_tools = {"get_repository_file"}
+        resource_type = "Document"
+        read_tools = {"confluence_get_page"}
         target_template = {"server": "https://fixture.invalid"}
 
     adapter = FixtureReadAdapter()
@@ -175,13 +174,13 @@ def test_registered_read_adapter_subclass_uses_the_common_stdio_pipeline(registr
     exercise_stdio_read(registry, resource)
 
     mismatched = copy.deepcopy(resource)
-    mismatched["type"] = "Document"
+    mismatched["type"] = "Source"
     with pytest.raises(StoreError) as caught:
         validate_resource(mismatched)
     assert caught.value.code == "INVALID_INPUT"
 
 
-@pytest.mark.parametrize("identifier", ["gitlab_read", "source_read"])
+@pytest.mark.parametrize("identifier", ["confluence_read", "document_read"])
 def test_ambiguous_trusted_adapter_names_are_rejected(identifier, monkeypatch):
     import daeri.infrastructure.adapters as adapters
     from daeri.infrastructure.adapters.base import ReadAdapter
@@ -200,13 +199,13 @@ def test_registry_builder_rejects_duplicate_canonical_ids_before_dictionary_crea
     from daeri.infrastructure.adapters.base import ReadAdapter
 
     class DuplicateAdapter(ReadAdapter):
-        adapter_id = "gitlab_read"
+        adapter_id = "confluence_read"
 
     with pytest.raises(StoreError, match="INVALID_INPUT"):
-        adapters._build_registry((adapters.get_adapter("gitlab_read"), DuplicateAdapter()))
+        adapters._build_registry((adapters.get_adapter("confluence_read"), DuplicateAdapter()))
 
 
-@pytest.mark.parametrize("adapter_id", ["postgres_read", "redis_read", "aws_read", "gitlab_read", "confluence_read"])
+@pytest.mark.parametrize("adapter_id", ["postgres_read", "redis_read", "aws_read", "confluence_read"])
 @pytest.mark.parametrize("field", [
     "READ_OPERATIONS_ONLY", "MCP_READ_ONLY", "READ_ONLY_MODE", "ENABLED_TOOLS",
     "EXPERIMENTAL_AGENT_SCRIPTS", "ENDPOINT_SUGGEST_AWS_COMMANDS", "CUSTOM_SCRIPTS_DIR",

@@ -79,6 +79,7 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    적용 응답과 해당 검증의 `confirmation_token`이 있으면 `setup apply PROFILE --confirm TOKEN`을 실행한다.
    파일·개정·계약이 바뀌면 차이를 확인하고 새 검증·확인을 받는다.
 7. `resource prepare PROFILE`로 [저장한 연결 전체를 준비](../../docs/spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치)하고 반환한 연결별 성공·실패를 확인한다.
+   로컬 소스 코드는 등록 디렉터리 접근을 확인하고 외부 서비스는 해당 연결의 프로그램·인증을 준비한다.
    `auth status`로 [YAML에서 등록한 인증](../../docs/spec/configuration/profiles.md#접속-정보와-인증값)의 상태를 확인한다.
    누락·변경할 인증값은 같은 YAML의 해당 `credentials` 항목을 편집해 재검증·적용한다.
    제공자 로그인이 필요한 연결은 [인증 계약](../../docs/spec/configuration/profiles.md#인증-저장과-전달)의 해당 로그인 경로로 진행한다.
