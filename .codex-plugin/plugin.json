@@ -1,6 +1,6 @@
 {
   "name": "daeri",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "DAERI orchestrates multiple agents with a local runtime, shared approvals, profile-scoped resources and automatic memory.",
   "author": {
     "name": "DAERI"

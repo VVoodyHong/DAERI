@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from daeri.config import setup
 from daeri.config.setup import export_profile, import_profile, load_catalog, profile_template, prepare_resource, prepared_executable
 from daeri.infrastructure.storage import Store
 from daeri.core.errors import StoreError
@@ -437,6 +438,202 @@ def test_prepare_still_rejects_a_disabled_recipe_safety_setting(store, private_u
                         pytest.fail('Unsafe recipe settings must not start program preparation'))
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
         store.put_profile('service', resources=[configured])
+
+
+@pytest.fixture
+def fake_preparation(private_uv, monkeypatch):
+    catalog = load_catalog()
+    failures = {}
+
+    def run(args, **kwargs):
+        if args[0] == str(private_uv):
+            item = catalog[Path(args[args.index('--project') + 1]).name]
+            if item['package'] in failures:
+                raise failures.pop(item['package'])
+            if args[1] == 'venv':
+                Path(args[-1]).mkdir(parents=True)
+            elif args[1] == 'sync':
+                assert '--frozen' in args
+                environment = Path(kwargs['env']['UV_PROJECT_ENVIRONMENT'])
+                programs = environment / ('Scripts' if os.name == 'nt' else 'bin')
+                programs.mkdir()
+                suffix = '.exe' if os.name == 'nt' else ''
+                (programs / ('python' + suffix)).touch()
+                (programs / (item['executable'] + suffix)).touch()
+            else:
+                pytest.fail('Only registered recipe installation commands may run')
+            return subprocess.CompletedProcess(args, 0, stdout='', stderr='')
+        assert args[1:3] == ['-I', '-c']
+        item = next(item for item in catalog.values() if item['package'] == args[-1])
+        return subprocess.CompletedProcess(args, 0, stdout=item['version'] + '\n', stderr='')
+
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
+    return failures
+
+
+def test_prepare_resources_derives_all_profile_instances_and_reuses_shared_recipes(store, fake_preparation):
+    from daeri.config.setup import build_setup_resource
+    selections = [
+        ('db-postgres', 'primary', {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'}),
+        ('cache-redis', 'sessions', {'host': 'cache.example.test', 'port': 6380, 'db': 1, 'tls': True}),
+        ('infra-aws', 'cloud', {'profile': 'operations', 'region': 'ap-northeast-2', 'account': '111111111111'}),
+        ('source-gitlab', 'repository', {'server': 'https://git.example.test'}),
+        ('document-confluence', 'knowledge', {'server': 'https://docs.example.test/wiki', 'username': 'reader@example.test'}),
+        ('issue-jira', 'tickets', {'server': 'https://issues.example.test', 'auth_type': 'personal_token'}),
+        ('db-postgres', 'reference', {'host': 'reference.example.test', 'port': 5433, 'database': 'reference', 'username': 'reader'}),
+    ]
+    resources = [build_setup_resource(store, recipe, 'service', instance, values)
+                 for recipe, instance, values in selections]
+    resources[3]['adapter'] = 'source_read'
+    profile = store.put_profile('service', resources=resources)
+
+    result = setup.prepare_resources(store, 'service')
+
+    assert result['ready'] is True
+    assert [(item['instance_id'], item['recipe']) for item in result['resources']] == [
+        ('primary', 'db-postgres'), ('sessions', 'cache-redis'), ('cloud', 'infra-aws'),
+        ('repository', 'source-gitlab'), ('knowledge', 'document-confluence'),
+        ('tickets', 'issue-jira'), ('reference', 'db-postgres')]
+    assert [item['reused'] for item in result['resources']] == [False] * 6 + [True]
+    assert all(item['ready'] and Path(item['command']).is_file() for item in result['resources'])
+    for item in result['resources']:
+        marker = Path(item['command']).parents[2] / 'prepared.json'
+        assert json.loads(marker.read_text())['recipe'] == item['recipe']
+    assert store.get_profile('service') == profile
+    again = setup.prepare_resources(store, 'service')
+    assert again['ready'] is True
+    assert all(item['reused'] for item in again['resources'])
+    assert store.get_profile('service') == profile
+
+
+def test_prepare_resources_collects_installation_failure_and_continues(store, fake_preparation):
+    from daeri.config.setup import build_setup_resource
+    source = prepared_resource(store)
+    cache = build_setup_resource(store, 'cache-redis', 'service', 'sessions',
+                                 {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
+    profile = store.put_profile('service', resources=[source, cache])
+    fake_preparation['mcp-gitlab'] = subprocess.TimeoutExpired('PRIVATE_SENTINEL', 300)
+
+    result = setup.prepare_resources(store, 'service')
+
+    assert result['ready'] is False
+    assert result['resources'][0] == {'instance_id': 'source-one', 'recipe': 'source-gitlab',
+                                      'ready': False, 'error': {'code': 'CONNECTION_NOT_READY'}}
+    assert result['resources'][1]['instance_id'] == 'sessions'
+    assert result['resources'][1]['ready'] is True
+    assert Path(result['resources'][1]['command']).is_file()
+    assert not Path(source['connection']['command']).exists()
+    assert not list((store.data_dir / 'tools/source-gitlab').glob('.prepare*'))
+    assert 'PRIVATE_SENTINEL' not in json.dumps(result)
+    assert store.get_profile('service') == profile
+
+
+def test_prepare_resources_preserves_obstructing_file_and_prepares_other_connections(store, fake_preparation):
+    from daeri.config.setup import build_setup_resource
+    source = prepared_resource(store)
+    cache = build_setup_resource(store, 'cache-redis', 'service', 'sessions',
+                                 {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
+    profile = store.put_profile('service', resources=[source, cache])
+    obstruction = store.data_dir / 'tools/source-gitlab'
+    obstruction.parent.mkdir()
+    obstruction.write_text('Keep this existing file.\n')
+
+    result = setup.prepare_resources(store, 'service')
+
+    assert result['ready'] is False
+    assert result['resources'][0] == {'instance_id': 'source-one', 'recipe': 'source-gitlab',
+                                      'ready': False, 'error': {'code': 'CONNECTION_NOT_READY'}}
+    assert result['resources'][1]['instance_id'] == 'sessions'
+    assert result['resources'][1]['ready'] is True
+    assert Path(result['resources'][1]['command']).is_file()
+    assert obstruction.read_text() == 'Keep this existing file.\n'
+    assert store.get_profile('service') == profile
+
+
+@pytest.mark.parametrize('mismatch', ['command', 'args', 'fixed-env'])
+def test_prepare_resources_rejects_connections_outside_registered_recipe(store, monkeypatch, mismatch):
+    from daeri.config.setup import build_setup_resource
+    if mismatch == 'args':
+        configured = build_setup_resource(store, 'db-postgres', 'service', 'primary',
+                                          {'host': 'db.example.test', 'port': 5432, 'database': 'service', 'username': 'reader'})
+        configured['connection']['args'] = ['--access-mode', 'restricted']
+    else:
+        configured = prepared_resource(store)
+        if mismatch == 'command':
+            configured['connection']['command'] = sys.executable
+        else:
+            configured['connection']['env'].pop('GITLAB_SSL_VERIFY')
+    profile = store.put_profile('service', resources=[configured])
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', lambda *args, **kwargs:
+                        pytest.fail('Unmatched or unsafe connections must not execute a command'))
+
+    result = setup.prepare_resources(store, 'service')
+
+    assert result == {'ready': False, 'resources': [{
+        'instance_id': configured['instance_id'],
+        'recipe': 'source-gitlab' if mismatch == 'fixed-env' else None,
+        'ready': False, 'error': {'code': 'INVALID_INPUT'}}]}
+    assert store.get_profile('service') == profile
+    assert not (store.data_dir / 'tools').exists()
+
+
+def test_prepare_resources_accepts_an_empty_profile_without_starting_installation(store, monkeypatch):
+    profile = store.put_profile('service')
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', lambda *args, **kwargs:
+                        pytest.fail('An empty profile has no program to prepare'))
+    assert setup.prepare_resources(store, 'service') == {'ready': True, 'resources': []}
+    assert store.get_profile('service') == profile
+
+
+@pytest.mark.parametrize('fail_first', [False, True])
+def test_resource_prepare_profile_cli_prepares_saved_connections(store, fake_preparation, monkeypatch, capsys, fail_first):
+    from daeri.cli import main
+    from daeri.config.setup import build_setup_resource
+    source = prepared_resource(store)
+    cache = build_setup_resource(store, 'cache-redis', 'service', 'sessions',
+                                 {'host': 'cache.example.test', 'port': 6379, 'db': 0, 'tls': True})
+    profile = store.put_profile('service', resources=[source, cache])
+    if fail_first:
+        fake_preparation['mcp-gitlab'] = subprocess.TimeoutExpired('PRIVATE_SENTINEL', 300)
+    monkeypatch.setattr(sys, 'argv', ['daeri', '--data-dir', str(store.data_dir), 'resource', 'prepare', 'service'])
+
+    assert main() == (1 if fail_first else 0)
+
+    captured = capsys.readouterr()
+    response = json.loads(captured.out)
+    assert captured.err == ''
+    assert response['ready'] is not fail_first
+    assert [item['instance_id'] for item in response['resources']] == ['source-one', 'sessions']
+    assert response['resources'][1]['ready'] is True
+    assert Path(response['resources'][1]['command']).is_file()
+    if fail_first:
+        failure = response['resources'][0]
+        assert failure['ready'] is False
+        assert failure['error']['code'] == 'CONNECTION_NOT_READY'
+        assert failure['error']['stage'] == 'preparation'
+        assert failure['error']['next_action'] == 'inspect_preparation'
+    assert 'PRIVATE_SENTINEL' not in captured.out
+    assert store.get_profile('service') == profile
+
+
+@pytest.mark.parametrize('problem', ['missing-python', 'missing-executable', 'wrong-version'])
+def test_resource_verification_reports_an_unready_installation(tmp_path, monkeypatch, problem):
+    environment = tmp_path / 'tool'
+    programs = environment / ('Scripts' if os.name == 'nt' else 'bin')
+    programs.mkdir(parents=True)
+    suffix = '.exe' if os.name == 'nt' else ''
+    if problem != 'missing-python':
+        (programs / ('python' + suffix)).touch()
+    if problem != 'missing-executable':
+        (programs / ('probe' + suffix)).touch()
+    def run(args, **kwargs):
+        assert problem == 'wrong-version'
+        return subprocess.CompletedProcess(args, 0, stdout='0.9\n', stderr='')
+    monkeypatch.setattr('daeri.config.setup.subprocess.run', run)
+
+    with pytest.raises(StoreError) as caught:
+        setup._verify(environment, {'executable': 'probe', 'package': 'probe', 'version': '1.0'})
+    assert caught.value.code == 'CONNECTION_NOT_READY'
 
 
 @pytest.mark.parametrize('invalid_response', [None, 'prompt-profile', 'result-account', 'extra-field'])

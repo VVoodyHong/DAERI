@@ -416,10 +416,39 @@ def _run(arguments, **kwargs):
 def _verify(environment, item):
     python = _program(environment, 'python')
     executable = _program(environment, item['executable'])
-    _require(python.is_file() and executable.is_file(), 'The prepared resource executable is missing.')
+    if not python.is_file() or not executable.is_file():
+        raise StoreError('CONNECTION_NOT_READY', 'The prepared resource executable is missing.')
     result = _run([str(python), '-I', '-c', 'import importlib.metadata,sys; print(importlib.metadata.version(sys.argv[1]))', item['package']])
-    _require(result.stdout.strip() == item['version'], 'The resource package version differs from its pinned recipe.')
+    if result.stdout.strip() != item['version']:
+        raise StoreError('CONNECTION_NOT_READY', 'The resource package version differs from its pinned recipe.')
     return executable
+
+
+def prepare_resources(store, profile_name):
+    """Prepare the saved profile connections using their registered managed recipes."""
+    profile = store.get_profile(profile_name)
+    results = []
+    with store.profile_operation(profile['profile_id']):
+        profile = store.get_profile(profile_name)
+        catalog = load_catalog()
+        for resource in profile['resources']:
+            recipe_id = None
+            try:
+                connection = resource['connection']
+                adapter_id = get_adapter(resource['adapter']).adapter_id
+                recipe_id = next((identifier for identifier, item in catalog.items()
+                                  if resource['type'] == item['type']
+                                  and adapter_id == get_adapter(item['adapter']).adapter_id
+                                  and connection['transport'] == 'stdio'
+                                  and connection.get('args', []) == item['args']
+                                  and connection['command'] == str(prepared_executable(store, identifier))), None)
+                _require(recipe_id is not None, 'The selected resource does not use a registered preparation recipe.')
+                results.append(_prepare_resource(store, profile_name, resource['instance_id'], recipe_id))
+            except (StoreError, OSError) as error:
+                results.append({'instance_id': resource['instance_id'], 'recipe': recipe_id,
+                                'ready': False, 'error': {
+                                    'code': error.code if isinstance(error, StoreError) else 'CONNECTION_NOT_READY'}})
+    return {'ready': all(result['ready'] for result in results), 'resources': results}
 
 
 def prepare_resource(store, profile_name, instance_id, recipe_id):

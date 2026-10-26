@@ -353,10 +353,83 @@ def test_memory_status_does_not_prepare_model_implicitly(tmp_path):
     assert not (directory / 'models').exists()
 
 
-def test_argument_error_does_not_echo_mistaken_secret_argument():
-    result = run_cli('auth', 'set', 'credential:local', '--password', 'ARGUMENT_PRIVATE_SENTINEL')
+@pytest.mark.parametrize('arguments', [
+    ('auth', 'set', 'credential:local', '--password', 'ARGUMENT_PRIVATE_SENTINEL'),
+    ('profile', 'create', 'service', '--retention-days', 'ARGUMENT_PRIVATE_SENTINEL'),
+])
+def test_argument_error_does_not_echo_mistaken_secret_argument(arguments):
+    result = run_cli(*arguments)
     assert result.returncode == 2
     assert 'ARGUMENT_PRIVATE_SENTINEL' not in result.stdout + result.stderr
+    error = json.loads(result.stdout)['error']
+    assert error['stage'] == 'arguments'
+    assert error['next_action'] == 'fix_input'
+    assert error['usage'].startswith('usage: daeri')
+
+
+@pytest.mark.parametrize('selection,missing', [
+    (('db db-postgres',), '--recipe'),
+    (('db db-postgres', '--recipe'), '--recipe'),
+    (('--recipe', 'db-postgres'), 'instance'),
+])
+def test_prepare_incomplete_selection_reports_the_argument_before_opening_storage(tmp_path, selection, missing):
+    data_dir = tmp_path / 'private'
+    result = run_cli('--data-dir', str(data_dir), 'resource', 'prepare',
+                     'service', *selection)
+    assert result.returncode == 2
+    error = json.loads(result.stdout)['error']
+    assert error['code'] == 'INVALID_INPUT'
+    assert error['stage'] == 'arguments'
+    assert missing in error['message']
+    assert 'resource prepare' in error['usage']
+    assert '--recipe' in error['usage']
+    assert error['next_action'] == 'fix_input'
+    assert not data_dir.exists()
+
+
+def test_configuration_error_returns_a_safe_correction_action(tmp_path):
+    result = run_cli('--data-dir', str(tmp_path / 'private'), 'resource',
+                     'setup-schema', 'CONFIGURATION_PRIVATE_SENTINEL')
+    assert result.returncode == 1
+    error = json.loads(result.stdout)['error']
+    assert error['stage'] == 'configuration'
+    assert error['next_action'] == 'fix_input'
+    assert 'CONFIGURATION_PRIVATE_SENTINEL' not in result.stdout + result.stderr
+
+
+def test_preparation_error_is_distinct_from_argument_errors(monkeypatch, capsys):
+    from daeri.cli import main
+    from daeri.core.errors import StoreError
+
+    def failure(args):
+        raise StoreError('CONNECTION_NOT_READY', 'PREPARATION_PRIVATE_SENTINEL')
+
+    monkeypatch.setattr('daeri.cli._with_store', failure)
+    monkeypatch.setattr(sys, 'argv', ['daeri', 'resource', 'prepare',
+                                    'service', 'db', '--recipe', 'db-postgres'])
+    assert main() == 1
+    output = capsys.readouterr()
+    error = json.loads(output.out)['error']
+    assert error['code'] == 'CONNECTION_NOT_READY'
+    assert error['stage'] == 'preparation'
+    assert error['next_action'] == 'inspect_preparation'
+    assert 'PREPARATION_PRIVATE_SENTINEL' not in output.out + output.err
+
+
+def test_unexpected_cli_failure_uses_a_safe_fallback(monkeypatch, capsys):
+    from daeri.cli import main
+
+    def failure():
+        raise RuntimeError('UNEXPECTED_PRIVATE_SENTINEL')
+
+    monkeypatch.setattr('daeri.cli.check_environment', failure)
+    monkeypatch.setattr(sys, 'argv', ['daeri', 'check'])
+    assert main() == 1
+    output = capsys.readouterr()
+    error = json.loads(output.out)['error']
+    assert error['stage'] == 'operation'
+    assert error['next_action'] == 'stop'
+    assert 'UNEXPECTED_PRIVATE_SENTINEL' not in output.out + output.err
 
 
 def test_auth_standard_input_is_stored_without_returning_value(monkeypatch):

@@ -147,7 +147,7 @@ uv run --no-sync python -m evaluations.memory_recall --provider api --embedding-
 
 ```sh
 DAERI_MANAGE="<플러그인 루트>/scripts/manage.sh"
-sh "$DAERI_MANAGE" resource prepare PROFILE INSTANCE --recipe RECIPE
+sh "$DAERI_MANAGE" resource prepare PROFILE
 ```
 
 스크립트가 전용 환경을 검사하고 준비된 `.venv/bin/python.exe`에 `-I -m daeri.cli`와 분리된 관리 인수를 전달한다.
@@ -176,9 +176,20 @@ Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안�
 | `cleanup` | [기한이 지난 본문·기억·색인과 작업 파일 정리](../spec/configuration/profiles.md#삭제와-만료) |
 
 일반 관리 결과는 JSON으로 반환한다.
-CLI 예외는 `status: error`·`data: null`·오류 코드·고정된 안전 메시지·`next_action: stop`과 종료 코드 1로 반환한다.
-인수 파싱 실패의 종료 코드는 2다.
-호스트는 오류 코드와 현재 단계로 영향·복구 방법을 안내하며 예외의 원문 메시지는 내부 진단 정보다.
+CLI 오류는 `status: error`·`data: null`과 `error`의 `code`·`stage`·`message`·`next_action`을 반환한다.
+메시지는 등록된 명령·인수 이름과 오류 코드별 고정 설명으로 구성한다.
+호스트는 실패 단계와 다음 조치로 영향·복구 방법을 안내한다.
+
+| 실패 | `stage`와 다음 조치 | 종료 코드 |
+|---|---|---|
+| 명령 인수 누락·형식 오류 | `arguments`·`fix_input`; 누락한 인수 이름과 해당 명령의 `usage` 제공 | 2 |
+| 설정·선택 불일치 | `configuration`·`fix_input`; 대상 부재·개정 충돌은 `refresh` | 1 |
+| 프로그램 준비 미완료 | `preparation`·`inspect_preparation` | 1 |
+| 인증·연결 확인 필요 | `authentication`·`authenticate` 또는 `connection`·`inspect_connection` | 1 |
+| 그 밖의 실행 실패 | `operation`·`stop` | 1 |
+
+setup은 [저장한 profile의 연결](../spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치)을 `resource prepare PROFILE` 한 번으로 준비한다.
+일괄 결과는 전체 `ready`와 연결별 `resources`를 반환하며 일부 준비 실패의 종료 코드는 1이다.
 
 `setup validate`·`resource validate-setup`의 입력 오류는 각 검증 결과의 필드별 `issues`와 종료 코드 1로 구분한다.
 `auth set`과 백업 암호 입력에서 사용자 입력 경로가 필요하면 `input_required`와 종료 코드 0으로 안내한다.

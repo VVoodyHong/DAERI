@@ -58,15 +58,40 @@ def check_environment():
     }
 
 
-def _error(code='INVALID_INPUT'):
-    return {'status': 'error', 'data': None, 'error': {
-        'code': code, 'message': 'Local preparation or configuration could not be completed.',
-        'next_action': 'stop'}}
+def _error(code='INVALID_INPUT', *, stage=None, message=None, usage=None):
+    default = ('operation', '작업을 완료하지 못했습니다. 실행 상태를 확인해 주세요.', 'stop')
+    failure_stage, description, action = {
+        'INVALID_INPUT': ('configuration', '설정값 또는 선택한 연결이 요구 조건과 일치하지 않습니다.', 'fix_input'),
+        'NOT_FOUND': ('configuration', '요청한 profile 또는 연결을 찾을 수 없습니다. 저장된 목록을 확인해 주세요.', 'refresh'),
+        'REVISION_CONFLICT': ('configuration', '저장된 설정이 변경됐습니다. 현재 설정을 다시 확인해 주세요.', 'refresh'),
+        'AUTHENTICATION_REQUIRED': ('authentication', '연결에 필요한 인증을 확인해 주세요.', 'authenticate'),
+        'CONNECTION_NOT_READY': ('connection', '연결 도구 또는 접속 상태를 확인해 주세요.', 'inspect_connection'),
+    }.get(code, default)
+    if stage == 'arguments':
+        action = 'fix_input'
+    elif stage == 'preparation' and code == 'CONNECTION_NOT_READY':
+        description, action = '연결 도구 준비를 완료하지 못했습니다. 준비 환경을 확인해 주세요.', 'inspect_preparation'
+    error = {'code': code, 'stage': stage or failure_stage,
+             'message': message or description, 'next_action': action}
+    if usage is not None:
+        error['usage'] = usage
+    return {'status': 'error', 'data': None, 'error': error}
 
 
 class SafeParser(argparse.ArgumentParser):
     def error(self, message):
-        print(json.dumps(_error()))
+        labels = {label for action in self._actions for label in (action.option_strings or [action.dest])}
+        description = '관리 명령의 인수 형식이 올바르지 않습니다. 명령 사용법을 확인해 주세요.'
+        if message.startswith('the following arguments are required: '):
+            missing = [label for label in message.split(': ', 1)[1].split(', ') if label in labels]
+            if missing:
+                description = '필수 인수가 없습니다: ' + ', '.join(missing)
+        elif message.startswith('argument ') and message.endswith(': expected one argument'):
+            label = message[len('argument '):-len(': expected one argument')]
+            if label in labels:
+                description = label + ' 값이 필요합니다.'
+        print(json.dumps(_error(stage='arguments', message=description,
+                                usage=self.format_usage().strip())))
         raise SystemExit(2)
 
 
@@ -136,8 +161,12 @@ def _parser():
     for action in ('prepare', 'diagnose'):
         operation = resource.add_parser(action)
         operation.add_argument('profile')
-        operation.add_argument('instance')
-        if action == 'prepare': operation.add_argument('--recipe', required=True)
+        if action == 'prepare':
+            operation.add_argument('instance', nargs='?')
+            operation.add_argument('--recipe')
+            operation.set_defaults(_argument_parser=operation)
+        else:
+            operation.add_argument('instance')
     login = resource.add_parser('login', help='Explicit provider device authorization for a selected connection')
     login.add_argument('profile')
     login.add_argument('instance')
@@ -272,7 +301,7 @@ def _profile_archive(args):
 def _with_store(args):
     from daeri.infrastructure.storage import Store
     from daeri.core.security import redact
-    from daeri.config.setup import export_profile, import_profile, login_resource, prepare_resource
+    from daeri.config.setup import export_profile, import_profile, login_resource, prepare_resource, prepare_resources
     store = Store(data_directory(args.data_dir))
     try:
         if args.command == 'setup':
@@ -316,6 +345,13 @@ def _with_store(args):
                 return login_resource(store, args.profile, args.instance, start_url=args.start_url,
                                       sso_region=args.sso_region, role=args.role, no_browser=args.no_browser)
             if args.resource_command == 'prepare':
+                if args.instance is None:
+                    result = prepare_resources(store, args.profile)
+                    for item in result['resources']:
+                        if not item['ready']:
+                            code = item['error']['code']
+                            item['error'] = _error(code, stage='preparation' if code == 'CONNECTION_NOT_READY' else None)['error']
+                    return result
                 return prepare_resource(store, args.profile, args.instance, args.recipe)
             from daeri.infrastructure.resources import ResourceRegistry
             from daeri.infrastructure.credentials import Credentials
@@ -351,7 +387,14 @@ def _with_store(args):
 
 
 def main():
-    args = _parser().parse_args()
+    parser = _parser()
+    args = parser.parse_args()
+    preparing = args.command == 'resource' and args.resource_command == 'prepare'
+    if preparing:
+        if args.instance is not None and args.recipe is None:
+            args._argument_parser.error('the following arguments are required: --recipe')
+        if args.instance is None and args.recipe is not None:
+            args._argument_parser.error('the following arguments are required: instance')
     try:
         if args.command == 'check':
             result = check_environment()
@@ -380,8 +423,13 @@ def main():
             result, code = _with_store(args), 0
             if args.command == 'setup' and args.setup_command == 'validate' and not result['valid']:
                 code = 1
+            if preparing and not result['ready']:
+                code = 1
     except Exception as exc:
-        result, code = _error(getattr(exc, 'code', 'STORE_UNAVAILABLE')), 1
+        from daeri.core.errors import StoreError
+        error_code = exc.code if isinstance(exc, StoreError) else 'STORE_UNAVAILABLE'
+        stage = 'preparation' if preparing and error_code == 'CONNECTION_NOT_READY' else None
+        result, code = _error(error_code, stage=stage), 1
     print(json.dumps(result, ensure_ascii=True, allow_nan=False))
     return code
 

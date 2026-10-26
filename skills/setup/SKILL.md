@@ -78,7 +78,8 @@ setup 호출의 첫 대화 응답에 아래 로고를 `text` 코드 블록으로
    회사 API 선택은 endpoint·모델과 허용 기억 본문·검색 질의 전송을 요약한다.
    적용 응답과 해당 검증의 `confirmation_token`이 있으면 `setup apply PROFILE --confirm TOKEN`을 실행한다.
    파일·개정·계약이 바뀌면 차이를 확인하고 새 검증·확인을 받는다.
-7. 적용한 연결을 `resource prepare`로 준비하고 `auth status`로 [YAML에서 등록한 인증](../../docs/spec/configuration/profiles.md#접속-정보와-인증값)의 상태를 확인한다.
+7. `resource prepare PROFILE`로 [저장한 연결 전체를 준비](../../docs/spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치)하고 반환한 연결별 성공·실패를 확인한다.
+   `auth status`로 [YAML에서 등록한 인증](../../docs/spec/configuration/profiles.md#접속-정보와-인증값)의 상태를 확인한다.
    누락·변경할 인증값은 같은 YAML의 해당 `credentials` 항목을 편집해 재검증·적용한다.
    제공자 로그인이 필요한 연결은 [인증 계약](../../docs/spec/configuration/profiles.md#인증-저장과-전달)의 해당 로그인 경로로 진행한다.
    준비 범위 확대·추가 권한이 필요하면 이유와 변경 범위를 확인받는다.
