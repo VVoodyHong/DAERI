@@ -125,7 +125,7 @@ MCP `structuredContent`와 텍스트에는 같은 응답 JSON을 제공한다.
 | `ACCESS_DENIED`, `UNSUPPORTED_CONSTRAINT` | 실제 자료 조건·지원 범위 확인 |
 | `EXTERNAL_EXECUTION_FAILED` | 하위에서 확인한 읽기 실패 |
 | `READ_INTERRUPTED`, `RESULT_PERSIST_FAILED` | 결과 미확보·저장 실패; 저장소 확인 후 새 관찰 |
-| `RESULT_VALIDATION_FAILED`, `RESULT_TRUNCATED` | 출력·출처·완료 근거·처리 크기 확인 |
+| `RESULT_VALIDATION_FAILED`, `RESULT_TRUNCATED` | 출력·출처·파일·처리 크기 확인 |
 | `STORE_UNAVAILABLE`, `RECORD_UNAVAILABLE`, `RECORD_EXPIRED` | 저장소·자료 무결성·기한 확인 |
 | `MEMORY_SEARCH_INCOMPLETE`, `MEMORY_SEARCH_UNAVAILABLE` | 검색 제한을 표시하고 현재 자료로 업무 진행 |
 | `MEMORY_INDEX_INCOMPLETE`, `MEMORY_CONFLICT` | 기억 정본·현재 개정·색인 상태 확인 |

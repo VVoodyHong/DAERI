@@ -37,7 +37,7 @@ _SINGLE = {'request_ref', 'record_ref', 'body_ref', 'render_ref', 'feedback_ref'
            'clarification_ref', 'memory_ref', 'local_check_ref'}
 _MULTIPLE = {'record_refs', 'source_refs', 'evidence_refs', 'artifact_refs', 'memory_refs',
              'memory_search_refs', 'memory_job_refs', 'carried_evidence_refs'}
-_OPAQUE = {'result', 'intent', 'input_schema', 'output_schema', 'scope', 'constraints',
+_OPAQUE = {'content', 'result', 'intent', 'input_schema', 'output_schema', 'scope', 'constraints',
            'fixed', 'parameters', 'target', 'connection', 'core_context', 'desired_output'}
 _MESSAGE = 'The profile archive has an invalid schema or inconsistent references.'
 _SQLITE_MAX = 2**63 - 1
@@ -83,21 +83,28 @@ def _instant(value, *, nullable=False):
     _require(parsed.tzinfo is not None and parsed.utcoffset() is not None)
 
 
-def _json_tree(value, depth=0):
-    _require(depth <= 32)
-    if isinstance(value, dict):
-        _require(all(isinstance(key, str) for key in value))
-        for key, item in value.items():
-            key.encode('utf-8')
-            _json_tree(item, depth + 1)
-    elif isinstance(value, list):
-        for item in value:
-            _json_tree(item, depth + 1)
-    else:
-        _require(value is None or type(value) in (str, int, float, bool))
-        _require(type(value) is not float or math.isfinite(value))
-        if isinstance(value, str):
-            value.encode('utf-8')
+def _json_tree(value):
+    pending, active = [(value, False)], set()
+    while pending:
+        item, complete = pending.pop()
+        if complete:
+            active.remove(id(item))
+        elif isinstance(item, (dict, list)):
+            _require(id(item) not in active)
+            active.add(id(item))
+            pending.append((item, True))
+            if isinstance(item, dict):
+                _require(all(isinstance(key, str) for key in item))
+                for key in item:
+                    key.encode('utf-8')
+                pending.extend((child, False) for child in item.values())
+            else:
+                pending.extend((child, False) for child in item)
+        else:
+            _require(item is None or type(item) in (str, int, float, bool))
+            _require(type(item) is not float or math.isfinite(item))
+            if isinstance(item, str):
+                item.encode('utf-8')
 
 
 def _profile(value):

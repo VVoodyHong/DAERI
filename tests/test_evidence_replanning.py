@@ -23,18 +23,12 @@ def replace_plan(runtime, saved, draft, first):
 
 
 def report(first, state="succeeded"):
-    check = {"criterion_id": "read", "status": "met" if state == "succeeded" else "unknown",
-        "method": "Compare the recorded read with the approved criterion", "evidence_refs": [first["result_ref"]]}
-    if state != "succeeded":
-        check["reason"] = "The resource explicitly reported a truncated result"
-    return {"summary": "Report the recorded read", "proposed_task_state": state,
-        "findings": [{"kind": "observation", "text": "The saved resource returned a row", "evidence_refs": [first["result_ref"]]}],
-        "tables": [], "checks": [check], "limitations": [] if state == "succeeded" else [check["reason"]],
-        "uncertain_effects": [], "artifacts": [], "next_actions": []}
+    return {'observation': 'The saved resource returned a row',
+            'coverage': 'complete' if state == 'succeeded' else 'The resource reported a truncated result'}
 
 
 @pytest.mark.parametrize("changed", [None, "resource", "scope"])
-def test_completion_credits_only_a_carried_read_of_the_same_target_and_scope(configured, changed):
+def test_host_can_report_carried_evidence_with_its_original_target_and_scope(configured, changed):
     runtime, profile = configured
     saved, draft = begin(runtime, profile)
     approved = approve(runtime, saved)
@@ -48,14 +42,11 @@ def test_completion_credits_only_a_carried_read_of_the_same_target_and_scope(con
     saved, _, approved = replace_plan(runtime, saved, draft, first)
     result = runtime.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
         "expected_task_revision": approved["task_revision"], "plan_id": saved["plan_id"],
-        "plan_version": saved["plan_version"], "report": report(first)})
-    if changed:
-        assert result["status"] == "error", result
-        assert result["error"]["code"] == "RESULT_VALIDATION_FAILED"
-        assert runtime.store.get_task(saved["task_id"])["state"] == "running"
-    else:
-        assert result["status"] == "ok", result
-        assert result["data"]["task_state"] == "succeeded"
+        "plan_version": saved["plan_version"], "report": report(first), 'evidence_refs': [first['result_ref']]})
+    assert result["status"] == "ok", result
+    assert result["data"]["task_state"] == "succeeded"
+    proof = runtime.store.read_record(saved['task_id'], result['data']['report_ref'])['payload']
+    assert proof['evidence_refs'] == [first['result_ref']]
     assert len(runtime.store.get_task(saved["task_id"])["calls"]) == 1
 
 
@@ -117,7 +108,8 @@ def test_truncated_lower_stdio_stays_partial_on_execution_replay_and_archived_re
         assert read["data"]["coverage"]["missing_scope"]
         stored = runtime.call("daeri_result_submit", {"request_id": "partial-report", "task_id": saved["task_id"],
             "expected_task_revision": first["task_revision"], "plan_id": saved["plan_id"],
-            "plan_version": saved["plan_version"], "report": report(first, "partial")})
+            "plan_version": saved["plan_version"], "report": report(first, "partial"),
+            'state': 'partial', 'evidence_refs': [first['result_ref']]})
         assert stored["status"] == "ok", stored
         assert runtime.call("daeri_result_get", read_args)["status"] == "partial"
         assert runtime.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": stored["data"]["report_ref"]})["status"] == "ok"

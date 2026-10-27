@@ -176,6 +176,16 @@ def test_report_and_table_sources_resolve_to_actual_terminal_observations(runtim
     assert [source["record_ref"] for source in item["sources"]] == [leaf]
 
 
+def test_free_report_uses_runtime_evidence_instead_of_reference_shaped_content(runtime):
+    leaf = runtime.record()
+    report = runtime.record('report', payload={
+        'content': {'evidence_refs': ['fabricated'], 'findings': [{'evidence_refs': ['fabricated']}]},
+        'evidence_refs': [leaf]}, provided_paths=[], retained_paths=[], allowed_paths=[])
+    result = update(runtime, arguments(runtime, [report]), runtime.task)
+    item = runtime.memory.get(runtime.profile['profile_id'], result['data']['memory_ref'])
+    assert [source['record_ref'] for source in item['sources']] == [leaf]
+
+
 @pytest.mark.parametrize('other_kind', ['hypothesis', 'memory'])
 def test_free_report_sources_follow_observations_without_requiring_a_table_dsl(runtime, other_kind):
     leaf = runtime.record()
@@ -207,17 +217,13 @@ def test_reports_without_observations_and_cycles_cannot_become_verified_memory(r
 
 
 @pytest.mark.parametrize('records', [256, 257])
-def test_source_graph_counts_each_record_once_at_the_limit(runtime, records):
+def test_source_graph_accepts_wide_observation_graphs(runtime, records):
     leaf = runtime.record()
     final = runtime.record()
     branches = [runtime.record('report', payload={'evidence_refs': [leaf]})
                 for _ in range(records - 3)]
     root = runtime.record('report', payload={'evidence_refs': [*branches, final] + ([leaf] if records == 256 else [])})
-    if records == 256:
-        assert set(source_leaves(runtime, runtime.task, [root])) == {leaf, final}
-    else:
-        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-            source_leaves(runtime, runtime.task, [root])
+    assert set(source_leaves(runtime, runtime.task, [root])) == {leaf, final}
 
 
 @pytest.mark.parametrize('depth', [32, 33])

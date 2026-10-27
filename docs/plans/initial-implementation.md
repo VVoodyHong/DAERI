@@ -26,7 +26,7 @@
 | 자율 읽기 | 기존 MCP 도구 탐색·선택, 읽기 묶음·스키마·명시 범위 검사 | [등록](../../tests/test_resources.py)·[자율 조회](../../tests/test_resource_autonomy.py)·[경계](../../tests/test_resource_boundary_regressions.py) |
 | 로컬 소스 코드 | 복수 경로·제품 교체·무설치 준비, 호스트 관찰·경로 검사와 보고·기억 근거 연결 | [설정](../../tests/test_setup_local_source.py)·[관찰·근거](../../tests/test_local_source.py)·[소스 원본 보존·설정 이관](../../tests/test_local_source_portability.py) |
 | 하위 에이전트 | 하위 에이전트 게이트웨이의 위임·배정·병렬 기능 선택·실제 근거 반환·철회·복구 | [위임](../../tests/test_subagents.py)·[패키징](../../tests/test_subagent_packaging.py) |
-| 결과 | 호스트의 완료 판단·원출처 연결, 임의 형식 파일 등록·재전달·현재 권한 조회 | [호스트 결과](../../tests/test_host_results.py)·[실행](../../tests/test_execution_flow.py)·[현재 정책](../../tests/test_derived_visibility.py) |
+| 결과 | 자유형 본문·호스트의 완료 판단·별도 출처, 임의 형식 파일 등록·재전달·현재 권한 조회 | [자유형 결과](../../tests/test_free_results.py)·[호스트 결과](../../tests/test_host_results.py)·[실행](../../tests/test_execution_flow.py)·[현재 정책](../../tests/test_derived_visibility.py) |
 | 페이지 사용 | 호스트가 기존 MCP의 다음 페이지를 조회하고 파일·보고·기억 후보를 제출 | [페이지 stdio](../../tests/test_paged_execution.py) |
 | 기억 | 호스트 후보의 자동 검증·정본 저장·색인·재시도·검색·정정·무효화 | [자동 갱신](../../tests/test_automatic_memory.py)·[출처](../../tests/test_knowledge.py)·[검색](../../tests/test_embedding_memory.py)·[규모](../../tests/test_memory_search_scale.py) |
 | 회상 평가 | 고정 합성 기억·질의의 유형별 회수율·순위·시간·접근 불가 반환 검사 | [평가 명령](../../evaluations/memory_recall.py)·[자료](../../evaluations/memory_recall.json)·[평가 회귀](../../tests/test_memory_recall_evaluation.py) |

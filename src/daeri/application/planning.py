@@ -92,6 +92,9 @@ def resolve_plan_defaults(profile, draft, registry):
     result.setdefault("memory_search_refs", [])
     result.setdefault("memory_limitations", [])
     result.setdefault("carried_evidence_refs", [])
+    result.setdefault("completion_criteria", [])
+    result.setdefault("output", {})
+    result["output"].setdefault("format", "user_request")
     result["output"].setdefault("destination", "conversation")
     resources = {item["instance_id"]: item for item in profile.get("resources", [])}
     for step in result["steps"]:

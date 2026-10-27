@@ -4,7 +4,10 @@ import copy
 import sqlite3
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
+
 from daeri.application.knowledge import update
+from daeri.core.contracts import ReportMemoryCandidate
 from daeri.core.security import redact
 from daeri.core.errors import StoreError
 
@@ -13,6 +16,10 @@ _RETRY = {'STORE_UNAVAILABLE', 'RECORD_UNAVAILABLE', 'MEMORY_INDEX_INCOMPLETE'}
 
 
 def _candidate(runtime, task, candidate):
+    try:
+        candidate = ReportMemoryCandidate.model_validate(candidate).model_dump(exclude_unset=True)
+    except ValidationError:
+        return {'state': 'skipped', 'error_code': 'INVALID_INPUT'}
     if redact(candidate) != candidate:
         return {'state': 'skipped', 'error_code': 'RESULT_VALIDATION_FAILED'}
     try:
@@ -28,8 +35,21 @@ def enqueue(runtime, task, args, report_ref):
     items = [_candidate(runtime, task, candidate) for candidate in args.get('memory_candidates', [])]
     if not items:
         return
-    ref = runtime.store.write_record(task['task_id'], 'memory_pending',
-                                    {'report_ref': report_ref, 'items': items})
+    try:
+        with runtime.store.transaction():
+            runtime.store._db.execute('SAVEPOINT report_memory')
+            try:
+                ref = runtime.store.write_record(task['task_id'], 'memory_pending',
+                                                {'report_ref': report_ref, 'items': items})
+            except (StoreError, OSError, sqlite3.Error):
+                runtime.store._db.execute('ROLLBACK TO report_memory')
+                raise
+            finally:
+                runtime.store._db.execute('RELEASE report_memory')
+    except (StoreError, OSError, sqlite3.Error) as error:
+        code = error.code if isinstance(error, StoreError) else 'STORE_UNAVAILABLE'
+        return {'state': 'skipped', 'items': [
+            {'state': 'skipped', 'error_code': code, **({'next_action': 'resubmit'} if code in _RETRY else {})}]}
     task.setdefault('memory_job_refs', []).append(ref)
 
 
@@ -105,6 +125,8 @@ def _summary(items):
 
 
 def finish_report(runtime, receipt, candidates=()):
+    if receipt.get('memory_enqueue_failure'):
+        return copy.deepcopy(receipt['memory_enqueue_failure'])
     task_id, report_ref = receipt['task_id'], receipt['report_ref']
     try:
         task = runtime.store.get_task(task_id)

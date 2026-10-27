@@ -8,7 +8,7 @@ import pytest
 from daeri.application.runtime import Runtime
 from daeri.core.errors import StoreError
 from test_embedding_memory import api, api_config
-from test_execution_flow import (ROOT, approve, begin, comparison_report, execution,
+from test_execution_flow import (ROOT, approve, begin, execution,
                                  resource, table_plan)
 
 
@@ -35,15 +35,16 @@ def completed(runtime, *, memory_none=False, provider="keyword_only"):
     first = runtime.call('daeri_capability_execute', execution(saved, approved, draft['steps'][0]))['data']
     second = runtime.call('daeri_capability_execute', execution(saved,
         {**approved, 'task_revision': first['task_revision']}, draft['steps'][1], call_id='call-2'))['data']
-    report = comparison_report(first, second)
+    sources = [first['result_ref'], second['result_ref']]
     return profile, {'request_id': 'report', 'task_id': saved['task_id'],
         'expected_task_revision': second['task_revision'], 'plan_id': saved['plan_id'],
-        'plan_version': saved['plan_version'], 'report': report,
+        'plan_version': saved['plan_version'], 'report': '# 비교 결과\n\n현재 값의 차이는 3입니다.',
+        'evidence_refs': sources,
         'memory_candidates': [{'draft': {'category': 'procedure',
             'statement': 'Cache 값을 비교할 때 동일한 기준의 get 조회 결과를 검산한다.',
             'applicability': '이 profile의 캐시 비교', 'instance_ids': ['cache-a', 'cache-b'],
             'verification_method': '실제 완료 조회와 비교 결과 대조'},
-            'source_refs': report['checks'][0]['evidence_refs']}]}
+            'source_refs': sources}]}
 
 
 @pytest.mark.parametrize('explicit_empty', [False, True])
@@ -71,7 +72,7 @@ def test_host_candidate_is_processed_with_the_report_and_current_source_checks(t
             'statement': '동일한 비교 기준으로 캐시 값을 조회한 뒤 검산한다',
             'applicability': '이 profile의 캐시 비교', 'instance_ids': ['cache-a', 'cache-b'],
             'verification_method': '실제 완료 조회와 검증된 비교표 대조'},
-            'source_refs': args['report']['checks'][0]['evidence_refs']}]
+            'source_refs': args['evidence_refs']}]
         result = runtime.call('daeri_result_submit', args)
         assert result['status'] == 'ok', result
         assert result['data']['memory']['state'] == 'ready'
@@ -110,13 +111,71 @@ def test_invalid_candidate_does_not_rollback_report_or_store_secret(tmp_path):
         args['memory_candidates'] = [{'draft': {'category': 'procedure',
             'statement': 'Bearer PRIVATE_EMBEDDING_123456789', 'applicability': 'Cache',
             'instance_ids': ['cache-a'], 'verification_method': 'actual source'},
-            'source_refs': args['report']['checks'][0]['evidence_refs']}]
+            'source_refs': args['evidence_refs']}]
         result = runtime.call('daeri_result_submit', args)
         assert result['status'] == 'ok', result
         assert result['data']['memory']['state'] == 'skipped'
         assert runtime.store._db.execute('SELECT count(*) FROM memory_heads').fetchone()[0] == 0
         for path in tmp_path.joinpath('records').iterdir():
             assert b'Bearer PRIVATE_EMBEDDING_123456789' not in path.read_bytes()
+
+
+@pytest.mark.parametrize('candidate', [None, 'free note', {}, {'draft': {}, 'source_refs': []}])
+def test_candidate_shape_error_preserves_the_report_and_task_completion(tmp_path, candidate):
+    with closing(Runtime(tmp_path)) as runtime:
+        _, args = completed(runtime)
+        args['memory_candidates'] = [candidate]
+        result = runtime.call('daeri_result_submit', args)
+        assert result['status'] == 'ok', result
+        assert result['data']['task_state'] == 'succeeded'
+        assert runtime.store.get_task(args['task_id'])['state'] == 'succeeded'
+        assert runtime.store.read_record(args['task_id'], result['data']['report_ref'])['record_kind'] == 'report'
+        assert result['data']['memory'] == {'state': 'skipped', 'items': [
+            {'state': 'skipped', 'error_code': 'INVALID_INPUT'}]}
+
+
+def test_malformed_candidate_keeps_another_eligible_candidate(tmp_path):
+    with closing(Runtime(tmp_path)) as runtime:
+        profile, args = completed(runtime)
+        args['memory_candidates'].append({'draft': {}})
+        result = runtime.call('daeri_result_submit', args)
+        assert result['status'] == 'ok', result
+        assert result['data']['memory']['state'] == 'partial'
+        first, second = result['data']['memory']['items']
+        assert first['state'] == 'ready'
+        assert second == {'state': 'skipped', 'error_code': 'INVALID_INPUT'}
+        assert runtime.memory.get(profile['profile_id'], first['memory_ref'])['statement'] == args['memory_candidates'][0]['draft']['statement']
+
+
+def test_memory_queue_write_failure_preserves_the_report_and_supports_resubmission(tmp_path, monkeypatch):
+    with closing(Runtime(tmp_path)) as runtime:
+        _, args = completed(runtime)
+        original = runtime.store.write_record
+
+        def unavailable(task_id, kind, *values, **kwargs):
+            reference = original(task_id, kind, *values, **kwargs)
+            if kind == 'memory_pending':
+                raise StoreError('STORE_UNAVAILABLE', 'temporary memory queue failure')
+            return reference
+
+        monkeypatch.setattr(runtime.store, 'write_record', unavailable)
+        result = runtime.call('daeri_result_submit', args)
+        assert result['status'] == 'ok', result
+        assert result['data']['task_state'] == 'succeeded'
+        assert runtime.store.get_task(args['task_id'])['state'] == 'succeeded'
+        assert runtime.store.read_record(args['task_id'], result['data']['report_ref'])['record_kind'] == 'report'
+        assert result['data']['memory'] == {'state': 'skipped', 'items': [
+            {'state': 'skipped', 'error_code': 'STORE_UNAVAILABLE', 'next_action': 'resubmit'}]}
+        assert runtime.store._db.execute("SELECT count(*) FROM records WHERE kind='memory_pending'").fetchone()[0] == 0
+        replayed = runtime.call('daeri_result_submit', args)
+        assert replayed['data']['report_ref'] == result['data']['report_ref']
+        assert replayed['data']['memory'] == result['data']['memory']
+        assert replayed['data']['task_revision'] == result['data']['task_revision']
+        monkeypatch.setattr(runtime.store, 'write_record', original)
+        repeated = runtime.call('daeri_result_submit', {**args, 'request_id': 'report-resubmitted',
+            'expected_task_revision': result['data']['task_revision']})
+        assert repeated['status'] == 'ok', repeated
+        assert repeated['data']['memory']['state'] == 'ready'
 
 
 def test_memory_queue_is_internal_and_cannot_be_read_as_a_result(tmp_path):
@@ -188,7 +247,7 @@ def test_report_replay_reflects_a_later_verified_memory_invalidation(tmp_path):
         invalidated = runtime.call('daeri_memory_update', {'task_id': args['task_id'],
             'request_id': 'invalidate', 'expected_task_revision': result['data']['task_revision'],
             'operation': 'invalidate', 'memory_ref': memory_ref,
-            'source_refs': args['report']['checks'][0]['evidence_refs'], 'reason': '사용자가 실제 절차를 정정함'})
+            'source_refs': args['evidence_refs'], 'reason': '사용자가 실제 절차를 정정함'})
         assert invalidated['status'] == 'ok', invalidated
         replay = runtime.call('daeri_result_submit', args)
         assert replay['status'] == 'ok', replay
@@ -202,7 +261,7 @@ def test_explicit_memory_denial_never_persists_a_host_candidate_body(tmp_path):
         private_candidate = '이 후보는 승인한 기억 범위를 벗어난 고유 문장이다'
         args['memory_candidates'] = [{'draft': {'category': 'procedure', 'statement': private_candidate,
             'applicability': 'Cache', 'instance_ids': ['cache-a', 'cache-b'],
-            'verification_method': 'actual calls'}, 'source_refs': args['report']['checks'][0]['evidence_refs']}]
+            'verification_method': 'actual calls'}, 'source_refs': args['evidence_refs']}]
         result = runtime.call('daeri_result_submit', args)
         assert result['status'] == 'ok', result
         assert result['data']['memory']['state'] == 'skipped'

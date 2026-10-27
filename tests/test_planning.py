@@ -34,6 +34,17 @@ def test_valid_typed_plan_preserves_runtime_dictionary_contract():
     assert validate_plan(profile, draft, Registry()) == ["contract"]
 
 
+def test_plan_resolves_optional_output_and_completion_details():
+    from daeri.application.planning import resolve_plan_defaults
+
+    profile, draft = inputs()
+    del draft['output'], draft['completion_criteria']
+    resolved = resolve_plan_defaults(profile, draft, Registry())
+    assert resolved['output']['format'] == 'user_request'
+    assert resolved['completion_criteria'] == []
+    assert validate_plan(profile, draft, Registry()) == ['contract']
+
+
 @pytest.mark.parametrize("field", ["table_rules", "artifact_rules"])
 def test_new_plans_reject_legacy_result_generation_rules(field):
     profile, draft = inputs()

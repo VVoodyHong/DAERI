@@ -173,14 +173,12 @@ def test_clarification_retires_prior_approval_and_subagent_before_resuming(confi
 def test_host_can_preserve_a_preplan_failure_without_synthetic_local_check(configured):
     runtime, profile = configured
     task_id = create_simple_task(runtime, profile)
-    report = {"summary": "연결된 자료로 요청한 조사를 구성할 수 없습니다.", "proposed_task_state": "failed",
-        "findings": [], "checks": [], "limitations": ["요청한 연결이 현재 제공되지 않습니다."],
-        "uncertain_effects": [], "artifacts": [], "next_actions": ["연결 설정을 확인하세요."]}
-    saved = runtime.call("daeri_result_submit", {"task_id": task_id, "report": report})
+    report = '연결된 자료로 요청한 조사를 구성할 수 없습니다. 연결 설정을 확인하세요.'
+    saved = runtime.call("daeri_result_submit", {"task_id": task_id, "report": report, 'state': 'failed'})
     assert saved["status"] == "ok", saved
     assert saved["data"]["task_state"] == "failed"
     loaded = runtime.call("daeri_result_get", {"task_id": task_id, "record_ref": saved["data"]["report_ref"]})
-    assert loaded["data"]["payload"]["summary"] == report["summary"]
+    assert loaded["data"]["payload"]["content"] == report
 
 
 def test_approval_stays_bound_to_the_plan_the_user_saw(configured):

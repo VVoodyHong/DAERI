@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "daeri-agent"
-version = "0.1.28"
+version = "0.1.29"
 description = "Local MCP runtime for DAERI multi-agent orchestration, approvals and profile memory"
 requires-python = ">=3.12,<3.15"
 dependencies = [

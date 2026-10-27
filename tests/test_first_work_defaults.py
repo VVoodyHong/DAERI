@@ -12,7 +12,7 @@ from daeri.infrastructure.resources import ResourceRegistry
 from daeri.config.setup_yaml import read_yaml, write_yaml
 from daeri.infrastructure.storage import Store
 from test_embedding_memory import api, api_config
-from test_execution_flow import comparison_report, resource
+from test_execution_flow import resource
 from test_simple_workflow import simple_plan
 from test_memory import NumericalFixtureEmbedder
 
@@ -91,13 +91,14 @@ def test_setup_to_approved_report_file_memory_and_next_task_without_policy_edits
         second = runtime.call('daeri_capability_execute', {'task_id': task['task_id'],
             'step_id': 'read-1', 'parameters': {'key': 'orders'}})
         assert second['status'] == 'ok', second
-        body = comparison_report(first['data'], second['data'])
+        body = '같은 키를 비교한 두 캐시의 값은 10과 7이며 차이는 3입니다.'
         sources = [first['data']['result_ref'], second['data']['result_ref']]
         output = Path(runtime.store.artifact_workspace(saved['task_id'])) / 'comparison.csv'
         output.write_text('ID,A,B,Difference\none,10,7,3\n', encoding='utf-8')
-        body['artifacts'] = [{'artifact_id': 'comparison-csv', 'label': '캐시 비교',
+        artifacts = [{'artifact_id': 'comparison-csv', 'label': '캐시 비교',
             'local_path': str(output), 'media_type': 'text/csv', 'source_refs': sources}]
         report = runtime.call('daeri_result_submit', {'task_id': saved['task_id'], 'report': body,
+            'evidence_refs': sources, 'artifacts': artifacts,
             'memory_candidates': [{'draft': {'category': 'procedure',
                 'statement': 'Cache 비교는 같은 식별자의 조회를 같은 기준으로 대조하고 차이를 검산한다.',
                 'applicability': '현재 profile의 캐시 비교', 'instance_ids': ['cache-a', 'cache-b'],
@@ -105,6 +106,10 @@ def test_setup_to_approved_report_file_memory_and_next_task_without_policy_edits
                 'source_refs': sources}]})
         assert report['status'] == 'ok', report
         assert report['data']['memory']['state'] == 'ready', report
+        saved_report = runtime.call('daeri_result_get', {'task_id': saved['task_id'],
+            'record_ref': report['data']['report_ref']})
+        assert saved_report['data']['payload']['content'] == body
+        assert set(saved_report['data']['payload']['evidence_refs']) == set(sources)
         memories = [item['memory_ref'] for item in report['data']['memory']['items']
                     if item['state'] == 'ready']
         assert memories

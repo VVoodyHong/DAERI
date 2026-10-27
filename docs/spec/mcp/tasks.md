@@ -134,7 +134,7 @@ runtime은 현재 실행 소유자·저장 기록·승인·입력 대기를 확�
 | `execute` | `delegation_token`, `call:SubagentCall` | `timeout_ms`; 기본 10,000, 1~60,000 |
 | `search` | `delegation_token`, `query:string` | `instance_ids`, `limit`; 검색 도구와 같음 |
 | `read` | `delegation_token`, `record_ref` | `cursor`, `limit_bytes`; 결과 조회와 같음 |
-| `complete` | `delegation_token`, `result:SubagentResult` | 없음 |
+| `complete` | `delegation_token`, `result:JsonValue` | `evidence_refs:RecordRef[]`; 기본 [] |
 | `revoke` | `delegation_id:ID` | 없음 |
 
 SubagentAssignment는 `label:string`, `objective:string`, `step_ids:ID[]`, `completion_criteria:string[]`와 선택 `source_refs:RecordRef[]`를 갖는다.
@@ -143,7 +143,9 @@ step_ids는 1~100개, 완료 조건은 1~20개이며 참조는 실제 제공한 
 SubagentCall은 `step_id:ID`, `parameters:JsonObject`와 선택 `capability_id:ID`다.
 읽기 묶음의 실제 기능은 capability_id로 선택한다.
 로컬 Source는 호스트 도구로 조사한 뒤 [관찰 입력](resources.md#로컬-source-관찰-등록)을 `execute.call`에 전달한다.
-SubagentResult는 `summary:string`, `evidence_refs:RecordRef[]`, `limitations:string[]`다.
+result는 하위 에이전트가 선택한 문장·표·JSON 등 JSON으로 표현 가능한 결과다.
+evidence_refs는 결과에 기여한 고유 출처를 별도 전달한다.
+생략·빈 배열은 현재 할당·자신의 완료한 호출·검색한 기억에서 제공 가능한 출처를 연결한다.
 
 ### 생성과 호출 허용 조건
 
@@ -155,10 +157,11 @@ create는 현재 승인 계획의 단계를 배정한다.
 
 create·get·complete는 `task_id`, `task_revision`, `delegation_id`, `state`, `expires_at`, `plan_ref`, `assignment`, `steps`, `contracts`, `calls`, `result_ref`를 반환한다.
 create에는 `delegation_token`, 완료 결과가 있으면 `result`도 포함한다.
+보존한 result는 `content`의 자유형 결과와 별도 `evidence_refs`로 구성한다.
 revoke는 위임 식별자·현재 상태·기한·계획·결과 참조를 반환한다.
 
 execute·search·read의 data는 대응하는 실행·기억 검색·결과 조회 도구와 같다.
-진행 중인 자신의 호출이 끝나면 실제 근거와 제한을 complete로 반환하고 총괄 에이전트가 최종 보고에 반영한다.
+진행 중인 자신의 호출이 끝나면 complete로 결과를 보존하고 총괄 에이전트가 업무 목표에 맞춰 통합한다.
 
 ### 멱등·재전달과 수명
 
@@ -238,40 +241,12 @@ invalidate는 현재 소유자가 실제 정정·반증으로 기억을 검색�
 정본은 보존했지만 색인이 미완성이면 partial·MEMORY_INDEX_INCOMPLETE다.
 기억 실패는 기존 보고·종료 상태를 유지하고 저장·색인 경로에서 복구한다.
 
-## 결과 DTO
+## 자유형 결과와 파일
 
-호스트가 분석·계산·내용·완료 여부를 판단한다.
-runtime은 실제 승인·선언한 출처·현재 자료 조건·기한·파일 무결성을 검사한다.
-
-### ReportDraft·Finding
-
-| ReportDraft 필드 | 타입·조건 |
-|---|---|
-| `summary` | 비어 있지 않은 string |
-| `proposed_task_state` | `succeeded\|partial\|failed\|cancelled` |
-| `findings` | Finding[] |
-| `checks` | ReportCheck[] |
-| `limitations` | string[] |
-| `uncertain_effects` | 고유한 call ID[]; 현재 읽기는 [] |
-| `artifacts` | ArtifactDraft[] |
-| `next_actions` | string[] |
-
-모든 필드는 필수이고 각 배열은 최대 1,000개다.
-표·JSON·분석 내용은 finding.text 또는 호스트 생성 파일에 담는다.
-
-Finding은 `kind:observation|derived|memory|hypothesis`, `text:string`, `evidence_refs:RecordRef[]`다.
-관찰은 실제 요청·보완·검사·호출에, 기억은 현재 profile의 유효 기억 개정에 연결한다.
-관찰·분석·기억에는 실제 근거를 연결하고 가설은 추가 확인 대상으로 표시한다.
-
-### ReportCheck
-
-ReportCheck는 `criterion_id:ID`, `status:met|unmet|unknown|not_applicable`, `method:string`, `evidence_refs:RecordRef[]`와 선택 `reason:string`이다.
-계획의 각 완료 조건을 한 번씩 판단한다.
-met은 해당 단계·대상·기능·범위의 실제 호출 근거를 요구한다.
-
-나머지 상태는 비어 있지 않은 이유를 기록한다.
-not_applicable은 required:false인 선택 완료 조건에 이유를 연결한다.
-표본·전체 조사·계산·사실성의 충분성은 호스트가 목적과 실제 자료를 대조한다.
+호스트는 사용자 요청과 실제 자료를 대조해 분석 방법·결과 표현·완료 여부를 판단한다.
+결과 본문은 문장·표·JSON 등 호스트가 작성한 JSON 값 그대로 보존한다.
+실행 상태·기여 출처·파일·기억 후보는 본문 밖의 별도 입력으로 전달한다.
+runtime은 실제 승인·현재 자료 조건·기한·파일 무결성을 검사한다.
 
 ### 호스트 결과와 파일
 
@@ -287,12 +262,14 @@ runtime은 일반 파일·경로·심볼릭 링크를 검사해 원래 바이트
 
 | 종류 | 필수 필드 |
 |---|---|
-| 새 파일 | `artifact_id:ID`, `label:string`, `local_path:string`, `media_type:string`, `source_refs:RecordRef[]` |
+| 새 파일 | `artifact_id:ID`, `label:string`, `local_path:string`, `media_type:string` |
 | 기존 파일 | `kind:"existing"`, `artifact_id:ID`, `label:string`, `artifact_ref:RecordRef` |
 
 새 파일의 선택 kind는 file이며 local_path는 해당 업무 작업 영역 안의 절대 경로다.
 표시명·ID는 비어 있지 않고 ID는 보고 안에서 고유하다.
-media_type은 255자 이내의 미디어 타입, source_refs는 하나 이상의 실제 기여 출처다.
+media_type은 255자 이내의 미디어 타입이다.
+선택 source_refs는 실제 기여 출처이며 기본 []다.
+생략·빈 배열은 같은 제출의 evidence_refs를 파일의 기여 출처로 연결한다.
 
 runtime은 파일에 선언한 출처와 현재 내보내기 범위를 검사한다.
 파일 기한은 업무·기여 출처의 가장 이른 유한 기한을 따른다.
@@ -300,24 +277,34 @@ runtime은 파일에 선언한 출처와 현재 내보내기 범위를 검사한
 
 ## daeri_result_submit
 
-필수 입력은 `task_id:ID`, `report:ReportDraft`다.
-선택 `memory_candidates:MemoryCandidate[]`는 기본 []이며 최대 20개다.
+| 입력 | 타입·기본값 |
+|---|---|
+| `task_id` | 필수 ID |
+| `report` | 필수 JsonValue; 호스트가 선택한 결과 본문 |
+| `state` | 선택 `succeeded\|partial\|failed\|cancelled`; 기본 `succeeded` |
+| `evidence_refs` | 선택 고유 RecordRef[]; 기본 [] |
+| `artifacts` | 선택 ArtifactDraft[]; 기본 [] |
+| `memory_candidates` | 선택 후보 목록; 기본 [] |
+
 현재 계획·개정·보고 중복 기록은 runtime이 해소한다.
+기여 출처가 생략되거나 빈 배열이면 현재 계획의 완료한 호출 결과를 연결하고 해당 호출이 없으면 업무 요청을 사용한다.
+명시한 출처는 해당 업무에서 실제 제공받은 기록·현재 승인·접근·기한을 확인한다.
 
 MemoryCandidate는 `draft:MemoryDraft`, 1~100개의 고유한 `source_refs:RecordRef[]`와 정정 시 선택 `memory_ref`다.
 호스트는 재사용할 규칙·구조·절차·교훈을 업무 완료 보고에 함께 선별한다.
-runtime은 검증·정본 저장·선택한 임베딩·색인·지속 재시도를 처리한다.
+runtime은 후보의 검증·정본 저장·선택한 임베딩·색인을 처리한다.
 
 ### 검증과 상태 반영
 
 성공 보고와 파일 등록은 실제 계획 승인을 확인한다.
-필수 완료 조건의 met과 종료한 읽기 상태가 성공 입력 조건이다.
-계획 전에 수행할 수 없다고 판단하면 호스트가 실패 원인·확보한 근거·제한·다음 조치를 `failed` 보고에 담는다.
-계획 전 보고의 checks·artifacts·uncertain_effects는 []이며 실제 취소 상태에는 `cancelled` 보고를 연결한다.
+호스트가 목표 달성 여부를 판단해 state를 전달하고 runtime은 현재 업무의 승인·진행 중 호출·취소 상태를 확인해 종료 상태를 기록한다.
+계획 전에 수행할 수 없는 업무는 호스트가 확인한 결과를 `state: failed`로 제출한다.
+취소 보고는 실제 cancelled 업무에 연결한다.
 
-runtime은 보고의 findings·checks와 파일의 source_refs에 선언한 출처를 검사한다.
-일시중지 업무는 재개 후 제출하며 취소 보고는 실제 cancelled 상태에 연결한다.
-파일·보고·업무 종료·자동 기억 대기는 같은 저장 트랜잭션으로 연결한다.
+runtime은 별도 evidence_refs와 파일의 source_refs를 현재 자료 조건에 대조한다.
+일시중지 업무는 재개 후 제출한다.
+파일·보고·업무 종료는 같은 저장 트랜잭션으로 연결한다.
+기억 후보의 오류는 해당 항목의 처리 결과로 반환한다.
 
 ### 출력 data
 
@@ -329,12 +316,16 @@ runtime은 보고의 findings·checks와 파일의 source_refs에 선언한 출�
 | `delivery_status` | 현재 `not_confirmed`; 실제 화면 전달은 호스트가 확인 |
 | `memory` | 자동 기억의 실제 처리 상태 |
 
-validation은 `structure:"passed"`, `evidence:"passed"`, `completion:met|unmet|unknown`, `completion_assessed_by:"host"`, `checks`, `issues`다.
+validation은 `structure: passed`, `evidence: passed`, `completion: met|unmet`, `completion_assessed_by: host`, `issues`를 반환한다.
+completion은 호스트가 선택한 succeeded 상태를 met, 그 밖의 상태를 unmet으로 표시한다.
+보존 보고의 payload는 `content`의 원래 결과 본문과 별도 `evidence_refs`·`artifact_refs`·`task_state`·`validation`으로 구성한다.
 memory.state는 `ready|pending|partial|skipped`이며 항목마다 상태·기억 참조·오류·필요한 재제출 조치를 표시한다.
 
 후보가 없으면 skipped와 빈 항목 목록이다.
-기억·색인 실패는 보존 보고·업무 종료를 유지하며 검증한 후보의 일시 장애는 지속 재시도한다.
-검증 전 장애·본문 없는 대기는 `next_action:"resubmit"`으로 새 후보 제출을 안내한다.
+후보별 문법·출처 검증 실패는 해당 항목의 skipped 상태와 원인으로 반환하고 보고·업무 종료는 보존한다.
+검증한 후보의 저장·색인 장애는 보존한 대기에서 재시도한다.
+대기 저장 실패·검증 전 장애·본문 없는 과거 대기는 `next_action: resubmit`으로 후보를 포함한 새 제출을 안내한다.
+대기 저장에 실패한 제출은 같은 요청 키로 재전송해도 최초 실패 상태를 반환하며 후보를 포함한 새 제출에서 대기 생성을 다시 시도한다.
 
 ## daeri_result_get
 

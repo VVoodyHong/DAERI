@@ -152,17 +152,19 @@ def _mutate(runtime, args):
                 require(grant, "NOT_FOUND", "업무의 하위 에이전트를 찾을 수 없습니다.")
                 grant["state"] = "revoked"
             else:
+                refs = sorted(args.get("evidence_refs") or _allowed_refs(runtime, task, grant))
                 if grant["state"] == "completed":
                     saved_result = runtime._load_evidence(task, grant["result_ref"])["payload"]
-                    require(all(saved_result.get(key) == redact(value) for key, value in args["result"].items()),
+                    require(saved_result["content"] == redact(args["result"])
+                        and saved_result["evidence_refs"] == refs,
                         "SUBAGENT_CONFLICT", "이미 완료한 하위 에이전트의 결과와 다릅니다.")
                     return response(_view(runtime, task, grant))
                 require(not any(call.get("delegation_id") == grant["delegation_id"] and call["call_state"] in {"pending", "unknown"}
                     for call in task["calls"]), "SUBAGENT_CONFLICT", "진행 중이거나 미확인인 호출을 먼저 확인하세요.")
-                _check_refs(runtime, task, grant, args["result"]["evidence_refs"])
-                evidence = {ref: runtime._load_evidence(task, ref) for ref in args["result"]["evidence_refs"]}
+                _check_refs(runtime, task, grant, refs)
+                evidence = {ref: runtime._load_evidence(task, ref) for ref in refs}
                 expiries = [item.get("expires_at") for item in evidence.values()]
-                result = {**redact(args["result"]), "_source_paths": {
+                result = {"content": redact(args["result"]), "evidence_refs": refs, "_source_paths": {
                     ref: item["allowed_paths"] for ref, item in evidence.items()}}
                 grant["result_ref"] = runtime.store.write_record(task["task_id"], "subagent_result", result,
                     expires_at=min((value for value in expiries if value), default=None))

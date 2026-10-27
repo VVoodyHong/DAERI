@@ -156,11 +156,8 @@ def table_plan(draft):
 
 
 def comparison_report(first, second):
-    refs = [first['result_ref'], second['result_ref']]
-    return {'summary': 'The current values differ by three', 'proposed_task_state': 'succeeded',
-        'findings': [{'kind': 'derived', 'text': 'Difference is three', 'evidence_refs': refs}],
-        'checks': [{'criterion_id': 'read', 'status': 'met', 'method': 'Completed both approved reads', 'evidence_refs': refs}],
-        'limitations': [], 'uncertain_effects': [], 'artifacts': [], 'next_actions': []}
+    return {'comparison': 'The current values differ by three', 'difference': 3,
+            'sources': [first['result_ref'], second['result_ref']]}
 
 
 def test_two_real_mcp_processes_report_verified_table_and_csv_with_replay(configured):
@@ -173,13 +170,13 @@ def test_two_real_mcp_processes_report_verified_table_and_csv_with_replay(config
         "plan_version": saved["plan_version"], "report": comparison_report(first, second)}
     output = Path(runtime.store.artifact_workspace(saved['task_id'])) / 'comparison.csv'
     output.write_text('ID,A,B,Difference\none,10,7,3\n')
-    args['report']['artifacts'] = [{'artifact_id': 'csv', 'label': 'Comparison CSV',
+    args['artifacts'] = [{'artifact_id': 'csv', 'label': 'Comparison CSV',
         'local_path': str(output), 'media_type': 'text/csv',
         'source_refs': [first['result_ref'], second['result_ref']]}]
     stored = runtime.call("daeri_result_submit", args)
     assert stored["status"] == "ok", stored
     assert stored["data"]["task_state"] == "succeeded"
-    assert stored["data"]["validation"]["completion"] == "met"
+    assert stored["data"]["validation"]["completion_assessed_by"] == "host"
     assert runtime.call("daeri_result_submit", args)["data"] == stored["data"]
     artifact = runtime.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": stored["data"]["artifact_refs"][0]})
     assert artifact["status"] == "ok", artifact
@@ -195,16 +192,16 @@ def test_citing_and_reattaching_a_file_preserves_acyclic_sources(configured):
     report = comparison_report(first, second)
     path = Path(runtime.store.artifact_workspace(saved['task_id'])) / 'answer.txt'
     path.write_text('Difference is three')
-    report['artifacts'] = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
+    artifacts = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
                             'media_type': 'text/plain', 'source_refs': [first['result_ref'], second['result_ref']]}]
     args = {'request_id': 'first-report', 'task_id': saved['task_id'], 'expected_task_revision': second['task_revision'],
-            'plan_id': saved['plan_id'], 'plan_version': saved['plan_version'], 'report': report}
+            'plan_id': saved['plan_id'], 'plan_version': saved['plan_version'], 'report': report, 'artifacts': artifacts}
     original = runtime.call('daeri_result_submit', args)
     assert original['status'] == 'ok', original
     ref = original['data']['artifact_refs'][0]
-    report['findings'] = [{'kind': 'derived', 'text': '이전에 작성한 파일 확인', 'evidence_refs': [ref]}]
-    report['artifacts'] = [{'kind': 'existing', 'artifact_id': 'answer', 'label': '결과', 'artifact_ref': ref}]
-    args.update(request_id='reattach', expected_task_revision=original['data']['task_revision'])
+    args.update(request_id='reattach', expected_task_revision=original['data']['task_revision'],
+        report='이전에 작성한 파일 확인', evidence_refs=[ref],
+        artifacts=[{'kind': 'existing', 'artifact_id': 'answer', 'label': '결과', 'artifact_ref': ref}])
     attached = runtime.call('daeri_result_submit', args)
     assert attached['status'] == 'ok', attached
     fetched = runtime.call('daeri_result_get', {'task_id': saved['task_id'], 'record_ref': ref})
@@ -353,13 +350,11 @@ def test_partial_report_cannot_generate_files_from_unapproved_plan(configured, r
             "expected_task_revision": approved["task_revision"], "draft": draft})
         assert replacement["status"] == "ok", replacement
         saved = replacement["data"]
-    report = {"summary": "No external reads completed", "proposed_task_state": "partial", "findings": [], "tables": [],
-        "checks": [{"criterion_id": "read", "status": "unmet", "method": "Still waiting for approval", "evidence_refs": [], "reason": "Not executed"}],
-        "limitations": ["Not executed"], "uncertain_effects": [], "next_actions": [],
-        "artifacts": [{"artifact_id": "report-file", "label": "Unapproved file", "local_path": "/not-created.txt",
-                       "media_type": "text/plain", "source_refs": []}]}
     result = runtime.call("daeri_result_submit", {"request_id": "unapproved-file", "task_id": saved["task_id"],
-        "expected_task_revision": saved["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": report})
+        "expected_task_revision": saved["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
+        'state': 'partial', 'report': 'No external reads completed',
+        'artifacts': [{'artifact_id': 'report-file', 'label': 'Unapproved file', 'local_path': '/not-created.txt',
+                       'media_type': 'text/plain'}]})
     assert result["status"] == "error", result
     assert result["error"]["code"] == "APPROVAL_REQUIRED"
     assert runtime.store.get_task(saved["task_id"])["state"] == "awaiting_approval"

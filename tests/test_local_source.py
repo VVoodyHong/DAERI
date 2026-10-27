@@ -125,9 +125,7 @@ def test_local_observation_follows_approval_and_can_complete_work(local_registry
     plan = runtime.call("daeri_plan_submit", {"task_id": task_id, "draft": {
         "purpose": "Explain the entry point", "steps": [{"step_id": "inspect",
             "description": "Inspect source using host tools and register observations",
-            "instance_id": "source", "capability_id": "source-observe"}],
-        "output": {"format": "text"}, "completion_criteria": [{"criterion_id": "explained",
-            "description": "Entry point inspected", "step_ids": ["inspect"]}]}})
+            "instance_id": "source", "capability_id": "source-observe"}]}})
     assert plan["status"] == "ok", plan
     arguments = {"task_id": task_id, "step_id": "inspect",
                  "parameters": {"summary": "app.py prints a greeting", "paths": ["app.py"]}}
@@ -138,13 +136,8 @@ def test_local_observation_follows_approval_and_can_complete_work(local_registry
     observed = runtime.call("daeri_capability_execute", arguments)
     assert observed["status"] == "ok", observed
     reference = observed["data"]["result_ref"]
-    submitted = runtime.call("daeri_result_submit", {"task_id": task_id, "report": {
-        "summary": "Entry point explained", "findings": [{"kind": "observation",
-            "text": "app.py prints a greeting", "evidence_refs": [reference]}],
-        "checks": [{"criterion_id": "explained", "status": "met",
-            "method": "Host inspected app.py", "evidence_refs": [reference]}],
-        "artifacts": [], "limitations": [], "next_actions": [], "uncertain_effects": [],
-        "proposed_task_state": "succeeded"}, "memory_candidates": [{"draft": {
+    submitted = runtime.call("daeri_result_submit", {"task_id": task_id,
+        "report": "app.py prints a greeting", "evidence_refs": [reference], "memory_candidates": [{"draft": {
             "category": "resource_structure", "statement": "app.py prints a greeting",
             "applicability": "This local project", "instance_ids": ["source"],
             "verification_method": "Inspect the current app.py using host tools"},

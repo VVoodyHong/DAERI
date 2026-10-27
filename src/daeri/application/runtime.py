@@ -273,7 +273,9 @@ class Runtime:
         if tool == "daeri_task_resume":
             return {"task_id": data["task_id"]}
         if tool == "daeri_result_submit":
-            return {"report_ref": data["report_ref"]}
+            return {"report_ref": data["report_ref"],
+                    **({"memory_enqueue_failure": data["memory_enqueue_failure"]}
+                       if data.get("memory_enqueue_failure") else {})}
         return copy.deepcopy(result)
 
     def _replay(self, tool, args, cached):
@@ -308,6 +310,8 @@ class Runtime:
             return response({"task_id": task["task_id"], "task_revision": task["task_revision"],
                 "report_ref": cached["report_ref"], "task_state": task["state"], "delivery_status": "not_confirmed",
                 "validation": payload["validation"], "artifact_refs": payload.get("artifact_refs", []),
+                **({"memory_enqueue_failure": cached["memory_enqueue_failure"]}
+                   if cached.get("memory_enqueue_failure") else {}),
                 **{key: payload[key] for key in ("table_validations", "artifact_validations") if key in payload}})
         return copy.deepcopy(cached)
 
@@ -1005,7 +1009,7 @@ class Runtime:
 
     def _load_evidence(self, task, ref, mode="model", *, require_current_plan=True, _lineage=(), _checked=None):
         checked = {} if _checked is None else _checked
-        require(ref not in _lineage and len(_lineage) < 32 and len(checked.keys() | set(_lineage) | {ref}) <= 256,
+        require(ref not in _lineage and len(_lineage) < 32,
                 "RESULT_VALIDATION_FAILED", "파생 자료의 출처가 순환하거나 검사 한도를 초과했습니다.")
         if ref.startswith("memory_"):
             plan = self._current_plan(task)
@@ -1157,19 +1161,23 @@ class Runtime:
                 active == {"plan_id": args["plan_id"], "plan_version": args["plan_version"]},
                 "RESULT_VALIDATION_FAILED", "현재 계획을 참조해 보고를 제출하세요.")
         plan = self._current_plan(task) if active else None
-        proposed = args["report"].get("proposed_task_state")
-        require(set(args["report"].get("uncertain_effects", [])) == set(self._uncertain(task)),
-                "RESULT_VALIDATION_FAILED", "실제 미확인 효과를 보고에 정확히 포함하세요.")
+        proposed = args.get("state", "succeeded")
         output_approved = bool(plan) and (self._active_approved(task) if task["state"] not in TERMINAL else
             any(approval.get("ever_approved") and approval["plan_id"] == plan["plan_id"] for approval in task["approvals"]))
-        if args["report"].get("artifacts"):
+        if args.get("artifacts"):
             require(output_approved, "APPROVAL_REQUIRED", "산출물 등록에는 해당 계획의 실제 승인이 필요합니다.")
         if proposed == "succeeded":
             require(output_approved, "APPROVAL_REQUIRED", "성공 보고에는 현재 계획의 실제 승인이 필요합니다.")
             require(not self._active_calls(task), "RESULT_VALIDATION_FAILED", "성공 보고에는 해소된 호출 상태가 필요합니다.")
         if proposed == "cancelled":
             require(task["state"] == "cancelled", "TASK_STATE_INVALID", "업무 취소 도구로 먼저 취소하세요.")
-        data = ResultService(self.store).submit(task, plan, args["report"],
+        references = args.get("evidence_refs") or [call["result_ref"] for call in task["calls"]
+            if call.get("plan_id") == args["plan_id"] and call.get("call_state") == "completed"
+            and call.get("result_ref")]
+        if not references:
+            references = [task["request_ref"]]
+        data = ResultService(self.store).submit(task, plan, args["report"], state=proposed,
+            evidence_refs=references, artifacts=args.get("artifacts", []),
             load_evidence=lambda ref, mode="model": self._load_evidence(task, ref, mode))
         task["last_report_ref"] = data["report_ref"]
         if task["state"] not in TERMINAL:
@@ -1177,7 +1185,9 @@ class Runtime:
         for ref in data["artifact_refs"]:
             task.setdefault("artifact_permissions", {})[ref] = {"plan_id": args["plan_id"]}
         from daeri.application.automatic_memory import enqueue
-        enqueue(self, task, args, data["report_ref"])
+        failure = enqueue(self, task, args, data["report_ref"])
+        if failure:
+            data['memory_enqueue_failure'] = failure
         self._save(task)
         return response({"task_id": task["task_id"], "task_revision": task["task_revision"], **data})
 

@@ -226,7 +226,7 @@ class ResourceOutputRule(InputModel):
 
 
 class PlanOutput(InputModel):
-    format: NonEmptyString
+    format: NonEmptyString = "user_request"
     destination: NonEmptyString = "conversation"
     resource_rules: SkipJsonSchema[list[ResourceOutputRule]] = Field(default_factory=list)
 
@@ -253,11 +253,11 @@ class PlanDraft(InputModel):
     purpose: NonEmptyString
     steps: list[PlanStep]
     budget: PlanBudget = Field(default_factory=PlanBudget)
-    output: PlanOutput
+    output: PlanOutput = Field(default_factory=PlanOutput)
     memory_search_refs: UniqueIDs = Field(default_factory=list)
     memory_refs: UniqueIDs = Field(default_factory=list)
     memory_limitations: list[NonEmptyString] = Field(default_factory=list)
-    completion_criteria: Annotated[list[CompletionCriterion], Field(min_length=1)]
+    completion_criteria: list[CompletionCriterion] = Field(default_factory=list)
     previous_plan_id: SkipJsonSchema[NonEmptyString] = Field(default=None)
     carried_evidence_refs: UniqueIDs = Field(default_factory=list)
 
@@ -332,12 +332,32 @@ class ReportMemoryCandidate(InputModel):
     memory_ref: NonEmptyString = Field(default=None)
 
 
+class ArtifactDraft(InputModel):
+    artifact_id: NonEmptyString
+    label: NonEmptyString
+    local_path: NonEmptyString
+    media_type: Annotated[str, StringConstraints(max_length=255,
+        pattern=r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:;[ -~]*)?$")]
+    source_refs: UniqueIDs = Field(default_factory=list)
+    kind: Literal["file"] = "file"
+
+
+class ExistingArtifactDraft(InputModel):
+    kind: Literal["existing"]
+    artifact_id: NonEmptyString
+    label: NonEmptyString
+    artifact_ref: NonEmptyString
+
+
 class ResultSubmit(TaskMutation):
     task_id: NonEmptyString
     plan_id: SkipJsonSchema[NonEmptyString | None] = None
     plan_version: SkipJsonSchema[PositiveInt | None] = None
-    report: JsonObject
-    memory_candidates: Annotated[list[ReportMemoryCandidate], Field(max_length=20)] = Field(default_factory=list)
+    report: JsonValue
+    state: Literal["succeeded", "partial", "failed", "cancelled"] = "succeeded"
+    evidence_refs: UniqueIDs = Field(default_factory=list)
+    artifacts: list[ArtifactDraft | ExistingArtifactDraft] = Field(default_factory=list)
+    memory_candidates: list[JsonValue] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def paired_plan(self) -> Self:
@@ -390,19 +410,13 @@ class SubagentCall(InputModel):
     parameters: JsonObject
 
 
-class SubagentResult(InputModel):
-    summary: NonEmptyString
-    evidence_refs: UniqueIDs
-    limitations: list[NonEmptyString]
-
-
 SUBAGENT_FIELDS = {
     "create": ({"assignment"}, {"request_id", "expected_task_revision", "ttl_seconds"}),
     "get": ({"delegation_token"}, set()),
     "execute": ({"delegation_token", "call"}, {"timeout_ms"}),
     "search": ({"delegation_token", "query"}, {"instance_ids", "limit"}),
     "read": ({"delegation_token", "record_ref"}, {"cursor", "limit_bytes"}),
-    "complete": ({"delegation_token", "result"}, {"request_id"}),
+    "complete": ({"delegation_token", "result"}, {"request_id", "evidence_refs"}),
     "revoke": ({"delegation_id"}, {"request_id", "expected_task_revision"}),
 }
 
@@ -439,7 +453,8 @@ class SubagentRequest(InputModel):
     record_ref: NonEmptyString = Field(default=None)
     cursor: NonEmptyString = Field(default=None)
     limit_bytes: Annotated[int, Field(ge=1, le=1048576)] = Field(default=None)
-    result: SubagentResult = Field(default=None)
+    result: JsonValue = None
+    evidence_refs: UniqueIDs = Field(default_factory=list)
 
     @model_validator(mode="after")
     def operation_fields(self) -> Self:

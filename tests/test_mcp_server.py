@@ -70,6 +70,9 @@ def test_stdio_handshake_lists_the_implemented_tools_and_strict_schemas(tmp_path
             assert not subagent_schema.is_valid({"operation": "get", "task_id": "task", "delegation_token": "token", "expected_task_revision": 1})
             for name in {"daeri_memory_search", "daeri_memory_update", "daeri_result_submit"}:
                 assert "embedding API" in tools[name].description
+            report_schema = Draft202012Validator(tools['daeri_result_submit'].inputSchema)
+            assert report_schema.is_valid({'task_id': 'task', 'report': '# 자유 형식 결과'})
+            assert report_schema.is_valid({'task_id': 'task', 'report': {'checks': '사용자 데이터', 'tables': [[1, 2]]}})
             for name in {"daeri_task_update", "daeri_task_cancel", "daeri_task_resume", "daeri_plan_submit", "daeri_approval_request"}:
                 assert tools[name].annotations.readOnlyHint is False
                 assert tools[name].annotations.destructiveHint is not False
@@ -349,9 +352,10 @@ def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_
                     executed = envelope(await subagent.call_tool("daeri_subagent", {**subagent_args, "operation": "execute",
                         "call": {"step_id": "read", "call_id": "wire-read", "parameters": {"key": "orders"}}}))
                     completed = envelope(await subagent.call_tool("daeri_subagent", {**subagent_args, "operation": "complete",
-                        "request_id": "wire-complete", "result": {"summary": "조회 완료",
-                            "evidence_refs": [executed["data"]["result_ref"]], "limitations": []}}))
+                        "request_id": "wire-complete", "result": '조회 완료',
+                        "evidence_refs": [executed["data"]["result_ref"]]}))
                     assert completed["status"] == "ok", completed
+                    assert completed['data']['result']['content'] == '조회 완료'
                     revision = completed["data"]["task_revision"]
             else:
                 executed = await call("daeri_capability_execute", {**common, "expected_task_revision": approved["task_revision"],
@@ -362,16 +366,17 @@ def test_host_stdio_approval_executes_lower_stdio_and_returns_verified_file(tmp_
             ref = executed["data"]["result_ref"]
             output = Path(task['artifact_workspace']) / 'key.json'
             output.write_text(json.dumps(executed['data']['inline_result']))
-            report = {"summary": "Read the selected test key", "proposed_task_state": "succeeded",
-                "findings": [{"kind": "observation", "text": "The selected key was returned", "evidence_refs": [ref]}], "tables": [],
-                "checks": [{"criterion_id": "read", "status": "met", "method": "Verified completed MCP key read", "evidence_refs": [ref]}],
-                "limitations": [], "uncertain_effects": [], "next_actions": [],
-                "artifacts": [{"artifact_id": "data", "local_path": str(output), "media_type": "application/json",
-                               "source_refs": [ref], "label": "Host key JSON"}]}
+            report = {'description': 'Read the selected test key', 'rows': [['one', '10.00']]}
             result = await call("daeri_result_submit", {**common, "request_id": "wire-report",
-                "expected_task_revision": revision, "report": report})
+                "expected_task_revision": revision, "report": report, 'evidence_refs': [ref],
+                'artifacts': [{'artifact_id': 'data', 'local_path': str(output), 'media_type': 'application/json',
+                               'label': 'Host key JSON'}]})
             assert result["status"] == "ok", result
             assert result["data"]["task_state"] == "succeeded"
+            saved_report = await call('daeri_result_get', {'task_id': task['task_id'],
+                'record_ref': result['data']['report_ref']})
+            assert saved_report['data']['payload']['content'] == report
+            assert saved_report['data']['evidence_refs'] == [ref]
             artifact = await call("daeri_result_get", {"task_id": task["task_id"], "record_ref": result["data"]["artifact_refs"][0]})
             assert artifact["status"] == "ok", artifact
             content = json.loads(Path(artifact["data"]["managed_file"]["local_path"]).read_text())

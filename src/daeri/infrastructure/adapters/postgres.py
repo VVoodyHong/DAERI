@@ -184,9 +184,3 @@ class PostgresReadAdapter(ReadAdapter):
             return value
         except (ValueError, TypeError, SyntaxError, RecursionError, StoreError):
             return text
-
-    def warnings(self, value):
-        result = super().warnings(value)
-        if isinstance(value.get("data"), str):
-            result.append("The DB response is unstructured text; it is not certified row data for tables or calculations.")
-        return result

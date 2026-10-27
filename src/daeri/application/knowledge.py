@@ -64,8 +64,7 @@ def source_leaves(runtime, task, references):
     def visit(reference, depth=0):
         require(isinstance(reference, str) and reference and reference not in visiting,
                 "RESULT_VALIDATION_FAILED", "출처 참조에 순환이 있거나 유효하지 않습니다.")
-        require(depth < 32 and len(seen.keys() | visiting | {reference}) <= 256,
-                "RESULT_VALIDATION_FAILED", "기억 출처의 재귀·건수 한도를 초과했습니다.")
+        require(depth < 32, "RESULT_VALIDATION_FAILED", "기억 출처의 재귀 깊이 한도를 초과했습니다.")
         if seen.get(reference, -1) >= depth:
             return
         visiting.add(reference)

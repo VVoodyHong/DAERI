@@ -41,7 +41,7 @@ def test_plan_display_blocks_changed_memory_but_keeps_task_recovery(tmp_path, ch
         if change in {"correct", "invalidate"}:
             update = {"request_id": "change-memory", "task_id": report_args["task_id"],
                 "expected_task_revision": reported["task_revision"], "memory_ref": memory_ref,
-                "operation": "invalidate", "source_refs": report_args["report"]["checks"][0]["evidence_refs"],
+                "operation": "invalidate", "source_refs": report_args["evidence_refs"],
                 "reason": "실제 근거를 대조해 이전 지식을 정정함"}
             if change == "correct":
                 update.update(operation="store", draft={key: item[key] for key in (

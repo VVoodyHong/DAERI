@@ -35,6 +35,32 @@ def run_read(runtime, saved, grant, step="read-0", call_id="subagent-read", **ex
         "step_id": step, "call_id": call_id, "parameters": {"key": "orders"}}, **extra)
 
 
+@pytest.mark.parametrize('content', ['# 조사 결과\n자유 서술', {'table': [[1, 2]], 'evidence_refs': ['본문 데이터']}, None])
+def test_subagent_preserves_free_content_and_resolves_its_actual_sources(configured, content):
+    runtime, profile = configured
+    saved, _ = begin(runtime, profile)
+    approve(runtime, saved)
+    grant = create_subagent(runtime, saved, ['read-0'])['data']
+    observed = run_read(runtime, saved, grant)['data']
+    completed = subagent_call(runtime, saved, grant, 'complete', result=content)
+    assert completed['status'] == 'ok', completed
+    assert completed['data']['result'] == {'content': content, 'evidence_refs': [observed['result_ref']]}
+    repeated = subagent_call(runtime, saved, grant, 'complete', result=content)
+    assert repeated['data']['result_ref'] == completed['data']['result_ref']
+    changed = subagent_call(runtime, saved, grant, 'complete', result='다른 결과')
+    assert changed['error']['code'] == 'SUBAGENT_CONFLICT'
+
+
+def test_subagent_explicit_result_sources_stay_inside_the_assignment(configured):
+    runtime, profile = configured
+    saved, draft = begin(runtime, profile)
+    approved = approve(runtime, saved)
+    other = runtime.call('daeri_capability_execute', execution(saved, approved, draft['steps'][1]))['data']
+    grant = create_subagent(runtime, saved, ['read-0'])['data']
+    denied = subagent_call(runtime, saved, grant, 'complete', result='분석', evidence_refs=[other['result_ref']])
+    assert denied['error']['code'] == 'ACCESS_DENIED'
+
+
 def test_subagent_creation_requires_real_orchestrator_approval_and_registered_steps(configured):
     runtime, profile = configured
     saved, _ = begin(runtime, profile)
@@ -109,15 +135,17 @@ def test_subagent_reads_only_assigned_or_own_evidence_and_completes_with_provena
     own = run_read(runtime, saved, grant)["data"]
     assert subagent_call(runtime, saved, grant, "read", record_ref=other["result_ref"])["error"]["code"] == "ACCESS_DENIED"
     assert subagent_call(runtime, saved, grant, "read", record_ref=own["result_ref"])["status"] == "ok"
-    result = {"summary": "조회 완료", "evidence_refs": [own["result_ref"]], "limitations": []}
-    completed = subagent_call(runtime, saved, grant, "complete", request_id="done", result=result)
+    result = '조회 완료'
+    completed = subagent_call(runtime, saved, grant, "complete", request_id="done", result=result,
+        evidence_refs=[own['result_ref']])
     assert completed["status"] == "ok", completed
     assert completed["data"]["state"] == "completed"
-    assert completed["data"]["result"] == result
+    assert completed["data"]["result"] == {'content': result, 'evidence_refs': [own['result_ref']]}
     loaded = runtime.call("daeri_result_get", {"task_id": saved["task_id"],
         "record_ref": completed["data"]["result_ref"]})
-    assert loaded["data"]["payload"] == result
-    assert subagent_call(runtime, saved, grant, "complete", request_id="done", result=result)["data"]["result_ref"] == completed["data"]["result_ref"]
+    assert loaded["data"]["payload"] == {'content': result, 'evidence_refs': [own['result_ref']]}
+    assert subagent_call(runtime, saved, grant, "complete", request_id="done", result=result,
+        evidence_refs=[own['result_ref']])["data"]["result_ref"] == completed["data"]["result_ref"]
     assert run_read(runtime, saved, grant, call_id="after-complete")["error"]["code"] == "SUBAGENT_UNAVAILABLE"
     task = runtime.store.get_task(saved["task_id"])
     assert task["state"] == "running"
@@ -159,15 +187,12 @@ def test_subagent_summary_cannot_restore_source_fields_removed_at_task_end(confi
     other = runtime.call("daeri_capability_execute", execution(saved, approved, draft["steps"][1]))["data"]
     grant = create_subagent(runtime, saved, ["read-0"])["data"]
     own = run_read(runtime, saved, grant)["data"]
-    completed = subagent_call(runtime, saved, grant, "complete", request_id="done", result={
-        "summary": "조회 값은 10.00이다", "evidence_refs": [own["result_ref"]], "limitations": []})["data"]
-    report = {"summary": "두 조회 완료", "proposed_task_state": "succeeded", "findings": [], "tables": [],
-        "checks": [{"criterion_id": "read", "status": "met", "method": "승인된 조회 확인",
-            "evidence_refs": [own["result_ref"], other["result_ref"]]}],
-        "limitations": [], "uncertain_effects": [], "artifacts": [], "next_actions": []}
+    completed = subagent_call(runtime, saved, grant, "complete", request_id="done",
+        result='조회 값은 10.00이다', evidence_refs=[own['result_ref']])["data"]
     task = runtime.store.get_task(saved["task_id"])
     assert runtime.call("daeri_result_submit", {"request_id": "report", "task_id": task["task_id"],
-        "expected_task_revision": task["task_revision"], **grant["plan_ref"], "report": report})["status"] == "ok"
+        "expected_task_revision": task["task_revision"], **grant["plan_ref"], "report": '두 조회 완료',
+        'evidence_refs': [own['result_ref'], other['result_ref']]})["status"] == "ok"
     loaded = runtime.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": completed["result_ref"]})
     assert loaded["error"]["code"] == "ACCESS_DENIED"
 
@@ -206,12 +231,9 @@ runtime.call('daeri_subagent', {'operation':'execute', 'task_id':p['task_id'], '
     task = runtime.store.get_task(saved["task_id"])
     assert task["calls"][0]["call_state"] == "pending"
     if terminal:
-        report = {"summary": "하위 에이전트 중단", "proposed_task_state": "partial", "findings": [], "tables": [],
-            "checks": [{"criterion_id": "read", "status": "unknown", "method": "하위 에이전트 중단으로 확인 필요",
-                "evidence_refs": [], "reason": "하위 에이전트 실행 프로세스 종료"}], "limitations": ["하위 에이전트 중단으로 조회 완료 확인 필요"],
-            "uncertain_effects": runtime._uncertain(task), "artifacts": [], "next_actions": []}
         ended = runtime.call("daeri_result_submit", {"request_id": "partial", "task_id": task["task_id"],
-            "expected_task_revision": task["task_revision"], **grant["plan_ref"], "report": report})
+            "expected_task_revision": task["task_revision"], **grant["plan_ref"], "report": '하위 에이전트 중단',
+            'state': 'partial'})
         assert ended["status"] == "ok", ended
         task = runtime.store.get_task(saved["task_id"])
         assert task["state"] == "partial"
@@ -327,8 +349,8 @@ def test_subagent_selects_different_read_tools_in_one_approved_resource_step(bun
         assert result["data"]["inline_result"]["data"]["tool"] == capability
         assert result["data"]["actual_capability_id"] == capability
         refs.append(result["data"]["result_ref"])
-    completed = subagent_call(runtime, saved, grant, "complete", request_id="finished", result={
-        "summary": "필요한 도구를 선택해 조회했다", "evidence_refs": refs, "limitations": []})
+    completed = subagent_call(runtime, saved, grant, "complete", request_id="finished",
+        result='필요한 도구를 선택해 조회했다', evidence_refs=refs)
     assert completed["status"] == "ok", completed
     assert runtime.store.get_task(saved["task_id"])["usage"]["tool_calls"] == 2
 
@@ -355,9 +377,8 @@ def test_subagent_uses_job_inputs_without_revision_keys_or_default_expiry(config
     observed = subagent_call(runtime, saved, grant["data"], "execute",
         call={"step_id": "read-0", "parameters": {"key": "orders"}})
     assert observed["status"] == "ok", observed
-    result = {"summary": "조회 완료", "evidence_refs": [observed["data"]["result_ref"]], "limitations": []}
-    finished = subagent_call(runtime, saved, grant["data"], "complete", result=result)
-    repeated = subagent_call(runtime, saved, grant["data"], "complete", result=result)
+    finished = subagent_call(runtime, saved, grant["data"], "complete", result='조회 완료')
+    repeated = subagent_call(runtime, saved, grant["data"], "complete", result='조회 완료')
     assert finished["status"] == repeated["status"] == "ok", (finished, repeated)
     assert finished["data"]["result_ref"] == repeated["data"]["result_ref"]
 
@@ -382,8 +403,8 @@ def test_subagent_can_return_memory_it_discovers_during_approved_work(tmp_path):
                 'completion_criteria': ['기억의 실제 출처 반환']}})['data']
         found = subagent_call(runtime, saved, grant, 'search', query='Cache get')
         assert reference in {item['memory_ref'] for item in found['data']['items']}
-        returned = subagent_call(runtime, saved, grant, 'complete', result={
-            'summary': '현재 profile의 관련 경험을 확인했다', 'evidence_refs': [reference], 'limitations': []})
+        returned = subagent_call(runtime, saved, grant, 'complete',
+            result='현재 profile의 관련 경험을 확인했다', evidence_refs=[reference])
         assert returned['status'] == 'ok', returned
         loaded = runtime.call('daeri_result_get', {'task_id': task['task_id'],
             'record_ref': returned['data']['result_ref']})
@@ -393,7 +414,6 @@ def test_subagent_can_return_memory_it_discovers_during_approved_work(tmp_path):
 
 def test_subagent_result_can_supply_the_provenance_for_a_host_file(configured):
     from pathlib import Path
-    from test_execution_flow import comparison_report
 
     runtime, profile = configured
     saved, _ = begin(runtime, profile)
@@ -401,14 +421,14 @@ def test_subagent_result_can_supply_the_provenance_for_a_host_file(configured):
     grant = create_subagent(runtime, saved, ['read-0', 'read-1'])['data']
     first = run_read(runtime, saved, grant, call_id='first')['data']
     second = run_read(runtime, saved, grant, step='read-1', call_id='second')['data']
-    completed = subagent_call(runtime, saved, grant, 'complete', result={
-        'summary': '차이는 3이다', 'evidence_refs': [first['result_ref'], second['result_ref']], 'limitations': []})['data']
-    report = comparison_report(first, second)
+    completed = subagent_call(runtime, saved, grant, 'complete', result='차이는 3이다',
+        evidence_refs=[first['result_ref'], second['result_ref']])['data']
     path = Path(runtime.store.artifact_workspace(saved['task_id'])) / 'answer.txt'
     path.write_text('차이는 3이다')
-    report['artifacts'] = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
+    artifacts = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
         'media_type': 'text/plain', 'source_refs': [completed['result_ref']]}]
-    result = runtime.call('daeri_result_submit', {'task_id': saved['task_id'], 'report': report})
+    result = runtime.call('daeri_result_submit', {'task_id': saved['task_id'], 'report': '차이는 3이다',
+        'evidence_refs': [completed['result_ref']], 'artifacts': artifacts})
     assert result['status'] == 'ok', result
     task = runtime.store.get_task(saved['task_id'])
     assert set(task['artifact_ids']['answer']['source_refs']) == {first['result_ref'], second['result_ref']}

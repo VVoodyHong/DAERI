@@ -208,6 +208,42 @@ def test_known_record_links_are_checked_without_interpreting_free_text():
         validate(value)
 
 
+def test_free_report_content_is_not_interpreted_as_archive_metadata():
+    value = manifest()
+    body = json.dumps({'content': {'profile_id': 'a-user-defined-value',
+                                  'evidence_refs': ['this-is-result-data']},
+                       'evidence_refs': ['record_one']}).encode()
+    digest = hashlib.sha256(body).hexdigest()
+    value['records'].append({'record_ref': 'free-report', 'task_id': 'task_one', 'kind': 'report',
+        'size': len(body), 'sha256': digest, 'expires_at': None, 'blocked': 0, 'cleaned': 0,
+        'blob': 'blobs/' + digest})
+    assert validate(value, [('blobs/' + DIGEST, CONTENT), ('blobs/' + digest, body)]) is None
+
+
+@pytest.mark.parametrize('depth', [32, 128])
+def test_free_report_content_keeps_its_nesting_when_wrapped_for_backup(depth):
+    value = manifest()
+    content = {'answer': '정상 저장한 결과'}
+    for _ in range(depth):
+        content = {'nested': [content]}
+    body = json.dumps({'content': content, 'evidence_refs': ['record_one']}).encode()
+    digest = hashlib.sha256(body).hexdigest()
+    value['records'].append({'record_ref': 'deep-report', 'task_id': 'task_one', 'kind': 'report',
+        'size': len(body), 'sha256': digest, 'expires_at': None, 'blocked': 0, 'cleaned': 0,
+        'blob': 'blobs/' + digest})
+    assert validate(value, [('blobs/' + DIGEST, CONTENT), ('blobs/' + digest, body)]) is None
+
+
+def test_json_tree_rejects_cycles_but_accepts_shared_values():
+    from daeri.config.profile_bundle_validation import _json_tree
+
+    shared = {'answer': [42]}
+    assert _json_tree([shared, shared]) is None
+    shared['answer'].append(shared)
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        _json_tree(shared)
+
+
 def test_rejects_artifact_whose_record_is_not_an_artifact():
     value = manifest()
     value['artifacts'] = [{'artifact_ref': 'record_one', 'task_id': 'task_one',

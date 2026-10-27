@@ -33,64 +33,46 @@ def host_result(tmp_path):
                                  'required': True, 'step_ids': ['read']}],
         'memory_refs': [], 'output': {'format': '사용자 요청 형식', 'destination': '현재 대화',
                                      'resource_rules': []}}}
-    report = {'summary': '요청한 표본을 확인했다', 'proposed_task_state': 'succeeded',
-              'findings': [{'kind': 'observation', 'text': '표본 값은 5다', 'evidence_refs': [reference]}],
-              'checks': [{'criterion_id': 'sample', 'status': 'met', 'method': '요청한 표본과 대조',
-                          'evidence_refs': [reference]}],
-              'limitations': ['전체 데이터의 전수 조사는 아니다'], 'uncertain_effects': [],
-              'artifacts': [], 'next_actions': []}
+    report = {'report': '요청한 표본 값은 5다. 전체 데이터의 전수 조사는 아니다.',
+              'state': 'succeeded', 'evidence_refs': [reference], 'artifacts': []}
     yield ResultService(store), task, plan, report, reference, record, load
     store.close()
 
 
 def test_host_can_complete_an_approved_sample_without_claiming_a_full_dataset(host_result):
     service, task, plan, report, _, _, load = host_result
-    saved = service.submit(task, plan, report, load_evidence=load)
+    saved = submit(service, task, plan, report, load_evidence=load)
     assert saved['task_state'] == 'succeeded'
     assert saved['validation']['completion'] == 'met'
-    assert service.store.read_record(task['task_id'], saved['report_ref'])['payload']['limitations']
+    assert service.store.read_record(task['task_id'], saved['report_ref'])['payload']['content']
 
 
-@pytest.mark.parametrize('required', [False, True])
-def test_only_an_optional_criterion_can_be_reported_not_applicable(host_result, required):
-    service, task, plan, report, reference, _, load = host_result
-    # A previously saved conditional step cannot waive a required completion criterion.
-    plan['draft']['steps'].append({'step_id': 'followup', 'instance_id': 'db', 'capability_id': 'query',
-        'contract_ref': 'read-v2', 'scope': {}, 'input_bindings': [{'binding_id': 'value',
-            'source_step_id': 'read', 'source_pointer': '/rows/0/value', 'target_pointer': None}],
-        'conditions': [{'binding_id': 'value', 'operator': 'eq', 'value': 0}]})
-    plan['draft']['completion_criteria'][0].update(required=required, step_ids=['followup'])
-    report['checks'][0].update(status='not_applicable', reason='후속 조사가 현재 요청에 필요하지 않음',
-                               evidence_refs=[reference])
-    if required:
-        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-            service.submit(task, plan, report, load_evidence=load)
-        assert not service.store._db.execute("SELECT * FROM records WHERE kind='report'").fetchall()
-    else:
-        saved = service.submit(task, plan, report, load_evidence=load)
-        assert saved['task_state'] == 'succeeded'
-        assert saved['validation']['checks'][0]['status'] == 'not_applicable'
+def submit(service, task, plan, report, *, load_evidence):
+    return service.submit(task, plan, **report, load_evidence=load_evidence)
 
 
-@pytest.mark.parametrize('memory_only_completion', [False, True])
-def test_report_can_cite_current_memory_but_external_completion_needs_real_reads(host_result, memory_only_completion):
+def test_host_decides_completion_without_a_report_checklist(host_result):
+    service, task, plan, report, _, _, load = host_result
+    plan['draft']['completion_criteria'][0]['step_ids'] = ['host-analysis']
+    saved = submit(service, task, plan, report, load_evidence=load)
+    assert saved['task_state'] == 'succeeded'
+    assert saved['validation']['completion_assessed_by'] == 'host'
+
+
+def test_host_report_can_cite_current_memory(host_result):
     service, task, plan, report, reference, _, load = host_result
     memory_ref = 'memory-found-during-work'
-    report['findings'].append({'kind': 'memory', 'text': '기억한 절차를 참고했다', 'evidence_refs': [memory_ref]})
+    report['evidence_refs'].append(memory_ref)
 
     def sources(ref, mode='model'):
         if ref == memory_ref:
             return {'record_kind': 'memory', 'payload': {'statement': '검증된 조회 절차'}, 'expires_at': None}
         return load(ref, mode)
 
-    if memory_only_completion:
-        report['checks'][0]['evidence_refs'] = [memory_ref]
-        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-            service.submit(task, plan, report, load_evidence=sources)
-    else:
-        saved = service.submit(task, plan, report, load_evidence=sources)
-        assert saved['task_state'] == 'succeeded'
-        assert saved['validation']['checks'][0]['evidence_refs'] == [reference]
+    saved = submit(service, task, plan, report, load_evidence=sources)
+    assert saved['task_state'] == 'succeeded'
+    stored = service.store.read_record(task['task_id'], saved['report_ref'])['payload']
+    assert set(stored['evidence_refs']) == {reference, memory_ref}
 
 
 @pytest.mark.parametrize('extension,media_type', [('csv', 'text/csv'), ('xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'), ('pdf', 'application/pdf')])
@@ -102,7 +84,7 @@ def test_host_file_is_preserved_without_a_format_generator(host_result, extensio
     path.write_bytes(content)
     report['artifacts'] = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
                             'media_type': media_type, 'source_refs': [ref]}]
-    saved = service.submit(task, plan, report, load_evidence=load)
+    saved = submit(service, task, plan, report, load_evidence=load)
     file = service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])
     assert Path(file['local_path']).read_bytes() == content
     assert file['media_type'] == media_type
@@ -117,7 +99,7 @@ def test_host_file_requires_export_permission_for_its_provided_source(host_resul
     report['artifacts'] = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
                             'media_type': 'text/plain', 'source_refs': [ref]}]
     with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-        service.submit(task, plan, report, load_evidence=load)
+        submit(service, task, plan, report, load_evidence=load)
     assert not service.store._db.execute('SELECT * FROM artifact_files').fetchall()
 
 
@@ -126,7 +108,7 @@ def test_host_file_checks_only_its_declared_sources(host_result):
     file_report(host_result)
     unrelated = service.store.write_record(task['task_id'], 'call_result', {'result': {'private': 'model-only'}})
     task['calls'] = [{'result_ref': unrelated}]
-    report['findings'].append({'kind': 'observation', 'text': '별도 참고 자료 확인', 'evidence_refs': [unrelated]})
+    report['evidence_refs'].append(unrelated)
 
     def sources(ref, mode='model'):
         if ref == unrelated:
@@ -134,7 +116,7 @@ def test_host_file_checks_only_its_declared_sources(host_result):
                     'provided_paths': ['/private'], 'allowed_paths': [] if mode == 'export' else ['/private']}
         return load(ref, mode)
 
-    saved = service.submit(task, plan, report, load_evidence=sources)
+    saved = submit(service, task, plan, report, load_evidence=sources)
     assert task['artifact_ids']['answer']['source_refs'] == [reference]
     assert Path(service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])['local_path']).read_bytes() == b'5'
 
@@ -145,7 +127,7 @@ def test_each_file_uses_only_its_own_contributors_for_expiry(host_result, short_
     deadline = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
     short_ref = service.store.write_record(task['task_id'], 'call_result', {'result': {'other': 1}}, deadline)
     if short_source == 'finding':
-        report['findings'].append({'kind': 'observation', 'text': '별도 참고', 'evidence_refs': [short_ref]})
+        report['evidence_refs'].append(short_ref)
     else:
         path = Path(service.store.artifact_workspace(task['task_id'])) / 'short.txt'
         path.write_text('1')
@@ -162,7 +144,7 @@ def test_each_file_uses_only_its_own_contributors_for_expiry(host_result, short_
                     'provided_paths': ['/other'], 'allowed_paths': ['/other']}
         return load(ref, mode)
 
-    saved = service.submit(task, plan, report, load_evidence=sources)
+    saved = submit(service, task, plan, report, load_evidence=sources)
     assert service.store.read_record(task['task_id'], saved['report_ref'])['expires_at'] == deadline
     answer = service.store.artifact_file(task['task_id'], saved['artifact_refs'][-1])
     assert answer['expires_at'] is None
@@ -180,15 +162,15 @@ def test_host_file_inherits_the_shorter_expiry_of_an_intermediate_report(host_re
             return {**service.store.read_record(task['task_id'], reference), 'record_kind': 'report'}
         return load(reference, mode)
 
-    saved = service.submit(task, plan, report, load_evidence=sources)
+    saved = submit(service, task, plan, report, load_evidence=sources)
     file = service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])
     assert file['expires_at'] == deadline
     assert service.store.read_record(task['task_id'], saved['report_ref'])['expires_at'] == deadline
     assert task['artifact_ids']['answer']['source_refs'] == [ref]
 
 
-@pytest.mark.parametrize('source_count,accepted', [(254, True), (255, False)])
-def test_host_file_export_counts_each_record_once_in_its_source_limit(host_result, source_count, accepted):
+@pytest.mark.parametrize('source_count', [254, 255, 300])
+def test_host_file_export_preserves_wide_source_graphs(host_result, source_count):
     service, task, plan, report, ref, _, load = host_result
     with service.store.transaction():
         sources = [service.store.write_record(task['task_id'], 'local_check', {'value': index})
@@ -203,11 +185,9 @@ def test_host_file_export_counts_each_record_once_in_its_source_limit(host_resul
         record = service.store.read_record(task['task_id'], reference)
         return {**record, 'provided_paths': ['/value'], 'allowed_paths': ['/value']}
 
-    if accepted:
-        assert service.submit(task, plan, report, load_evidence=graph)['artifact_refs']
-    else:
-        with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-            service.submit(task, plan, report, load_evidence=graph)
+    saved = submit(service, task, plan, report, load_evidence=graph)
+    assert saved['artifact_refs']
+    assert set(task['artifact_ids']['answer']['source_refs']) == {*sources, ref}
 
 
 @pytest.mark.parametrize('intermediate_count,accepted', [(30, True), (31, False)])
@@ -228,10 +208,10 @@ def test_host_file_export_checks_shared_sources_at_the_deeper_path(host_result, 
         return load(reference, mode) if reference == ref else records[reference]
 
     if accepted:
-        assert service.submit(task, plan, report, load_evidence=graph)['artifact_refs']
+        assert submit(service, task, plan, report, load_evidence=graph)['artifact_refs']
     else:
         with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-            service.submit(task, plan, report, load_evidence=graph)
+            submit(service, task, plan, report, load_evidence=graph)
 
 
 def test_importing_a_file_outside_the_task_workspace_is_rejected(host_result, tmp_path):
@@ -241,7 +221,7 @@ def test_importing_a_file_outside_the_task_workspace_is_rejected(host_result, tm
     report['artifacts'] = [{'artifact_id': 'answer', 'label': '결과', 'local_path': str(path),
                             'media_type': 'text/plain', 'source_refs': [ref]}]
     with pytest.raises(StoreError):
-        service.submit(task, plan, report, load_evidence=load)
+        submit(service, task, plan, report, load_evidence=load)
     assert not service.store._db.execute('SELECT * FROM artifact_files').fetchall()
 
 
@@ -268,7 +248,7 @@ def file_report(host_result, name='answer.txt', content=b'5'):
 def test_large_host_file_is_streamed_without_the_old_generator_size_limit(host_result):
     service, task, plan, report, _, _, load = host_result
     file_report(host_result, 'answer.bin', b'x' * (11 * 1024 * 1024))
-    saved = service.submit(task, plan, report, load_evidence=load)
+    saved = submit(service, task, plan, report, load_evidence=load)
     file = service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])
     assert file['size_bytes'] == 11 * 1024 * 1024
 
@@ -283,7 +263,7 @@ def test_failed_report_preserves_workspace_input_and_publishes_no_file(host_resu
         return original(task_id, kind, *args, **kwargs)
     monkeypatch.setattr(service.store, 'write_record', fail_report)
     with pytest.raises(StoreError, match='STORE_UNAVAILABLE'):
-        service.submit(task, plan, report, load_evidence=load)
+        submit(service, task, plan, report, load_evidence=load)
     assert source.read_bytes() == b'5'
     assert not service.store._db.execute('SELECT * FROM artifact_files').fetchall()
     service.store.cleanup()
@@ -293,7 +273,7 @@ def test_failed_report_preserves_workspace_input_and_publishes_no_file(host_resu
 def test_committed_file_cleans_only_its_unchanged_workspace_copy(host_result):
     service, task, plan, report, _, _, load = host_result
     source = file_report(host_result)
-    saved = service.submit(task, plan, report, load_evidence=load)
+    saved = submit(service, task, plan, report, load_evidence=load)
     service.store.cleanup()
     assert not source.exists()
     file = service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])
@@ -303,7 +283,7 @@ def test_committed_file_cleans_only_its_unchanged_workspace_copy(host_result):
 def test_cleanup_preserves_workspace_changes_after_a_file_was_registered(host_result):
     service, task, plan, report, _, _, load = host_result
     source = file_report(host_result)
-    saved = service.submit(task, plan, report, load_evidence=load)
+    saved = submit(service, task, plan, report, load_evidence=load)
     source.write_bytes(b'new unfinished work')
     service.store.cleanup()
     assert source.read_bytes() == b'new unfinished work'
@@ -314,10 +294,10 @@ def test_cleanup_preserves_workspace_changes_after_a_file_was_registered(host_re
 def test_same_file_id_cannot_replace_registered_bytes(host_result):
     service, task, plan, report, _, _, load = host_result
     source = file_report(host_result)
-    saved = service.submit(task, plan, report, load_evidence=load)
+    saved = submit(service, task, plan, report, load_evidence=load)
     source.write_bytes(b'changed')
     with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-        service.submit(task, plan, report, load_evidence=load)
+        submit(service, task, plan, report, load_evidence=load)
     file = service.store.artifact_file(task['task_id'], saved['artifact_refs'][0])
     assert Path(file['local_path']).read_bytes() == b'5'
 
@@ -330,25 +310,8 @@ def test_source_symlink_cannot_import_an_unrelated_file(host_result, tmp_path):
     secret.write_text('unrelated')
     source.symlink_to(secret)
     with pytest.raises(StoreError):
-        service.submit(task, plan, report, load_evidence=load)
+        submit(service, task, plan, report, load_evidence=load)
     assert secret.read_text() == 'unrelated'
-
-
-@pytest.mark.parametrize('change', ['wrong_step', 'missing_ref', 'missing_check', 'duplicate_check', 'uncertain_effect'])
-def test_host_judgment_still_requires_the_real_approved_evidence(host_result, change):
-    service, task, plan, report, _, record, load = host_result
-    if change == 'wrong_step':
-        record['step_id'] = 'unapproved'
-    elif change == 'missing_ref':
-        report['checks'][0]['evidence_refs'] = []
-    elif change == 'missing_check':
-        report['checks'] = []
-    elif change == 'duplicate_check':
-        report['checks'] *= 2
-    else:
-        report['uncertain_effects'] = ['unresolved-call']
-    with pytest.raises(StoreError, match='RESULT_VALIDATION_FAILED'):
-        service.submit(task, plan, report, load_evidence=load)
 
 
 def test_profile_deletion_removes_its_host_file_workspace(host_result):

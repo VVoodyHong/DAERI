@@ -102,17 +102,14 @@ def read_pages(jira, saved, step, approved, offsets):
 
 
 def report(results):
-    refs = [result['result_ref'] for result in results]
-    return {'summary': 'Collected and checked the requested OPS issues', 'proposed_task_state': 'succeeded',
-        'findings': [{'kind': 'observation', 'text': 'Collected current issues', 'evidence_refs': refs}],
-        'checks': [{'criterion_id': 'all', 'status': 'met', 'method': 'Host checked collected issue pages', 'evidence_refs': refs}],
-        'limitations': [], 'uncertain_effects': [], 'next_actions': [], 'artifacts': []}
+    return {'issues': [issue for result in results for issue in result['inline_result']['data']['issues']]}
 
 
 def submit(saved, results):
     return {'request_id': 'report', 'task_id': saved['task_id'],
         'expected_task_revision': results[-1]['task_revision'], 'plan_id': saved['plan_id'],
-        'plan_version': saved['plan_version'], 'report': report(results)}
+        'plan_version': saved['plan_version'], 'report': report(results),
+        'evidence_refs': [result['result_ref'] for result in results]}
 
 
 def test_three_real_jira_pages_make_complete_report_csv_and_persisted_replay(jira):
@@ -127,7 +124,7 @@ def test_three_real_jira_pages_make_complete_report_csv_and_persisted_replay(jir
         writer.writerow(['Issue'])
         for page in pages:
             writer.writerows([[item['key']] for item in page['inline_result']['data']['issues']])
-    args['report']['artifacts'] = [{'artifact_id': 'issues', 'label': '이슈 목록', 'local_path': str(output),
+    args['artifacts'] = [{'artifact_id': 'issues', 'label': '이슈 목록', 'local_path': str(output),
         'media_type': 'text/csv', 'source_refs': [page['result_ref'] for page in pages]}]
     stored = runtime.call('daeri_result_submit', args)
     assert stored['status'] == 'ok', stored
@@ -141,6 +138,8 @@ def test_three_real_jira_pages_make_complete_report_csv_and_persisted_replay(jir
         retrieved = reloaded.call('daeri_result_get', {'task_id': saved['task_id'],
             'record_ref': stored['data']['report_ref']})
         assert retrieved['status'] == 'ok', retrieved
+        assert retrieved['data']['payload']['content'] == args['report']
+        assert set(retrieved['data']['payload']['evidence_refs']) == set(args['evidence_refs'])
         artifact = reloaded.call('daeri_result_get', {'task_id': saved['task_id'],
             'record_ref': stored['data']['artifact_refs'][0]})
         assert artifact['status'] == 'ok', artifact
@@ -155,9 +154,8 @@ def test_host_can_report_missing_pages_as_partial(jira):
     saved, step = begin(jira)
     pages, _ = read_pages(jira, saved, step, approve(runtime, saved), [0, 100])
     args = submit(saved, pages)
-    args['report']['proposed_task_state'] = 'partial'
-    args['report']['checks'][0].update(status='unknown', reason='중간 페이지를 확인하지 못했다.')
-    args['report']['limitations'] = ['중간 페이지 미조회']
+    args['state'] = 'partial'
+    args['report']['notice'] = '중간 페이지를 확인하지 못했습니다.'
     stored = runtime.call('daeri_result_submit', args)
     assert stored['status'] == 'ok', stored
     assert stored['data']['task_state'] == 'partial'
@@ -187,8 +185,8 @@ def test_report_without_a_memory_candidate_skips_automatic_memory(jira):
     saved, step = begin(jira)
     pages, _ = read_pages(jira, saved, step, approve(runtime, saved), [0, 100])
     args = submit(saved, pages)
-    args['report']['proposed_task_state'] = 'partial'
-    args['report']['checks'][0].update(status='unknown', reason='중간 페이지를 확인하지 못했다.')
+    args['state'] = 'partial'
+    args['report']['notice'] = '중간 페이지를 확인하지 못했습니다.'
     stored = runtime.call('daeri_result_submit', args)
     assert stored['status'] == 'ok', stored
     assert stored['data']['memory']['state'] == 'skipped'

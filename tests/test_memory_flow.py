@@ -9,7 +9,7 @@ import pytest
 from daeri.application.runtime import Runtime
 from daeri.infrastructure.resources import ResourceRegistry
 from daeri.infrastructure.storage import Store
-from test_execution_flow import ROOT, approve, begin, comparison_report, execution, resource, table_plan
+from test_execution_flow import ROOT, approve, begin, execution, resource, table_plan
 
 
 @pytest.fixture
@@ -37,13 +37,13 @@ def remembered(tmp_path, request):
         assert first["status"] == "ok", first
         second = runtime.call("daeri_capability_execute", execution(saved, {**approved, "task_revision": first["data"]["task_revision"]}, draft["steps"][1], call_id="call-2"))
         assert second["status"] == "ok", second
-        body = comparison_report(first['data'], second['data'])
         sources = [first['data']['result_ref'], second['data']['result_ref']]
-        body['artifacts'] = [host_file(runtime, saved['task_id'], 'comparison', sources,
+        artifacts = [host_file(runtime, saved['task_id'], 'comparison', sources,
             text='ID,A,B,Difference\none,10,7,3\n', media_type='text/csv', extension='csv')]
         report = runtime.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
             "expected_task_revision": second["data"]["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
-            "report": body, 'memory_candidates': [{'draft': procedure(), 'source_refs': sources}]})
+            "report": '현재 값의 차이는 3입니다.', 'evidence_refs': sources, 'artifacts': artifacts,
+            'memory_candidates': [{'draft': procedure(), 'source_refs': sources}]})
         assert report["status"] == "ok", report
         yield runtime, profile, saved, draft, approved, first["data"], second["data"], report["data"]
     finally:
@@ -151,12 +151,11 @@ def test_exportable_past_memory_can_be_included_in_current_report_file(remembere
     approval = approve(runtime, saved)
     a = runtime.call("daeri_capability_execute", execution(saved, approval, selected["steps"][0], call_id="export-a"))["data"]
     b = runtime.call("daeri_capability_execute", execution(saved, {**approval, "task_revision": a["task_revision"]}, selected["steps"][1], call_id="export-b"))["data"]
-    body = comparison_report(a, b)
-    body["findings"].append({"kind": "memory", "text": "과거 확인한 절차를 참고했다", "evidence_refs": [reference]})
-    body['artifacts'] = [host_file(runtime, task['task_id'], 'report-text',
+    artifacts = [host_file(runtime, task['task_id'], 'report-text',
         [a['result_ref'], b['result_ref'], reference])]
     result = runtime.call("daeri_result_submit", {"request_id": "memory-report", "task_id": task["task_id"],
-        "expected_task_revision": b["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": body})
+        "expected_task_revision": b["task_revision"], "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
+        "report": '과거 확인한 절차를 참고했다.', 'evidence_refs': [a['result_ref'], b['result_ref'], reference], 'artifacts': artifacts})
     assert result["status"] == "ok", result
     artifact = runtime.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": result["data"]["artifact_refs"][0]})
     assert artifact["status"] == "ok", artifact
@@ -200,15 +199,12 @@ def test_current_plan_blocks_one_contributing_memory_source_in_report_file(remem
         assert fetched["error"]["code"] == "ACCESS_DENIED"
         assert fetched["data"] is None
         return
-    body = {"summary": "과거 확인한 Cache 비교 절차", "proposed_task_state": "succeeded",
-        "findings": [{"kind": "memory", "text": "두 리소스의 동일 식별자를 대조한다", "evidence_refs": [reference]}],
-        "tables": [], "checks": [{"criterion_id": "explain", "status": "met", "method": "과거 절차 근거 확인", "evidence_refs": [reference]}],
-        "limitations": [], "uncertain_effects": [], "next_actions": [],
-        "artifacts": [host_file(runtime, task['task_id'], 'memory-report', [reference])]}
+    artifacts = [host_file(runtime, task['task_id'], 'memory-report', [reference])]
     before = runtime.store.list_records(task["task_id"])
     submitted = runtime.call("daeri_result_submit", {"request_id": "restricted-report", "task_id": task["task_id"],
         "expected_task_revision": approval["task_revision"], "plan_id": saved["data"]["plan_id"],
-        "plan_version": saved["data"]["plan_version"], "report": body})
+        "plan_version": saved["data"]["plan_version"], "report": '두 리소스의 동일 식별자를 대조한다.',
+        'evidence_refs': [reference], 'artifacts': artifacts})
     assert submitted["status"] == "error", submitted
     assert submitted["error"]["code"] == "ACCESS_DENIED"
     assert runtime.store.list_records(task["task_id"]) == before
@@ -255,24 +251,21 @@ def test_actual_runtime_blocks_model_only_values_in_report_files(remembered, for
     permission = approve(runtime, planned["data"])
     a = runtime.call("daeri_capability_execute", execution(planned["data"], permission, draft["steps"][0], call_id="private-a"))["data"]
     b = runtime.call("daeri_capability_execute", execution(planned["data"], {**permission, "task_revision": a["task_revision"]}, draft["steps"][1], call_id="private-b"))["data"]
-    private_report = {"summary": "private 10.00", "proposed_task_state": "succeeded",
-        "findings": [{"kind": "observation", "text": "private 10.00", "evidence_refs": [a["result_ref"]]}],
-        "tables": [], "checks": [{"criterion_id": "read", "status": "met", "method": "실제 호출 결과 확인", "evidence_refs": [a["result_ref"], b["result_ref"]]}],
-        "limitations": [], "uncertain_effects": [], "next_actions": [],
-        "artifacts": [host_file(runtime, task['task_id'], 'private-report',
+    artifacts = [host_file(runtime, task['task_id'], 'private-report',
             [a['result_ref'], b['result_ref']], text='private 10.00',
             media_type='text/plain' if format_id == 'text' else 'application/json',
-            extension='txt' if format_id == 'text' else 'json')]}
+            extension='txt' if format_id == 'text' else 'json')]
     before = runtime.store.list_records(task["task_id"])
     submitted = runtime.call("daeri_result_submit", {"request_id": "private-report", "task_id": task["task_id"],
-        "expected_task_revision": b["task_revision"], "plan_id": planned["data"]["plan_id"], "plan_version": planned["data"]["plan_version"], "report": private_report})
+        "expected_task_revision": b["task_revision"], "plan_id": planned["data"]["plan_id"], "plan_version": planned["data"]["plan_version"],
+        'report': 'private 10.00', 'evidence_refs': [a['result_ref'], b['result_ref']], 'artifacts': artifacts})
     assert submitted["status"] == "error", submitted
     assert submitted["error"]["code"] == "RESULT_VALIDATION_FAILED"
     assert runtime.store.list_records(task["task_id"]) == before
-    private_report["artifacts"] = []
     preserved = runtime.call("daeri_result_submit", {"request_id": "model-only-report", "task_id": task["task_id"],
         "expected_task_revision": b["task_revision"], "plan_id": planned["data"]["plan_id"],
-        "plan_version": planned["data"]["plan_version"], "report": private_report})
+        "plan_version": planned["data"]["plan_version"], 'report': 'private 10.00',
+        'evidence_refs': [a['result_ref'], b['result_ref']]})
     assert preserved["status"] == "ok", preserved
     learned = runtime.call("daeri_memory_update", {"request_id": "model-only-memory", "task_id": task["task_id"],
         "expected_task_revision": preserved["data"]["task_revision"], "operation": "store", "source_refs": [preserved["data"]["report_ref"]],

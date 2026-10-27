@@ -19,11 +19,8 @@ def test_invalidated_memory_cannot_be_read_through_an_old_report_or_replay(remem
     saved = planned["data"]
     approved = approve(runtime, saved)
     args = {"request_id": "recall-report", "task_id": task["task_id"], "expected_task_revision": approved["task_revision"],
-        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": {
-            "summary": "Previously confirmed Cache comparison procedure", "proposed_task_state": "succeeded",
-            "findings": [{"kind": "memory", "text": "Use matching identifiers and verify the difference", "evidence_refs": [memory_ref]}],
-            "tables": [], "checks": [{"criterion_id": "recall", "status": "met", "method": "Read permitted prior knowledge", "evidence_refs": [memory_ref]}],
-            "limitations": [], "uncertain_effects": [], "artifacts": [], "next_actions": []}}
+        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
+        'report': 'Use matching identifiers and verify the difference', 'evidence_refs': [memory_ref]}
     report = runtime.call("daeri_result_submit", args)
     assert report["status"] == "ok", report
     _, canonical = runtime.memory._row(profile["profile_id"], memory_ref)

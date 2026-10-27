@@ -38,8 +38,8 @@ def create(runtime, profile, key="create-1", text="운영 절차를 설명해줘
     return result["data"]
 
 
-@pytest.mark.parametrize("source_count,accepted", [(255, True), (256, False)])
-def test_derived_result_reads_count_the_root_in_the_source_graph_limit(configured_runtime, source_count, accepted):
+@pytest.mark.parametrize("source_count", [255, 256, 300])
+def test_derived_result_reads_preserve_wide_source_graphs(configured_runtime, source_count):
     runtime, profile = configured_runtime
     task = create(runtime, profile)
     with runtime.store.transaction():
@@ -47,9 +47,8 @@ def test_derived_result_reads_count_the_root_in_the_source_graph_limit(configure
                    for _ in range(source_count)]
         ref = runtime.store.write_record(task["task_id"], "report", {"evidence_refs": sources})
     result = runtime.call("daeri_result_get", {"task_id": task["task_id"], "record_ref": ref})
-    assert result["status"] == ("ok" if accepted else "error"), result
-    if not accepted:
-        assert result["error"]["code"] == "RESULT_VALIDATION_FAILED"
+    assert result["status"] == "ok", result
+    assert set(result['data']['evidence_refs']) == set(sources)
 
 
 @pytest.mark.parametrize("intermediate_count,accepted", [(29, True), (30, False)])
@@ -273,10 +272,7 @@ def test_planless_cancelled_report_obeys_task_retention(configured_runtime, expi
         "request_id": "cancelled-report", "task_id": task["task_id"],
         "expected_task_revision": resumed["data"]["task_revision"],
         "plan_id": None, "plan_version": None,
-        "report": {"summary": "계획 작성 전 사용자 요청으로 취소했습니다.",
-            "proposed_task_state": "cancelled", "findings": [], "tables": [],
-            "checks": [], "limitations": [], "uncertain_effects": [],
-            "artifacts": [], "next_actions": []},
+        "report": '계획 작성 전 사용자 요청으로 취소했습니다.', 'state': 'cancelled',
     })
     if expired:
         assert result["status"] == "error", result
@@ -286,7 +282,7 @@ def test_planless_cancelled_report_obeys_task_retention(configured_runtime, expi
     else:
         assert result["status"] == "ok", result
         assert result["data"]["task_state"] == "cancelled"
-        assert result["data"]["validation"]["completion"] == "unknown"
+        assert result["data"]["validation"]["completion_assessed_by"] == "host"
 
 
 def test_credential_patterns_are_redacted_before_persistence(configured_runtime):
@@ -478,12 +474,10 @@ def _finished_read_report(runtime, profile):
         observed = runtime.call("daeri_capability_execute", execution(saved, approved, step, call_id=f"read-{index}"))
         assert observed["status"] == "ok", observed
         references.append(observed["data"]["result_ref"])
-    report = {"summary": "승인된 조회 결과를 확인했다", "proposed_task_state": "succeeded", "findings": [], "tables": [],
-        "checks": [{"criterion_id": "read", "status": "met", "method": "호스트가 요청과 관찰을 대조했다", "evidence_refs": references}],
-        "limitations": [], "uncertain_effects": [], "artifacts": [], "next_actions": []}
     stored = runtime.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
         "expected_task_revision": runtime.store.get_task(saved["task_id"])["task_revision"],
-        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": report})
+        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
+        "report": '승인된 조회 결과를 확인했다', 'evidence_refs': references})
     assert stored["status"] == "ok", stored
     return saved["task_id"], stored["data"]["report_ref"], references[0]
 
@@ -597,12 +591,10 @@ def test_approved_resource_bundle_allows_host_tool_choice_and_preserves_both_ide
         assert body["capability_id"] == "*" and body["actual_capability_id"] == capability
         assert runtime.call("daeri_capability_execute", args)["data"]["result_ref"] == result["data"]["result_ref"]
         references.append(result["data"]["result_ref"])
-    report = {"summary": "호스트가 필요한 두 조회 도구를 골라 확인했다", "proposed_task_state": "succeeded", "findings": [],
-        "checks": [{"criterion_id": "read", "status": "met", "method": "현재 관찰 대조", "evidence_refs": references}],
-        "limitations": [], "uncertain_effects": [], "artifacts": [], "next_actions": []}
     final = runtime.call("daeri_result_submit", {"request_id": "report", "task_id": saved["task_id"],
         "expected_task_revision": runtime.store.get_task(saved["task_id"])["task_revision"],
-        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"], "report": report})
+        "plan_id": saved["plan_id"], "plan_version": saved["plan_version"],
+        "report": '호스트가 필요한 두 조회 도구를 골라 확인했다', 'evidence_refs': references})
     assert final["status"] == "ok", final
     _save_profile(runtime, profile)
     reread = runtime.call("daeri_result_get", {"task_id": saved["task_id"], "record_ref": final["data"]["report_ref"]})

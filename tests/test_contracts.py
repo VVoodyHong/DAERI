@@ -95,9 +95,49 @@ def test_minimal_plan_has_no_field_permissions_or_required_budget():
     assert value.completion_criteria[0].required is True
 
 
-@pytest.mark.parametrize('field,value', [('completion_criteria', []), ('memory_refs', ['m', 'm'])])
+@pytest.mark.parametrize('field,value', [('memory_refs', ['m', 'm'])])
 def test_plan_completion_and_evidence_ids_are_validated(field, value):
     check('PlanDraft', {**plan(), field: value}, False)
+
+
+def test_plan_can_leave_presentation_and_completion_to_the_host():
+    value = check('PlanDraft', {'purpose': '사용자 질문에 답한다', 'steps': []})
+    assert value.output.format == 'user_request'
+    assert value.completion_criteria == []
+    check('PlanDraft', {**plan(), 'completion_criteria': []})
+
+
+@pytest.mark.parametrize('content', ['# 결과\n자유 형식 보고', {'outcome': {'table': [1, 2]}}, [1, '완료'], 7, True, None])
+def test_report_content_is_free_json_and_bookkeeping_is_separate(content):
+    value = check('ResultSubmit', {'task_id': 't', 'report': content})
+    assert value.report == content
+    assert value.state == 'succeeded'
+    assert value.evidence_refs == value.artifacts == []
+
+
+def test_file_metadata_is_visible_in_the_report_tool_schema():
+    artifact = {'artifact_id': 'answer', 'label': '답변', 'local_path': '/workspace/answer.xlsx',
+                'media_type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+    value = check('ResultSubmit', {'task_id': 't', 'report': '완료', 'artifacts': [artifact]})
+    assert value.artifacts[0].source_refs == []
+    check('ResultSubmit', {'task_id': 't', 'report': '완료', 'artifacts': [
+        {'kind': 'existing', 'artifact_id': 'prior', 'label': '기존 결과', 'artifact_ref': 'record'}]})
+    for field in ('local_path', 'media_type'):
+        incomplete = artifact.copy()
+        del incomplete[field]
+        check('ResultSubmit', {'task_id': 't', 'report': '완료', 'artifacts': [incomplete]}, False)
+
+
+def test_bad_memory_candidate_is_deferred_to_memory_processing():
+    check('ResultSubmit', {'task_id': 't', 'report': '완료', 'memory_candidates': ['unfinished candidate']})
+
+
+@pytest.mark.parametrize('content', ['자유 서술', {'table': [[1, 2]], 'meaning': '팀별 현황'}, None])
+def test_subagent_completion_accepts_free_content_with_separate_sources(content):
+    value = check('SubagentRequest', {'operation': 'complete', 'task_id': 't',
+        'delegation_token': 'token', 'result': content, 'evidence_refs': ['ref']})
+    assert value.result == content
+    assert value.evidence_refs == ['ref']
 
 
 @pytest.mark.parametrize('value', [True, -1, '10'])

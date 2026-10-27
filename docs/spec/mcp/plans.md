@@ -17,8 +17,8 @@ runtime은 등록 연결과 기본 정책을 해소해 저장하며 실제 사�
 |---|---|---|
 | `purpose` | string | 필수; 업무 목적 |
 | `steps` | PlanStep[] | 필수; 수행할 연결·방법 |
-| `output` | PlanOutput | 필수; 표현·전달 위치 |
-| `completion_criteria` | CompletionCriterion[] | 필수; 하나 이상 |
+| `output` | PlanOutput | 선택; 사용자 요청에 맞춰 호스트가 결과 구성 |
+| `completion_criteria` | CompletionCriterion[] | 선택; 기본 [] |
 | `budget` | PlanBudget | 선택; 전체 호출·시간 상한 없음 |
 | `memory_search_refs` | RecordRef[] | 선택; [] |
 | `memory_refs` | RecordRef[] | 선택; [] |
@@ -57,7 +57,7 @@ Source는 [호스트 조사 후 등록한 관찰](resources.md#로컬-source-관
 | 타입 | 공개 필드·기본값 |
 |---|---|
 | `PlanBudget` | 선택 `max_tool_calls:integer\|null`, `max_runtime_ms:integer\|null`; 각각 기본 null |
-| `PlanOutput` | 필수 `format:string`, 선택 `destination:string`; 기본 `conversation` |
+| `PlanOutput` | 선택 `format:string`·`destination:string`; 각각 기본 `user_request`·`conversation` |
 | `CompletionCriterion` | 필수 `criterion_id:ID`, `description:string`, `step_ids:ID[]`; 선택 `required:boolean`, 기본 true |
 
 0 이상의 명시적 호출·시간 상한은 같은 업무의 누적 소비·진행 중 예약에 적용한다.
@@ -67,8 +67,9 @@ Source는 [호스트 조사 후 등록한 관찰](resources.md#로컬-source-관
 모델 제공·파일·보관·기억 범위는 등록 profile에서 자동으로 해소한다.
 기존에 명시한 필드·마스킹·보존·기억 정책은 해당 범위를 유지하고 선별 기억 저장·향후 회상을 계획에 포함한다.
 
-완료 조건 ID는 고유하고 참조 단계는 현재 계획에 속한다.
-호스트는 [보고 검사](tasks.md#reportcheck)에서 각 조건의 실제 근거·충분성·제한을 판단한다.
+명시한 완료 조건은 호스트가 목표 달성 여부를 판단할 때 참고한다.
+조건 ID는 고유하고 참조 단계는 현재 계획에 속한다.
+호스트는 실제 자료·수행 결과·사용자 목표를 대조해 [완료 상태와 자유형 결과](tasks.md#daeri_result_submit)를 제출한다.
 
 ### 저장 계획과 예산 맥락
 
@@ -79,7 +80,7 @@ Source는 [호스트 조사 후 등록한 관찰](resources.md#로컬-source-관
 ## `daeri_plan_submit`
 
 필수 입력은 `task_id:ID`, `draft:PlanDraft`다.
-현재 소유자가 최초·수정 계획을 제출하고 runtime은 구조·연결·범위·기억·선행 근거·완료 조건을 검사한다.
+현재 소유자가 최초·수정 계획을 제출하고 runtime은 구조·연결·범위·기억과 명시한 선행 관계·조건 참조를 검사한다.
 같은 내용은 현재 계획을 유지하며 수정 내용은 새 불변 계획으로 저장한다.
 
 저장과 함께 업무를 `awaiting_approval`로 바꾸고 대화 승인 대기를 만든다.
