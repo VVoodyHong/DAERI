@@ -163,6 +163,22 @@ def test_correction_replaces_current_version_and_old_ref_is_blocked(memory):
         service.invalidate(profile["profile_id"], first["memory_ref"], reason="반증", source_records=[source(service, profile, key="three")])
 
 
+def test_correction_to_another_memorys_content_replaces_the_requested_memory(memory):
+    service, profile = memory
+    evidence = source(service, profile)
+    first = save(service, profile, sources=[evidence])
+    corrected = candidate('E_CONN_001 오류는 대상 DB 설정도 확인한다')
+    other = save(service, profile, draft=corrected, sources=[evidence])
+    revised = save(service, profile, draft=corrected, sources=[evidence], memory_ref=first['memory_ref'])
+    assert revised['memory_ref'] not in {first['memory_ref'], other['memory_ref']}
+    with pytest.raises(StoreError, match='MEMORY_CONFLICT'):
+        service.get(profile['profile_id'], first['memory_ref'])
+    assert {item['memory_ref'] for item in service.search(profile['profile_id'], 'E_CONN_001')['items']} == {
+        other['memory_ref'], revised['memory_ref']}
+    repeated = save(service, profile, draft=corrected, sources=[evidence], memory_ref=revised['memory_ref'])
+    assert repeated['memory_ref'] == revised['memory_ref']
+
+
 def test_policy_revocation_and_actual_target_change_block_recall(memory):
     service, profile = memory
     item = save(service, profile)

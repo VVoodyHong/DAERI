@@ -21,7 +21,7 @@
     "version": "0.5.1",
     "executable": "redis-mcp-server",
     "args": [],
-    "env": {"REDIS_HOST": "", "REDIS_PORT": "6379", "REDIS_DB": "0", "REDIS_SSL": "true"},
+    "env": {"REDIS_HOST": "", "REDIS_PORT": "6379", "REDIS_DB": "0", "REDIS_SSL": "true", "REDIS_CLUSTER_MODE": "false"},
     "auth_env": ["REDIS_PWD"],
     "capabilities": [{"capability_id": "read-key", "tool_name": "get", "constraints": {}}],
     "source": "https://github.com/redis/mcp-redis",

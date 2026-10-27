@@ -262,6 +262,20 @@ def test_new_cache_setup_does_not_confirm_tls_without_an_answer(tmp_path):
     assert 'tls' in report['missing_fields']
 
 
+@pytest.mark.parametrize('database_env,target_db', [('1', 1), ('1', 0), ('0', 1)])
+def test_raw_cache_cluster_connection_requires_database_zero(tmp_path, database_env, target_db):
+    from daeri.infrastructure.resources import validate_resource
+    store = Store(tmp_path / 'private')
+    try:
+        resource = cache_resource(store)
+        resource['target']['db'] = target_db
+        resource['connection']['env'].update(REDIS_DB=database_env, REDIS_CLUSTER_MODE='true')
+        with pytest.raises(StoreError, match='INVALID_INPUT'):
+            validate_resource(resource)
+    finally:
+        store.close()
+
+
 def test_adapter_object_field_cannot_bypass_its_nested_required_values(tmp_path, monkeypatch):
     from daeri.infrastructure.adapters import get_adapter
     adapter = get_adapter('postgres_read')

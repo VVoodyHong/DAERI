@@ -75,7 +75,7 @@ def source_leaves(runtime, task, references):
                     "RESULT_VALIDATION_FAILED", "에이전트의 질문을 실제 사용자 확인으로 사용할 수 없습니다.")
             found[reference] = record
         else:
-            require(kind in {"report", "table", "artifact"} and isinstance(payload, dict),
+            require(kind in {"report", "table", "artifact", "subagent_result"} and isinstance(payload, dict),
                     "RESULT_VALIDATION_FAILED", "실제 말단 관찰·사용자 확인으로 이어지는 출처가 필요합니다.")
             links = [*record.get("evidence_refs", []), *payload.get("evidence_refs", [])]
             if kind == "table":

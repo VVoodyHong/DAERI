@@ -69,6 +69,57 @@ def test_draft_contains_only_selected_schema_fields_and_no_service_description(s
         assert Path(draft['path']).stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize('cluster_mode,db', [(True, 0), (False, 2)])
+def test_cache_cluster_mode_yaml_roundtrips_to_launcher(store, cluster_mode, db):
+    from daeri.config.setup_yaml import read_yaml
+    from daeri.infrastructure.adapters import get_adapter
+    draft = create_draft(store, 'production', {'cache': 'cache-redis'}, embedding='keyword_only')
+    inputs = read_yaml(draft['path'])['resources']['cache']['inputs']
+    assert inputs.get('cluster_mode') is False
+    edit(draft, lambda value: value['resources']['cache']['inputs'].update(
+        host='cache.example.test', db=db, cluster_mode=cluster_mode))
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    resource = apply_draft(store, 'production', checked['confirmation_token'])['resources'][0]
+    assert resource['connection']['env']['REDIS_CLUSTER_MODE'] == str(cluster_mode).lower()
+    assert resource['target']['db'] == db
+    connection = get_adapter('redis_read').launch_connection(resource)
+    assert ('--cluster-mode' in connection['args']) is cluster_mode
+    resumed = create_draft(store, 'production', {'cache': 'cache-redis'}, refresh=True)
+    inputs = read_yaml(resumed['path'])['resources']['cache']['inputs']
+    assert inputs['cluster_mode'] is cluster_mode
+    assert inputs['db'] == db
+    edit(resumed, lambda value: value['resources']['cache']['inputs'].pop('cluster_mode'))
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    resource = apply_draft(store, 'production', checked['confirmation_token'])['resources'][0]
+    assert resource['connection']['env']['REDIS_CLUSTER_MODE'] == str(cluster_mode).lower()
+
+
+def test_cache_yaml_without_cluster_mode_uses_standalone_connection(store):
+    from daeri.infrastructure.adapters import get_adapter
+    draft = create_draft(store, 'production', {'cache': 'cache-redis'}, embedding='keyword_only')
+    def complete_legacy(value):
+        inputs = value['resources']['cache']['inputs']
+        inputs.pop('cluster_mode', None)
+        inputs.update(host='cache.example.test')
+    edit(draft, complete_legacy)
+    checked = validate_draft(store, 'production')
+    assert checked['valid'], checked['issues']
+    resource = apply_draft(store, 'production', checked['confirmation_token'])['resources'][0]
+    assert '--cluster-mode' not in get_adapter('redis_read').launch_connection(resource)['args']
+
+
+def test_cache_cluster_yaml_requires_database_zero_before_profile_publication(store):
+    draft = create_draft(store, 'production', {'cache': 'cache-redis'}, embedding='keyword_only')
+    edit(draft, lambda value: value['resources']['cache']['inputs'].update(
+        host='cache.example.test', db=1, cluster_mode=True))
+    checked = validate_draft(store, 'production')
+    assert not checked['valid']
+    assert any(issue['code'] == 'INVALID_INPUT' for issue in checked['issues'])
+    assert store.list_profiles() == []
+
+
 def test_unnamed_resources_use_category_names_and_repeat_with_stable_suffixes(store):
     from pathlib import Path
     from daeri.config.setup_yaml import read_yaml

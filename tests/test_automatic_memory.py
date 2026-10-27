@@ -80,6 +80,28 @@ def test_host_candidate_is_processed_with_the_report_and_current_source_checks(t
         assert item['statement'] == args['memory_candidates'][0]['draft']['statement']
 
 
+def test_subagent_result_sources_become_automatic_memory_through_real_observations(tmp_path):
+    with closing(Runtime(tmp_path)) as runtime:
+        profile, args = completed(runtime)
+        sources = args['evidence_refs']
+        created = runtime.call('daeri_subagent', {'operation': 'create', 'task_id': args['task_id'],
+            'assignment': {'label': '비교', 'objective': '실제 조회 대조', 'step_ids': ['read-0', 'read-1'],
+                'completion_criteria': ['근거로 비교 절차 확인'], 'source_refs': sources}})
+        assert created['status'] == 'ok', created
+        finished = runtime.call('daeri_subagent', {'operation': 'complete', 'task_id': args['task_id'],
+            'delegation_token': created['data']['delegation_token'], 'result': '같은 기준의 조회를 대조했다.',
+            'evidence_refs': sources})
+        assert finished['status'] == 'ok', finished
+        args.pop('expected_task_revision')
+        args['evidence_refs'] = [finished['data']['result_ref']]
+        args['memory_candidates'][0]['source_refs'] = args['evidence_refs']
+        result = runtime.call('daeri_result_submit', args)
+        assert result['status'] == 'ok', result
+        assert result['data']['memory']['state'] == 'ready', result
+        item = runtime.memory.get(profile['profile_id'], result['data']['memory']['items'][0]['memory_ref'])
+        assert {source['record_ref'] for source in item['sources']} == set(sources)
+
+
 def test_failed_automatic_save_retries_after_restart_and_preserves_report_revision(tmp_path, monkeypatch):
     with closing(Runtime(tmp_path)) as runtime:
         profile, args = completed(runtime)

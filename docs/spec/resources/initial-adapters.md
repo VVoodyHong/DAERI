@@ -108,7 +108,10 @@ PostgreSQL은 고정 하위 패키지의 restricted driver로 문법·읽기 전
 자동 등록 대상은 restricted driver로 실행하는 위 읽기 도구이며 외부 모델을 선택하는 인덱스 추천은 별도 연동 계약이 필요하다.
 
 Redis 패키지의 읽기 판정은 고정 버전 원문에서 확인한 도구 목록을 사용한다.
-`scan_keys`·`scan_all_keys`로 키를 탐색하고 자료형별 읽기·인덱스 검색·상태 조회를 조합한다.
+자료형별 읽기·인덱스 검색·상태 조회를 조합하고 단일 노드 연결에서는 `scan_keys`·`scan_all_keys`로 키를 탐색한다.
+고정 하위 패키지의 클러스터 SCAN은 노드별 cursor 처리와 완료 판정이 추가 구현을 필요로 하는 지원 경계다.
+고정 Redis MCP는 실패도 일반 문자열로 반환하므로 `Error:` 등 오류 접두사로 시작하는 저장 문자열은 현재 `EXTERNAL_EXECUTION_FAILED`로 분류된다.
+정상 자료와 실패를 구분하려면 하위 MCP의 구조화된 오류 신호가 필요하다.
 데이터 변경·메시지 발행·그룹 소비·구독·외부 문서 검색은 각각 효과와 실행 조건을 검증하는 별도 계약이 필요하다.
 실제 명령·키 범위는 Redis ACL과 명시한 조건으로 제한한다.
 
@@ -150,7 +153,7 @@ runtime은 호출 때 현재 루트의 접근 상태와 각 경로의 존재·�
 |---|---|
 | PostgreSQL | 단일 host·port·database·사용자와 password 또는 단일 URI; 대체 접속 옵션 검사 |
 | Redis | host·port·db와 명시 인증; 등록 환경으로 실행 인수 생성 |
-| Confluence·Jira | 등록 서버와 해당 토큰·계정; 대체 tenant·OAuth·서버 설정 검사 |
+| Confluence·Jira | 등록 서버·명시 토큰·계정과 어댑터가 구성한 요청 헤더 |
 | 로컬 Source | 등록 디렉터리와 현재 OS 사용자; 호스트 도구의 접근 권한 |
 | AWS | 제공자 profile·region·SSO 또는 역할의 등록 계정 |
 
@@ -161,11 +164,15 @@ DB의 새 setup은 공개 접속 정보와 비밀번호 참조를 사용한다.
 URI의 TLS 옵션을 생략한 기존 설정은 하위 연결의 기본값을 사용한다.
 비밀번호·기존 URI 중 인증 참조 한 개를 선택하며 두 방식이 함께 있으면 `UNSUPPORTED_CONSTRAINT`다.
 
-Redis는 등록 host·port·db와 TLS·선택 username으로 실제 실행 인수를 구성한다.
+Redis는 등록 host·port·db와 TLS·클러스터 모드·선택 username으로 실제 실행 인수를 구성한다.
+setup의 `inputs.cluster_mode`는 불리언이며 기본값은 `false`다.
+`true`는 `REDIS_CLUSTER_MODE: "true"`로 저장하고 `--cluster-mode`로 실행하며, `false`는 단일 노드 연결을 사용한다.
+클러스터 모드의 저장 영역은 `db: 0`이며 다른 번호는 `INVALID_INPUT`이다.
 TLS 연결은 `--ssl --ssl-cert-reqs none`으로 암호화하고 서버 인증서 검증을 생략한다.
 Confluence·Jira는 등록한 서버의 명시적 토큰 참조를 해소하며 Jira의 토큰 선택은 [setup 인증](../configuration/profiles.md#공통-구조와-어댑터-입력)을 따른다.
 
-AWS 인증은 등록 계정과 일치하는 제공자 SSO 또는 명시 역할의 표준 설정·캐시를 사용한다.
+AWS 인증은 제공자의 config에 credentials의 같은 profile 값을 우선 적용한 설정으로 등록 계정·위치를 확인한다.
+SSO 또는 명시 역할의 표준 설정·캐시를 사용한다.
 credential process·간접 토큰 파일·endpoint·CLI 플러그인·별칭 같은 대체 실행·인증 설정은 `UNSUPPORTED_CONSTRAINT`다.
 계정·위치·인증 준비는 [profile과 로그인](../configuration/profiles.md#인증-저장과-전달)을 따른다.
 

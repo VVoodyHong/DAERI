@@ -196,10 +196,12 @@ def main(argv=None):
     parser.add_argument('--top-k', type=int, default=5)
     parser.add_argument('--output', type=Path, help='Also save the JSON report to this file')
     args = parser.parse_args(argv)
+    if not 1 <= args.top_k <= 50:
+        parser.error('--top-k must be between 1 and 50')
+    if ((args.provider == 'local') != (args.model_cache is not None)
+            or (args.provider == 'api') != (args.embedding_config is not None)):
+        parser.error('Provider arguments do not match')
     try:
-        if ((args.provider == 'local') != (args.model_cache is not None)
-                or (args.provider == 'api') != (args.embedding_config is not None)):
-            raise ValueError('Provider arguments do not match')
         config = {'provider': args.provider}
         if args.embedding_config:
             value = read_yaml(args.embedding_config)

@@ -49,6 +49,9 @@ class RedisReadAdapter(ReadAdapter):
         "tls": {"schema": {"title": "Cache TLS 사용", "description": "암호화된 TLS 연결을 사용할지 선택합니다.",
                            "type": "boolean", "default": True, "examples": [True]},
                 "required": True, "paths": [["connection", "env", "REDIS_SSL"]]},
+        "cluster_mode": {"schema": {"title": "Cache 클러스터 연결", "description": "Redis 클러스터에 연결하면 true를 선택하고 저장 영역 번호는 0을 입력합니다.",
+                                    "type": "boolean", "default": False, "examples": [False, True]},
+                         "required": False, "paths": [["connection", "env", "REDIS_CLUSTER_MODE"]]},
         "username": {"schema": {"title": "Cache 사용자 이름", "description": "사용자 이름 인증을 사용하는 경우 계정 이름을 지정합니다.",
                                 "type": "string", "minLength": 1, "maxLength": 128,
                                 "pattern": r"^[^\x00-\x1f\x7f]+$", "examples": ["readonly_user"]},
@@ -71,6 +74,10 @@ class RedisReadAdapter(ReadAdapter):
         connection = config["connection"]
         if connection["transport"] == "stdio" and "REDIS_URL" in {*connection.get("env", {}), *connection.get("auth_env", {})}:
             raise StoreError("UNSUPPORTED_CONSTRAINT", "Cache connection URLs cannot override the explicit storage-area binding.")
+        env = connection.get("env", {})
+        if env.get("REDIS_CLUSTER_MODE", "").lower() in ("true", "1", "t"):
+            if config["target"].get("db", 0) != 0 or env.get("REDIS_DB", "0") != "0":
+                raise StoreError("INVALID_INPUT", "Redis cluster connections require database 0.")
 
     def binding_files(self, config, credentials):
         connection, target = config["connection"], config["target"]

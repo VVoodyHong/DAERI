@@ -674,6 +674,34 @@ def test_aws_provider_overrides_cannot_bypass_target_or_execute_programs(registr
         registry._credentials(resource)
 
 
+@pytest.mark.parametrize('profile_name', ['service', 'default'])
+@pytest.mark.parametrize('kind', ['role', 'sso'])
+def test_aws_credentials_file_cannot_override_the_bound_account(registry, tmp_path, monkeypatch,
+                                                               profile_name, kind):
+    resource, aws = aws_config(tmp_path, monkeypatch)
+    resource['target']['profile'] = resource['connection']['env']['AWS_PROFILE'] = profile_name
+    section = 'default' if profile_name == 'default' else 'profile ' + profile_name
+    setting = ('role_arn=arn:aws:iam::111122223333:role/reader\nsource_profile=base\n'
+               if kind == 'role' else 'sso_account_id=111122223333\n')
+    (aws / 'config').write_text(f'[{section}]\n{setting}region=ap-northeast-2\n')
+    override = ('role_arn=arn:aws:iam::999900001111:role/reader\nsource_profile=base\n'
+                if kind == 'role' else 'sso_account_id=999900001111\n')
+    (aws / 'credentials').write_text(f'[{profile_name}]\n{override}')
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        registry._credentials(resource)
+
+
+@pytest.mark.parametrize('region', ['ap-northeast-2', 'us-east-1'])
+def test_aws_credentials_file_region_must_match_the_bound_region(registry, tmp_path, monkeypatch, region):
+    resource, aws = aws_config(tmp_path, monkeypatch)
+    (aws / 'credentials').write_text(f'[service]\nsso_account_id=111122223333\nregion={region}\n')
+    if region == 'ap-northeast-2':
+        assert registry._credentials(resource) == {}
+    else:
+        with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+            registry._credentials(resource)
+
+
 @pytest.mark.parametrize("field,value", [
     ("AWS_ENDPOINT_URL", "https://other.test"), ("AWS_ENDPOINT_URL_EC2", "https://other.test"),
     ("AWS_CONFIG_FILE", "/other/config"), ("AWS_API_MCP_PROFILE_NAME", "other"), ("AWS_DEFAULT_REGION", "us-east-1"),
@@ -760,6 +788,14 @@ def test_prepared_document_cli_cannot_override_registered_connection():
     resource["connection"]["args"] = ["--url", "https://other.test"]
     with pytest.raises(StoreError):
         validate_resource(resource)
+
+
+@pytest.mark.parametrize('headers', ['Host=other.example.test', 'Authorization=Basic FAKE_VALUE'])
+def test_document_custom_headers_cannot_override_bound_routing_or_authentication(headers):
+    resource = config()
+    resource['connection']['env']['CONFLUENCE_CUSTOM_HEADERS'] = headers
+    with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
+        get_adapter('confluence_read').validate_connection(resource)
 
 
 def test_auth_references_cannot_replace_a_registered_endpoint():

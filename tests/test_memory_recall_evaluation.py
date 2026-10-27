@@ -137,6 +137,31 @@ def test_cli_without_local_model_reports_unavailable_without_scores(tmp_path, ca
     assert 'metrics' not in result
 
 
+@pytest.mark.parametrize('arguments', [
+    ['--top-k', '0'],
+    ['--top-k', '51'],
+    ['--provider', 'local'],
+    ['--provider', 'api'],
+    ['--model-cache', 'unused'],
+    ['--embedding-config', 'unused'],
+    ['--provider', 'local', '--model-cache', 'unused', '--embedding-config', 'unused'],
+    ['--provider', 'api', '--embedding-config', 'unused', '--model-cache', 'unused'],
+])
+def test_cli_invalid_arguments_exit_two_without_an_operational_report(arguments, capsys):
+    with pytest.raises(SystemExit) as caught:
+        evaluation.main(arguments)
+    assert caught.value.code == 2
+    output = capsys.readouterr()
+    assert output.out == ''
+    assert 'usage:' in output.err
+
+
+@pytest.mark.parametrize('top_k', [0, 51])
+def test_direct_evaluation_rejects_invalid_top_k_with_value_error(top_k):
+    with pytest.raises(ValueError):
+        evaluation.evaluate(evaluation.load_dataset(), {'provider': 'keyword_only'}, top_k=top_k)
+
+
 def test_cli_writes_report_and_sets_failure_exit_for_integrity(monkeypatch, tmp_path, capsys):
     destination = tmp_path / 'evaluation.json'
     assert evaluation.main(['--output', str(destination)]) == 0

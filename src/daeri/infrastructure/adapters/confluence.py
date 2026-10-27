@@ -48,8 +48,10 @@ class ConfluenceReadAdapter(ReadAdapter):
     def validate_connection(self, config):
         super().validate_connection(config)
         connection = config["connection"]
-        if connection["transport"] == "stdio" and any("OAUTH" in key for key in connection.get("env", {})):
-            raise StoreError("UNSUPPORTED_CONSTRAINT", "The local Document adapter uses an explicit token reference, not an alternate OAuth tenant.")
+        env = connection.get("env", {})
+        if connection["transport"] == "stdio" and (any("OAUTH" in key for key in env)
+                                                   or "CONFLUENCE_CUSTOM_HEADERS" in env):
+            raise StoreError("UNSUPPORTED_CONSTRAINT", "The local Document adapter uses the registered server and explicit token; alternate authentication and custom request headers are unsupported.")
 
     def binding_files(self, config, credentials):
         connection, target = config["connection"], config["target"]

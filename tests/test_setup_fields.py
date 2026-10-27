@@ -41,6 +41,7 @@ def test_setup_describes_every_target_field_without_collecting_secrets(adapter):
     ('postgres_read', 'port', True), ('postgres_read', 'port', '5432'),
     ('postgres_read', 'host', 'db\x00.example.test'),
     ('redis_read', 'db', -1), ('redis_read', 'tls', 'true'),
+    ('redis_read', 'cluster_mode', 'true'), ('redis_read', 'cluster_mode', 1),
     ('aws_read', 'account', '123'), ('aws_read', 'account', 12345678901),
     ('aws_read', 'account', 1234567890123), ('aws_read', 'account', -123456789012),
     ('aws_read', 'account', True),
@@ -60,7 +61,7 @@ def test_infra_setup_accepts_twelve_digit_account_strings_and_integers(account):
 
 @pytest.mark.parametrize('adapter,names', [
     ('postgres_read', {'host', 'port', 'database', 'username'}),
-    ('redis_read', {'host', 'port', 'db', 'tls', 'username'}),
+    ('redis_read', {'host', 'port', 'db', 'tls', 'cluster_mode', 'username'}),
     ('aws_read', {'profile', 'region', 'account'}),
     ('local_source', {'path'}),
     ('confluence_read', {'server', 'username'}),

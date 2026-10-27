@@ -503,7 +503,8 @@ class MemoryService:
             _require(expiry is None or expiry > datetime.now(UTC), "RECORD_EXPIRED", "기존 출처를 반복 사용해 기억의 기한을 연장할 수 없습니다.")
             duplicate = self.store._db.execute("""SELECT v.memory_ref FROM memory_versions v JOIN memory_heads h USING(memory_id)
                 WHERE v.profile_id=? AND v.content_hash=? AND v.source_hash=? AND h.current_ref=v.memory_ref
-                AND h.invalidated=0""", (profile_id, content_hash, source_hash)).fetchone()
+                AND h.invalidated=0 AND (? IS NULL OR v.memory_ref=?)""",
+                (profile_id, content_hash, source_hash, memory_ref, memory_ref)).fetchone()
             if duplicate:
                 row, existing = self._row(profile_id, duplicate[0])
                 return {**self._public(existing), "index_state": row["index_state"]}

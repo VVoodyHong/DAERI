@@ -131,7 +131,10 @@ class AwsReadAdapter(ReadAdapter):
             if alias.exists() and (alias.is_symlink() or alias.read_bytes().strip()):
                 raise ValueError
             section = provider_section(parser, "profile", profile_name)
-            settings = parser[section]
+            settings = dict(parser[section])
+            # The provider SDK overlays the credentials file onto profile settings.
+            if credential_settings.has_section(profile_name):
+                settings.update(credential_settings[profile_name])
             if settings.get("region", target["region"]) != target["region"]:
                 raise ValueError
             visited, current = set(), profile_name
