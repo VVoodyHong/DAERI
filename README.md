@@ -7,9 +7,6 @@ Claude Code 또는 Codex에 플러그인으로 설치하고, 자연어로 리소
 - **여러 에이전트의 협업** — 총괄 에이전트가 업무를 나누고 하위 에이전트의 결과를 통합합니다.
 - **업무 경험의 재사용** — 결과와 피드백에서 확인한 지식을 profile별로 자동 저장하고 다음 업무에 활용합니다.
 
-PostgreSQL·Redis·AWS·로컬 소스 코드·Confluence·Jira를 연결하며 같은 제품도 여러 연결로 사용할 수 있습니다.
-현재는 **조회·분석을 위한 초기 버전**이며 운영 리소스 변경·배포는 후속 범위입니다.
-
 ## 구성도
 
 ![사용자·총괄 에이전트와 하위 에이전트·DAERI runtime·공유 기억·선택형 임베딩·리소스 연결로 구성한 DAERI 아키텍처](docs/assets/daeri-architecture.png)
@@ -107,12 +104,7 @@ DAERI가 관련 기억을 찾고 계획을 제시하면 **“승인할게”**�
 삭제는 대상·범위를 확인한 뒤 해당 profile의 설정·업무·기억·관리 파일을 정리합니다.
 자세한 범위와 PC 이동 절차는 [profile 삭제](docs/spec/configuration/profiles.md#profile-삭제)·[백업과 복원](docs/spec/configuration/profiles.md#이관백업복원)을 참고하세요.
 
-## 지원 범위와 문서
+## 도움말
 
-macOS의 로컬 실행·자동 준비·모의 리소스 통합을 검증했습니다.
-실제 호스트 설치·회사 리소스 연결과 Windows 실행은 해당 환경에서 추가 검증이 필요합니다.
-
-- [지원 제품과 연결 범위](docs/spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)
 - [플러그인 업데이트](docs/spec/hosts/plugins.md#설치한-플러그인-업데이트)
 - [환경 준비와 문제 해결](docs/spec/installation/environment.md)
-- [상세 문서 지도](docs/development/documentation-architecture.md)
