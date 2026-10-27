@@ -639,14 +639,18 @@ def test_decimal_repr_is_exact_and_marked_by_the_adapter():
     assert types == {"/data/0/amount": "decimal"}
 
 
-def test_prepared_redis_launcher_uses_registered_target_instead_of_cli_defaults(registry):
+@pytest.mark.parametrize("tls,tls_args", [
+    ("true", ["--ssl", "--ssl-cert-reqs", "none"]),
+    ("false", []),
+])
+def test_prepared_redis_launcher_uses_registered_target_instead_of_cli_defaults(registry, tls, tls_args):
     resource = config()
     resource["adapter"] = "redis_read"
     resource["connection"]["command"] = "/prepared/redis-mcp-server"
     resource["connection"]["args"] = []
-    resource["connection"]["env"] = {"REDIS_HOST": "cache.example.test", "REDIS_PORT": "6380", "REDIS_DB": "2", "REDIS_SSL": "true"}
+    resource["connection"]["env"] = {"REDIS_HOST": "cache.example.test", "REDIS_PORT": "6380", "REDIS_DB": "2", "REDIS_SSL": tls}
     connection = registry._launch_connection(resource)
-    assert connection["args"] == ["--host", "cache.example.test", "--port", "6380", "--db", "2", "--ssl"]
+    assert connection["args"] == ["--host", "cache.example.test", "--port", "6380", "--db", "2", *tls_args]
 
 
 def aws_config(tmp_path, monkeypatch, extra=""):

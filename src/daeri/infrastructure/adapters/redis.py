@@ -93,7 +93,7 @@ class RedisReadAdapter(ReadAdapter):
             env = connection.get("env", {})
             connection["args"] = ["--host", env.get("REDIS_HOST", ""), "--port", env.get("REDIS_PORT", "6379"), "--db", env.get("REDIS_DB", "0")]
             if env.get("REDIS_SSL", "").lower() in ("true", "1", "t"):
-                connection["args"].append("--ssl")
+                connection["args"].extend(["--ssl", "--ssl-cert-reqs", "none"])
             if env.get("REDIS_USERNAME"):
                 connection["args"].extend(["--username", env["REDIS_USERNAME"]])
             if env.get("REDIS_CLUSTER_MODE", "").lower() in ("true", "1", "t"):
