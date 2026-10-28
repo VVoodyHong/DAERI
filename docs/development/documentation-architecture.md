@@ -19,7 +19,7 @@
 | 루트 | [README](../../README.md): 사용자 설치·온보딩. [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
 | `docs/assets/` | 사용자 안내와 상세 문서에서 사용하는 이미지 |
 | `docs/rules/` | [문서 작성·변경·Git](../rules/documentation.md), [기획](../rules/planning.md), [개발](../rules/development.md), [검토](../rules/review.md) |
-| `docs/architecture/` | [멀티 오케스트레이션 에이전트·runtime·공유 기억](../architecture/overview.md) |
+| `docs/architecture/` | [현재 멀티 오케스트레이션 구조](../architecture/overview.md), [AWS AgentCore 이관 제안](../architecture/agentcore-migration.md) |
 | `docs/spec/` | [제품 요구사항](../spec/product.md) |
 | `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md), [profile별 기억·검색·보존](../spec/tasks/memory.md) |
 | `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·기억·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
