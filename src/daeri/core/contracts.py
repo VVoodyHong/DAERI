@@ -47,8 +47,8 @@ class TaskMutation(RequestInput):
 # Unvalidated None defaults allow omission while supplied JSON null stays invalid.
 class ContextSelection(InputModel):
     profile_id: NonEmptyString = Field(default=None)
-    department_id: NonEmptyString = Field(default=None)
-    environment_id: NonEmptyString = Field(default=None)
+    department_id: SkipJsonSchema[NonEmptyString] = Field(default=None)
+    environment_id: SkipJsonSchema[NonEmptyString] = Field(default=None)
 
 
 class DesiredOutput(InputModel):
@@ -124,6 +124,7 @@ class TaskGet(InputModel):
 
 class TaskResume(TaskMutation):
     task_id: NonEmptyString
+    handoff: bool = False
 
 
 class TaskCancel(TaskMutation):
@@ -319,7 +320,7 @@ class CapabilityExecute(TaskMutation):
 
 
 class MemoryDraft(InputModel):
-    category: Literal["service_rule", "resource_structure", "procedure", "lesson"]
+    category: MemoryCategory
     statement: NonEmptyString
     applicability: NonEmptyString
     instance_ids: Annotated[UniqueIDs, Field(min_length=1)]

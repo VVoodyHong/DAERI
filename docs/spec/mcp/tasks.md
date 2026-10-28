@@ -97,9 +97,14 @@ records는 `record_ref`, `record_kind`, `summary`이며 본문은 계획·결과
 
 ## daeri_task_resume
 
-필수 입력은 `task_id:ID`다.
+필수 입력은 `task_id:ID`이며 선택 입력 `handoff:boolean`의 기본값은 false다.
 runtime은 현재 실행 소유자·저장 기록·승인·입력 대기를 확인한다.
-다른 유효 소유자가 있으면 `OWNER_CONFLICT`다.
+일반 재개는 다른 유효 소유자가 있으면 `OWNER_CONFLICT`다.
+
+`handoff: true`는 사용자가 선택한 업무를 현재 호스트에서 이어갈 때 명시한다.
+다른 소유자의 진행 중인 호출이 있으면 소유권을 유지한 채 `pending`·`resumed:false`와 `unresolved_call_ids`를 반환한다.
+진행 중인 호출이 없으면 소유권을 옮기고 이전 위임의 새 실행 자격을 종료한다.
+현재 계획·유효 승인·누적 사용량은 유지하며 일시중지한 업무는 현재 조건의 새 승인을 받는다.
 
 종료한 실행 프로세스의 미완료 읽기는 실패 기록으로 정리하고 시간 예약을 해제한다.
 유효한 승인과 실행 조건이면 running으로 이어가며 필요한 새 관찰을 선택할 수 있다.
@@ -346,7 +351,4 @@ coverage는 `source_complete:boolean|null`, `returned_scope:string`, `missing_sc
 정상 페이지 분할은 ok·has_more:true이며 큰 단일 항목은 RESULT_TRUNCATED로 한도를 안내한다.
 원격 원본의 잘림은 partial, 만료는 RECORD_EXPIRED, 파일 유실·변조는 RECORD_UNAVAILABLE로 구분한다.
 
-## 전달과 검증 경계
-
-[DTO](../../../src/daeri/core/contracts.py)·[runtime](../../../src/daeri/application/runtime.py)·[하위 에이전트](../../../src/daeri/application/subagents.py)·[보고 검사](../../../src/daeri/application/results.py)·[기억 출처](../../../src/daeri/application/knowledge.py)·[자동 기억](../../../src/daeri/application/automatic_memory.py)이 담당한다.
-공개 필드·실제 근거·파일·자동 기억은 로컬 시험으로 확인하고 실제 회사·호스트·OS 범위는 [구현과 검증](../../development/dependencies.md#구현과-대표-검증)을 따른다.
+업무·위임·결과·기억의 담당 구현과 검증 범위는 [개발 안내](../../development/dependencies.md#구현과-대표-검증)를 따른다.

@@ -240,14 +240,14 @@ def _archive_password(args):
                                  | getattr(os, 'O_NONBLOCK', 0))
             try:
                 details = os.fstat(descriptor)
-                if (not stat.S_ISREG(details.st_mode) or details.st_size > 1025
+                if (not stat.S_ISREG(details.st_mode) or details.st_size > 1026
                         or (os.name != 'nt' and stat.S_IMODE(details.st_mode) & 0o077)):
                     raise ValueError
                 with os.fdopen(descriptor, 'rb', closefd=False) as stream:
-                    content = stream.read(1026)
+                    content = stream.read(1027)
             finally:
                 os.close(descriptor)
-            if len(content) > 1025:
+            if len(content) > 1026:
                 raise ValueError
             if content.endswith(b'\r\n'):
                 content = content[:-2]

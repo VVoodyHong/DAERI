@@ -62,7 +62,7 @@ def test_simple_plan_still_checks_actual_execution_boundary(defect):
 def test_model_tool_schemas_only_expose_job_inputs():
     hidden = {"request_id", "expected_task_revision", "contract_ref", "approval_id", "call_id",
               "plan_version", "approval_request_id", "stage", "previous_plan_id", "resource_rules",
-              "max_external_requests", "resource_limits", "ttl_seconds"}
+              "max_external_requests", "resource_limits", "ttl_seconds", "department_id", "environment_id"}
     def visit(node):
         if isinstance(node, dict):
             assert not hidden.intersection(node.get("properties", {}))

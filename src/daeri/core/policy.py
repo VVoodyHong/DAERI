@@ -32,7 +32,7 @@ def _profile_memory_policy(value, resources):
         if type(value[key]) is not bool:
             raise StoreError("INVALID_INPUT", "Memory permissions must be explicit booleans.")
     targets = {item["instance_id"]: item["target"] for item in resources}
-    for key, allowed in (("categories", {"service_rule", "resource_structure", "procedure", "lesson"}),
+    for key, allowed in (("categories", set(MEMORY_CATEGORIES)),
                          ("instance_ids", targets.keys())):
         items = value.get(key, [])
         if (not isinstance(items, list) or any(not isinstance(item, str) for item in items)

@@ -473,7 +473,9 @@ def test_replaced_special_files_never_block_storage_reads_or_startup(store, kind
         reference = store.write_record(task['task_id'], 'request', {'text': 'original'})
         path = store.data_dir / store._db.execute('SELECT path FROM records').fetchone()[0]
     elif kind == 'artifact':
-        reference = store.write_artifact(task['task_id'], b'original', 'text', 'text/plain', 'txt')
+        source = Path(store.artifact_workspace(task['task_id'])) / 'answer.txt'
+        source.write_bytes(b'original')
+        reference = store.import_artifact(task['task_id'], str(source), 'text/plain')
         path = Path(store.artifact_file(task['task_id'], reference)['local_path'])
     else:
         path = Path(store.artifact_workspace(task['task_id'])) / 'answer.txt'

@@ -148,7 +148,4 @@ runtime_ms는 실제 로컬 대기·관리 시간이며 하위 서비스의 종�
 runtime은 소비·시간 예약을 정리하고 읽기 재시도 여부는 호스트가 승인 범위 안에서 선택한다.
 늦게 끝난 호출은 실제 결과를 보존하면서 일시중지·취소 상태를 유지한다.
 
-## 구현과 검증 경계
-
-[리소스 등록·전송](../../../src/daeri/infrastructure/resources.py)과 [runtime](../../../src/daeri/application/runtime.py)이 담당한다.
-로컬 stdio의 탐색·호출·인증·범위·실패와 Source의 경로·호스트 관찰 등록을 구분해 확인하며 [검증 범위](../../development/dependencies.md#구현과-대표-검증)를 따른다.
+리소스 실행·Source 관찰의 담당 구현과 검증 범위는 [개발 안내](../../development/dependencies.md#구현과-대표-검증)를 따른다.

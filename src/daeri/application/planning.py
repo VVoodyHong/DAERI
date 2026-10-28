@@ -83,30 +83,14 @@ def resolve_plan_defaults(profile, draft, registry):
         model = PlanDraft.model_validate(draft)
     except ValidationError:
         raise StoreError("PLAN_INVALID", "계획의 필드·자료형·완료 조건을 확인하세요.") from None
-    # Preserve omission of optional fields whose presence has a separate meaning.
-    result = model.model_dump(exclude_unset=True)
-    result.setdefault("budget", {})
-    for key, value in model.budget.model_dump().items():
-        result["budget"].setdefault(key, value)
-    result.setdefault("memory_refs", [])
-    result.setdefault("memory_search_refs", [])
-    result.setdefault("memory_limitations", [])
-    result.setdefault("carried_evidence_refs", [])
-    result.setdefault("completion_criteria", [])
-    result.setdefault("output", {})
-    result["output"].setdefault("format", "user_request")
-    result["output"].setdefault("destination", "conversation")
+    # Omitted policy fields stay absent; explicit null budget limits stay unlimited.
+    result = model.model_dump(exclude_none=True)
+    result["budget"] = model.budget.model_dump()
     resources = {item["instance_id"]: item for item in profile.get("resources", [])}
     for step in result["steps"]:
         check(step["instance_id"] in resources, "profile에 등록한 연결을 선택하세요.")
-        step.setdefault("purpose", "collect")
-        step.setdefault("depends_on", [])
-        step.setdefault("capability_id", "*")
-        step.setdefault("scope", {})
         descriptor = registry.get(profile, step["instance_id"], step["capability_id"])
         step.setdefault("contract_ref", descriptor["contract_ref"])
-    for criterion in result["completion_criteria"]:
-        criterion.setdefault("required", True)
     if "resource_rules" not in result["output"] or not result["output"]["resource_rules"]:
         result["output"]["resource_rules"] = [
             {"instance_id": instance, **effective_resource_policy(resource)}

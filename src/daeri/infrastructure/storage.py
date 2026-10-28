@@ -698,20 +698,6 @@ class Store:
                 self.track_profile_reference(task['profile_id'], 'file', reference)
             return ref
 
-    def write_artifact(self, task_id, content, format_id, media_type, extension, expires_at=None):
-        if (not isinstance(content, bytes) or len(content) > 10 * 1024 * 1024
-                or not isinstance(extension, str) or not re.fullmatch(r"[a-z0-9]{1,8}", extension)):
-            raise StoreError("INVALID_INPUT", "A bounded managed artifact is required.")
-        with self.transaction():
-            task = self.get_task(task_id)
-            path, size, digest = self._prepare_bytes("artifacts", content, extension)
-            ref = self.write_record(task_id, "artifact", {
-                "format_id": format_id, "media_type": media_type, "size_bytes": size}, expires_at)
-            self._db.execute("INSERT INTO artifact_files VALUES (?,?,?,?,?)", (ref, task_id, path, size, digest))
-            if task.get('profile_id'):
-                self.track_profile_reference(task['profile_id'], 'file', path)
-            return ref
-
     def artifact_file(self, task_id, record_ref):
         with self.transaction():
             record = self.read_record(task_id, record_ref)

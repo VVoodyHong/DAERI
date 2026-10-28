@@ -46,7 +46,7 @@ def test_noninteractive_archive_commands_require_private_input_without_opening_d
 
 
 @pytest.mark.parametrize('content', [PASSWORD.encode(), PASSWORD.encode() + b'\n', PASSWORD.encode() + b'\r\n',
-                                    ('é' * 4).encode(), b'x' * 1024 + b'\n'])
+                                    ('é' * 4).encode(), b'x' * 1024 + b'\n', b'x' * 1024 + b'\r\n'])
 def test_restore_preview_reads_one_private_utf8_password_line_without_opening_store(tmp_path, monkeypatch, invoke, content):
     path = password_file(tmp_path, content)
     received = []
@@ -63,10 +63,12 @@ def test_restore_preview_reads_one_private_utf8_password_line_without_opening_st
     assert path.read_bytes() == content and stderr == ''
 
 
-@pytest.mark.parametrize('kind', ['short', 'oversized', 'two_lines', 'two_newlines', 'invalid_utf8',
+@pytest.mark.parametrize('kind', ['short', 'oversized', 'oversized_lf', 'oversized_crlf', 'two_lines', 'two_newlines', 'invalid_utf8',
                                  'symlink', 'directory', 'missing', 'public_mode'])
 def test_archive_password_file_rejects_unsafe_input_before_opening_store(tmp_path, monkeypatch, invoke, kind):
-    contents = {'short': b'short', 'oversized': b'x' * 1026, 'two_lines': b'password\npassword',
+    contents = {'short': b'short', 'oversized': b'x' * 1026,
+                'oversized_lf': b'x' * 1025 + b'\n', 'oversized_crlf': b'x' * 1025 + b'\r\n',
+                'two_lines': b'password\npassword',
                 'two_newlines': PASSWORD.encode() + b'\n\n', 'invalid_utf8': b'\xff' * 8}
     path = password_file(tmp_path, contents.get(kind, PASSWORD.encode()))
     if kind == 'symlink':

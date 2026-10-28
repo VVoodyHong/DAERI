@@ -22,7 +22,7 @@ DESCRIPTIONS = {
     "daeri_task_create": "Store a local task request with the supplied profile context. Unresolved context enters awaiting_input before planning.",
     "daeri_task_update": "Clarify or pause a task. Runtime manages revisions; pause requires renewed user approval before execution.",
     "daeri_task_get": "Read stored local task state or recent tasks for the selected profile.",
-    "daeri_task_resume": "Check task ownership and prepare local resumption. A paused task requires fresh plan approval.",
+    "daeri_task_resume": "Resume saved task state. For an explicit user request to continue on this host, handoff:true transfers idle ownership while preserving valid plan approval; pending calls finish before transfer. A paused task requires fresh plan approval.",
     "daeri_task_cancel": "Cancel a local task and block further dispatch while preserving recorded prior effects.",
     "daeri_memory_search": "Search permitted profile knowledge before planning. An explicitly selected company embedding API may receive the permitted query; storage and indexes remain local. Reports keyword-only or incomplete retrieval explicitly.",
     "daeri_resource_list": "Read registered resources and capability summaries for the fixed profile, including local Source root paths, availability and contract references.",

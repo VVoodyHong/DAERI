@@ -141,7 +141,4 @@ MCP `structuredContent`와 텍스트에는 같은 응답 JSON을 제공한다.
 알려진 도구의 입력·업무 오류는 위 공통 응답으로 전달한다.
 실제 대화 응답은 [승인 도구](plans.md#daeri_approval_request)로 연결한다.
 
-## 스키마와 호환성 검증
-
-입력·응답과 계획·승인·호출·보고·기억 연결은 로컬 계약·stdio 통합 시험으로 확인한다.
-검증 대상과 실제 환경의 남은 범위는 [구현과 검증](../../development/dependencies.md#구현과-대표-검증)을 따른다.
+입력·응답과 실제 stdio 전달의 담당 구현·검증 범위는 [개발 안내](../../development/dependencies.md#구현과-대표-검증)를 따른다.

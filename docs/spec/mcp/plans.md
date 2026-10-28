@@ -140,7 +140,4 @@ runtime은 현재 대기·업무·계획·저장 응답을 연결한다.
 하위 서비스의 로그인·실제 읽기 권한과 현재 자료 접근은 호출·조회 경계에서 검사한다.
 전체 흐름은 [호스트 승인](../hosts/approval.md)을 따른다.
 
-## 구현과 검증 경계
-
-[DTO](../../../src/daeri/core/contracts.py)·[계획 검사](../../../src/daeri/application/planning.py)·[runtime](../../../src/daeri/application/runtime.py)이 담당한다.
-선택 입력·실제 승인·재계획·범위·예산은 로컬 테스트로 확인하며 실제 대화·회사 리소스는 [검증 범위](../../development/dependencies.md#구현과-대표-검증)를 따른다.
+계획·승인의 담당 구현과 검증 범위는 [개발 안내](../../development/dependencies.md#구현과-대표-검증)를 따른다.

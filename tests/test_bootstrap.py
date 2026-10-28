@@ -361,7 +361,7 @@ def test_plugin_manifests_allow_skill_entry_without_runtime_mcp():
 
 
 def test_successful_prepare_registers_the_prepared_runtime(installation):
-    root, _, _, _ = installation
+    root, home, _, _ = installation
     fake_uv(root / '.runtime/uv.exe')
     result = prepare(installation, '--prepare')
     assert result.returncode == 0, result.stderr
@@ -369,9 +369,40 @@ def test_successful_prepare_registers_the_prepared_runtime(installation):
         'runtime': {
             'command': str(root / '.venv/bin/python.exe'),
             'args': ['-I', '-m', 'daeri.server'],
-            'env': {'__PYVENV_LAUNCHER__': ''},
+            'env': {'__PYVENV_LAUNCHER__': '',
+                    'DAERI_DATA_DIR': str(home / 'Library/Application Support/DAERI')},
         },
     }}
+
+
+def test_registration_pins_a_resolved_store_and_preserves_an_unchanged_config(plugin_environment, tmp_path):
+    root = plugin_environment
+    configured = tmp_path / 'data' / '..' / 'shared data'
+    environment = dict(os.environ, DAERI_DATA_DIR=str(configured))
+    command = [str(root / '.venv/bin/python.exe'), '-I', str(root / 'scripts/register_mcp.py')]
+    first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=10)
+    assert first.returncode == 0, first.stderr
+    target = root / '.mcp.json'
+    config = json.loads(target.read_text())
+    assert config['mcpServers']['runtime']['env']['DAERI_DATA_DIR'] == str(tmp_path / 'shared data')
+    identity = target.stat().st_ino, target.stat().st_mtime_ns
+    second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=10)
+    assert second.returncode == 0, second.stderr
+    assert (target.stat().st_ino, target.stat().st_mtime_ns) == identity
+    assert not (tmp_path / 'shared data').exists()
+
+
+def test_registration_rejects_an_invalid_data_path_without_a_traceback(plugin_environment):
+    root = plugin_environment
+    command = [str(root / '.venv/bin/python.exe'), '-I', str(root / 'scripts/register_mcp.py')]
+    subprocess.run(command, check=True, capture_output=True, text=True, timeout=10)
+    previous = (root / '.mcp.json').read_bytes()
+    result = subprocess.run(command, env=dict(os.environ, DAERI_DATA_DIR='relative-data'),
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert 'Traceback' not in result.stderr
+    assert (root / '.mcp.json').read_bytes() == previous
 
 
 @pytest.mark.parametrize('previous_environment', [False, True])

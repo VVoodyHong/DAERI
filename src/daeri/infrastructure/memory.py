@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from daeri.core.security import redact
 from daeri.core.policy import (
+    MEMORY_CATEGORIES,
     effective_profile_memory_policy,
     effective_resource_policy,
     selector_covers,
@@ -22,7 +23,6 @@ from daeri.core.policy import retention_deadline
 from daeri.infrastructure.embedding import create_api_embedder, validate_embedding_config
 
 
-CATEGORIES = {"service_rule", "resource_structure", "procedure", "lesson"}
 MODEL_NAME = "intfloat/multilingual-e5-small"
 VECTOR_LIMITATION = "선택한 임베딩 제공자 또는 벡터 색인을 사용할 수 없어 키워드 검색만 수행했습니다."
 SEARCH_SOURCE = "memory_versions v JOIN memory_heads h ON h.current_ref=v.memory_ref AND h.memory_id=v.memory_id"
@@ -437,7 +437,7 @@ class MemoryService:
     def save(self, profile_id, candidate, *, source_records, policy, memory_ref=None, index=True, validate_only=False):
         required = {"category", "statement", "applicability", "instance_ids", "verification_method"}
         _require(isinstance(candidate, dict) and set(candidate) == required
-                 and candidate["category"] in CATEGORIES
+                 and candidate["category"] in MEMORY_CATEGORIES
                  and all(isinstance(candidate[key], str) and candidate[key].strip()
                          for key in ("statement", "applicability", "verification_method"))
                  and len(_json(candidate).encode()) <= 16384

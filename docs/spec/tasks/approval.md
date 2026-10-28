@@ -99,8 +99,4 @@ runtime은 응답의 업무·현재 계획·대기 상태를 확인해 승인과
 확인 요청의 취소는 승인 대기를 종료하고 업무 취소는 업무를 종료한다.
 진행 중 결과와 재개는 [업무 복구](workflow.md#중단재개와-외부-결과-확인)를 따른다.
 
-## 구현과 검증 경계
-
-담당 구현은 [계획 검사](../../../src/daeri/application/planning.py)와 [승인·실행](../../../src/daeri/application/runtime.py)다.
-[계획](../../../tests/test_planning.py)·[승인·읽기 묶음](../../../tests/test_runtime.py)·[위임](../../../tests/test_subagents.py) 테스트가 로컬 조건을 검증한다.
-호스트별 실제 응답 해석·표시·회사 리소스는 [호스트 검증 범위](../hosts/approval.md#구현-시-검증)에서 구분한다.
+계획·승인의 담당 구현과 로컬 검증은 [개발 안내](../../development/dependencies.md#구현과-대표-검증), 실제 호스트 응답 확인은 [호스트 승인](../hosts/approval.md#구현-시-검증)을 따른다.

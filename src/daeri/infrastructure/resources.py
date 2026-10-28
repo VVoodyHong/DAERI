@@ -218,17 +218,10 @@ def validate_resource(config):
 
 @dataclass
 class NormalizedInvocation:
-    invocation_ref: str
-    instance_id: str
-    capability_id: str
     contract_ref: str
-    target_binding: dict
-    identity_ref: str
     operation: str
-    effects: dict
     access: dict
     prepared_request: dict
-    controls: dict
     connection: dict
     tool_contract: dict
     fingerprint: str
@@ -271,9 +264,6 @@ class ResourceRegistry:
         if len(items) != 1:
             raise StoreError("NOT_FOUND", "The resource is not registered in this profile.")
         return validate_resource(items[0])
-
-    def _launch_connection(self, config):
-        return get_adapter(config["adapter"]).launch_connection(config)
 
     def _path(self, profile, instance_id):
         return self.directory / (_hash([profile["profile_id"], instance_id]) + ".json")
@@ -341,7 +331,7 @@ class ResourceRegistry:
         return bundle
 
     async def _session(self, stack, resource, timeout, credentials):
-        connection = self._launch_connection(resource)
+        connection = get_adapter(resource["adapter"]).launch_connection(resource)
         secrets = []
         def remember(value):
             secrets.append(value)
@@ -510,10 +500,10 @@ class ResourceRegistry:
         if len(_json(arguments).encode()) > 65536:
             _fail("The normalized resource arguments exceed the size limit.")
         prepared = {"tool_name": capability["tool_name"], "arguments": arguments}
-        return NormalizedInvocation("invocation_" + uuid4().hex, instance_id, capability_id, descriptor["contract_ref"],
-            copy.deepcopy(config["target"]), config["identity_ref"], capability["tool_name"], descriptor["effects"], access,
-            prepared, {"external_requests_enforceable": False, "auto_retry": False}, copy.deepcopy(config["connection"]),
-            registration["contracts"][capability_id], _hash(prepared), config)
+        return NormalizedInvocation(
+            contract_ref=descriptor["contract_ref"], operation=capability["tool_name"], access=access,
+            prepared_request=prepared, connection=copy.deepcopy(config["connection"]),
+            tool_contract=registration["contracts"][capability_id], fingerprint=_hash(prepared), resource=config)
 
     def execute(self, invocation, timeout=30):
         if not isinstance(invocation, NormalizedInvocation) or _hash(invocation.prepared_request) != invocation.fingerprint:

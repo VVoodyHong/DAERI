@@ -71,6 +71,12 @@ def test_lookup_requires_one_target(target, accepted):
     check('TaskGet', target, accepted)
 
 
+@pytest.mark.parametrize('handoff,accepted', [(True, True), (False, True),
+                                             ('true', False), (1, False), (None, False)])
+def test_task_handoff_requires_an_explicit_boolean(handoff, accepted):
+    check('TaskResume', {'task_id': 't', 'handoff': handoff}, accepted)
+
+
 @pytest.mark.parametrize('decision', [None, 'approve', 'request_changes', 'decline', 'cancel'])
 def test_approval_always_requires_the_actual_user_reply(decision):
     value = {'task_id': 't', 'plan_id': 'p', 'decision': decision, 'user_response': '실제 사용자 답변'}
@@ -190,6 +196,8 @@ def test_subagent_operations_require_only_their_own_job_inputs(operation, fields
 def test_old_saved_callers_can_still_validate_internal_keys_without_advertising_them():
     value = contracts.TaskCancel.model_validate({'task_id': 't', 'request_id': 'old', 'expected_task_revision': 1})
     assert value.request_id == 'old'
+    context = contracts.ContextSelection.model_validate({'profile_id': 'p', 'department_id': 'old-department', 'environment_id': 'old-environment'})
+    assert context.department_id == 'old-department' and context.environment_id == 'old-environment'
     with pytest.raises(ValidationError):
         contracts.TaskCancel.model_validate({'task_id': 't', 'expected_task_revision': True})
 

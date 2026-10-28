@@ -11,7 +11,8 @@ import pytest
 
 
 @pytest.fixture
-def plugin_environment(tmp_path):
+def plugin_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv('DAERI_DATA_DIR', str(tmp_path / 'data'))
     plugin = tmp_path / 'plugin with spaces'
     shutil.copytree(Path(__file__).resolve().parents[1] / 'scripts', plugin / 'scripts')
     environment = plugin / '.venv'

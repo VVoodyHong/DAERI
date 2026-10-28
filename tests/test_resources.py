@@ -13,7 +13,7 @@ import pytest
 from daeri.infrastructure.resources import ResourceRegistry, validate_resource
 from daeri.infrastructure.storage import Store
 from daeri.core.errors import StoreError
-from daeri.infrastructure.adapters import get_adapter, normalize as interpret
+from daeri.infrastructure.adapters import get_adapter
 
 
 def config():
@@ -211,11 +211,11 @@ def test_connection_only_db_and_document_recipes_keep_task_read_scope(registry, 
     resource = build_setup_resource(registry.store, recipe, 'service', 'resource-one', inputs)
     constraints = resource['capabilities'][0]['constraints']
     actual = copy.deepcopy(allowed)
-    interpret(resource['adapter'], actual, constraints, approved)
+    get_adapter(resource['adapter']).normalize(actual, constraints, approved)
     assert actual == allowed
     with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
-        interpret(resource['adapter'], denied, constraints, approved)
-    assert interpret(resource['adapter'], copy.deepcopy(allowed), constraints, {})['fields'] == sorted(allowed)
+        get_adapter(resource['adapter']).normalize(denied, constraints, approved)
+    assert get_adapter(resource['adapter']).normalize(copy.deepcopy(allowed), constraints, {})['fields'] == sorted(allowed)
 
 
 def test_connection_change_requires_new_diagnosis(registry):
@@ -338,7 +338,7 @@ def test_registration_has_no_cross_profile_reuse(registry):
 ])
 def test_db_queries_are_forwarded_without_a_second_sql_grammar_or_row_limit(sql):
     arguments = {'sql': sql}
-    assert interpret('postgres_read', arguments, {}, {}) == {'fields': ['sql']}
+    assert get_adapter('postgres_read').normalize(arguments, {}, {}) == {'fields': ['sql']}
     assert arguments['sql'] == sql
 
 
@@ -348,21 +348,21 @@ def test_db_queries_are_forwarded_without_a_second_sql_grammar_or_row_limit(sql)
 ])
 def test_legacy_semantic_limits_require_contract_migration(policy):
     with pytest.raises(StoreError, match='UNSUPPORTED_CONSTRAINT'):
-        interpret('postgres_read', {'sql': 'SELECT * FROM public.orders'}, policy, {})
+        get_adapter('postgres_read').normalize({'sql': 'SELECT * FROM public.orders'}, policy, {})
 
 
 def test_sql_exact_query_scope_preserves_explicit_approved_filter():
     allowed = "SELECT order_id FROM public.orders WHERE order_id = 1"
     arguments = {'sql': allowed}
-    interpret('postgres_read', arguments, {}, {'equals': {'sql': allowed}})
+    get_adapter('postgres_read').normalize(arguments, {}, {'equals': {'sql': allowed}})
     assert arguments == {'sql': allowed}
     with pytest.raises(StoreError, match='SCOPE_VIOLATION'):
-        interpret('postgres_read', {'sql': 'SELECT order_id FROM public.orders'}, {}, {'equals': {'sql': allowed}})
+        get_adapter('postgres_read').normalize({'sql': 'SELECT order_id FROM public.orders'}, {}, {'equals': {'sql': allowed}})
 
 
 def test_infra_command_is_parsed_and_keeps_explicit_region():
     command = "aws ec2 describe-instances --region ap-northeast-2"
-    access = interpret("aws_read", {"cli_command": command}, {"region": "ap-northeast-2"}, {"equals": {"cli_command": command}})
+    access = get_adapter("aws_read").normalize({"cli_command": command}, {"region": "ap-northeast-2"}, {"equals": {"cli_command": command}})
     assert access == {"service": "ec2", "operation": "describe-instances", "region": "ap-northeast-2"}
 
 
@@ -380,12 +380,12 @@ def test_infra_command_is_parsed_and_keeps_explicit_region():
 ])
 def test_infra_command_cannot_change_operation_target_or_local_files(command):
     with pytest.raises(StoreError):
-        interpret("aws_read", {"cli_command": command}, {"region": "ap-northeast-2"}, {"equals": {"cli_command": command}})
+        get_adapter("aws_read").normalize({"cli_command": command}, {"region": "ap-northeast-2"}, {"equals": {"cli_command": command}})
 
 
 def test_cache_patterns_and_document_queries_are_lower_mcp_inputs():
-    assert interpret('redis_read', {'key': 'session:*'}, {}, {}) == {'fields': ['key']}
-    assert interpret('document_read', {'cql': 'space=PRIVATE'}, {}, {}) == {'fields': ['cql']}
+    assert get_adapter('redis_read').normalize({'key': 'session:*'}, {}, {}) == {'fields': ['key']}
+    assert get_adapter('document_read').normalize({'cql': 'space=PRIVATE'}, {}, {}) == {'fields': ['cql']}
 
 
 def test_schema_external_reference_is_rejected_before_any_call():
@@ -470,8 +470,8 @@ def test_db_password_builds_only_selected_endpoint_in_private_environment(regist
     assert parsed.port == 5432
     assert credentials == {ref: password}
     assert resource == original
-    assert password not in json.dumps(registry._launch_connection(resource))
-    assert environment['DATABASE_URI'] not in json.dumps(registry._launch_connection(resource))
+    assert password not in json.dumps(get_adapter(resource["adapter"]).launch_connection(resource))
+    assert environment['DATABASE_URI'] not in json.dumps(get_adapter(resource["adapter"]).launch_connection(resource))
 
 
 @pytest.mark.parametrize('target', [
@@ -649,7 +649,7 @@ def test_prepared_redis_launcher_uses_registered_target_instead_of_cli_defaults(
     resource["connection"]["command"] = "/prepared/redis-mcp-server"
     resource["connection"]["args"] = []
     resource["connection"]["env"] = {"REDIS_HOST": "cache.example.test", "REDIS_PORT": "6380", "REDIS_DB": "2", "REDIS_SSL": tls}
-    connection = registry._launch_connection(resource)
+    connection = get_adapter(resource["adapter"]).launch_connection(resource)
     assert connection["args"] == ["--host", "cache.example.test", "--port", "6380", "--db", "2", *tls_args]
 
 
@@ -729,7 +729,7 @@ def test_aws_launch_pins_provider_profile_and_defense_in_depth(registry):
     resource = config()
     resource["adapter"] = "aws_read"
     resource["connection"]["env"] = {"AWS_PROFILE": "service", "AWS_REGION": "ap-northeast-2"}
-    env = registry._launch_connection(resource)["env"]
+    env = get_adapter(resource["adapter"]).launch_connection(resource)["env"]
     assert env["AWS_API_MCP_PROFILE_NAME"] == "service"
     assert env["AWS_DEFAULT_REGION"] == "ap-northeast-2"
     assert env["AWS_IGNORE_CONFIGURED_ENDPOINT_URLS"] == "true"

@@ -187,7 +187,8 @@ def test_current_plan_blocks_one_contributing_memory_source_in_report_file(remem
     approval = approve(runtime, saved["data"])
     if delivery == "read_legacy":
         # Earlier runtimes could register this file despite the plan's tighter source policy.
-        reference_file = runtime.store.write_artifact(task["task_id"], b"previously exported memory", "text", "text/plain", "txt")
+        file = host_file(runtime, task["task_id"], "legacy-memory", [reference], text="previously exported memory")
+        reference_file = runtime.store.import_artifact(task["task_id"], file["local_path"], file["media_type"])
         current = runtime.store.get_task(task["task_id"])
         revision = current["task_revision"]
         current["artifact_ids"] = {"memory-report": {"artifact_ref": reference_file, "source_refs": [reference]}}

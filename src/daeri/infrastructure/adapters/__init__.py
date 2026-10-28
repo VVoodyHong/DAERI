@@ -35,7 +35,3 @@ def get_adapter(identifier):
             if identifier == adapter.adapter_id or identifier in adapter.aliases:
                 return adapter
     raise StoreError("INVALID_INPUT", "The resource adapter is not supported.")
-
-
-def normalize(adapter, parameters, constraints, scope):
-    return get_adapter(adapter).normalize(parameters, constraints, scope)

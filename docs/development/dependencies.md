@@ -100,7 +100,7 @@ uv 버전은 [준비 도구 정책](../../scripts/dependencies.env)을 읽고 �
 
 | 선택 항목 | 실행 범위 |
 |---|---|
-| `native` | macOS의 공통 검사와 Windows의 native bootstrap 회귀 12개 |
+| `native` | macOS의 공통 검사와 Windows의 native bootstrap 회귀 |
 | `local_model` | 공개 로컬 모델 다운로드·준비 → DNS 차단 실제 추론 회귀 → 같은 합성 자료의 의미 회상 평가 |
 | `clean_bootstrap` | macOS·Windows의 빈 플러그인 실행 환경·별도 사용자 경로에서 실제 준비 → MCP 구성 발행·runtime 검사 |
 
@@ -153,7 +153,11 @@ sh "$DAERI_MANAGE" resource prepare PROFILE
 스크립트가 전용 환경을 검사하고 준비된 `.venv/bin/python.exe`에 `-I -m daeri.cli`와 분리된 관리 인수를 전달한다.
 실행 위치는 플러그인 루트이며 부모의 Python·가상환경 관련 변수는 자식 실행에서 정리한다.
 
-정상 미준비는 `setup_required`·종료 코드 0, 손상·중단 상태는 `RUNTIME_UNAVAILABLE`·종료 코드 1로 구분한다.
+기존 profile의 호스트 진입은 관리 인수 앞에 `--connect`를 붙여 `--connect profile list` 또는 `--connect profile show PROFILE`을 실행한다.
+이 경로는 [현재 설치의 연결 준비](../spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)를 마친 뒤 표준 출력에 일반 CLI와 같은 profile JSON·종료 코드를 반환한다.
+준비 안내와 `mcp_config_changed`·`data_dir`·`next_action`의 MCP 등록 보고는 표준 오류로 전달한다.
+
+일반 관리 호출의 정상 미준비는 `setup_required`·종료 코드 0, 손상·중단 상태는 `RUNTIME_UNAVAILABLE`·종료 코드 1로 구분한다.
 판정 대상·환경 검사·설치·복구는 [최초 진입 계약](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)을 따른다.
 준비된 runtime의 CLI 결과·오류·종료 코드는 그대로 전달한다.
 
@@ -293,6 +297,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 
 [첫 업무](../../tests/test_first_work_defaults.py)는 접속 전용 YAML → 승인 조회 → 호스트 보고·파일 → 선별 기억 → 다음 업무 회상을 확인한다.
 [피드백](../../tests/test_feedback_memory.py)은 정정 요청·새 승인·기존 지식 무효화·수정 경험의 회상을 확인한다.
+[호스트 전환](../../tests/test_cross_host.py)은 두 설치 사본의 MCP 간 계획·결과·기억 재사용을, [업무 인계](../../tests/test_task_handoff.py)는 유효 승인 보존·진행 중 호출 대기·이전 소유자와 위임의 실행 종료를 확인한다.
 자료 제공·출처·내보내기·보존 조건은 [profile](../spec/configuration/profiles.md#로컬-저장-구조)과 [기억](../spec/tasks/memory.md)이 소유한다.
 
 [단순 계획](../../tests/test_simple_plan.py)·[기본 수행](../../tests/test_simple_workflow.py)은 최소 입력의 업무 흐름을, [실행 복구](../../tests/test_execution_persistence.py)는 중단 뒤 새 관찰과 설정·인증 갱신 뒤 수행 유지를 확인한다.
@@ -302,6 +307,13 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 대표 자동 검증은 로컬 계약·모의 리소스의 허용·거부·부분 결과·동시성·저장 실패·복구와 실제 MCP stdio 전달을 대상으로 한다.
 하위 프로그램의 잠긴 설치·import·도구 메타데이터, 모의 HTTP·제공자 SDK, 준비한 실제 로컬 모델의 DNS 차단 검색은 각각의 검사 범위다.
 실제 모델 검사는 지정한 모델 경로가 있는 경우만 실행하며 검사별 결과·조건부 생략·실패 근거는 [공통 검사 보고서](#공통-자동-검사)에 기록한다.
+
+확보한 별도 실제 실행 근거는 다음과 같다.
+
+- macOS의 빈 설치·데이터 영역에서 공식 uv·관리 Python·잠긴 기본 패키지 준비, MCP 구성 발행과 `ready: true`를 확인했다.
+  설치 사본의 `.runtime`·`.venv`·`.mcp.json`과 사용자 영역의 `runtime` 생성, 준비 후보·잠금 정리를 확인했다.
+- Claude Code 2.1.284의 `claude plugin validate`로 agents·skills 정적 검사를 통과했다.
+  루트 `CLAUDE.md` 문맥 로딩 경고는 남아 있으며 실제 설치·하위 에이전트 실행은 아래 검증 대상이다.
 
 | 실제 환경 확인 대상 | 자동 검사와 구분할 범위 |
 |---|---|

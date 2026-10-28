@@ -138,7 +138,9 @@ class Runtime:
                 if tool == "daeri_plan_get":
                     for ref in result["data"]["plan"]["draft"]["memory_refs"]:
                         self.memory.get(task["profile_id"], ref)
-                if key:
+                waiting_handoff = (tool == "daeri_task_resume" and args.get("handoff")
+                                   and task["owner_id"] != self.owner)
+                if key and not waiting_handoff:
                     self.store.request_put(scope, key, fingerprint, self._cache(tool, result))
             if tool == "daeri_memory_update" and args["operation"] == "store":
                 if result["data"]["index_state"] == "pending":
@@ -250,7 +252,7 @@ class Runtime:
 
     def _active_calls(self, task):
         keys = ("call_id", "plan_id", "plan_version", "step_id", "call_state", "external_effect")
-        return [{key: item[key] for key in keys} for item in task.get("calls", []) if item["call_state"] == "pending"]
+        return [{key: item[key] for key in keys} for item in task.get("calls", []) if item["call_state"] in {"pending", "unknown"}]
 
     def _uncertain(self, task):
         return [item["call_id"] for item in task.get("calls", []) if item["external_effect"] == "unknown"]
@@ -417,7 +419,7 @@ class Runtime:
 
     def _task_resume(self, args, task):
         owner_status = self._owner_status(task)
-        require(owner_status != "other", "OWNER_CONFLICT", "다른 실행 소유자가 업무를 처리하고 있습니다.")
+        require(owner_status != "other" or args.get("handoff"), "OWNER_CONFLICT", "다른 실행 소유자가 업무를 처리하고 있습니다.")
         recovered_calls = False
         for call in task.get("calls", []):
             if call["call_state"] not in {"pending", "unknown"}:
@@ -428,6 +430,8 @@ class Runtime:
                     executor_lost = not process_alive(int(call["execution_owner_id"].split(":", 1)[0]))
                 except (ValueError, OverflowError, OSError):
                     pass
+            if owner_status == "other" and not executor_lost:
+                continue
             if call["call_state"] == "unknown" or owner_status == "recovery_required" or executor_lost:
                 recovered_calls = True
                 for grant in task.get("delegations", []):
@@ -440,6 +444,10 @@ class Runtime:
                     task["reserved"]["tool_calls"] -= 1
                 task["reserved"]["runtime_ms"] = max(0, task["reserved"]["runtime_ms"] - call["reserved_runtime_ms"])
                 call["reserved_runtime_ms"] = 0
+        if args.get("handoff") and task["owner_id"] != self.owner and self._active_calls(task):
+            if recovered_calls:
+                self._save(task)
+            return self._resume_reply(task)
         if task["state"] not in TERMINAL:
             paused = task["state"] == "paused"
             changed_owner = task["owner_id"] != self.owner
@@ -475,10 +483,11 @@ class Runtime:
     def _resume_reply(self, task):
         receipt = self._receipt(task)
         unresolved = [call["call_id"] for call in self._active_calls(task)]
+        owned = self._owner_status(task) == "self"
         return response({key: receipt[key] for key in ("task_id", "task_revision", "state", "waiting_reason")} |
-                        {"resumed": task["state"] == "running" and self._active_approved(task) and not unresolved,
+                        {"resumed": owned and task["state"] == "running" and self._active_approved(task) and not unresolved,
                          "active_plan_ref": task["active_plan_ref"], "unresolved_call_ids": unresolved},
-                        "ok" if task["state"] in TERMINAL | {"running"} and not unresolved else "pending")
+                        "ok" if (task["state"] in TERMINAL or owned and task["state"] == "running") and not unresolved else "pending")
 
     def _task_cancel(self, args, task):
         require(task["state"] not in TERMINAL - {"cancelled"}, "TASK_STATE_INVALID", "다른 종료 상태를 취소로 바꿀 수 없습니다.")
@@ -638,8 +647,6 @@ class Runtime:
             if evidence.get("instance_id"):
                 instances.add(evidence["instance_id"])
         contracts = validate_plan(profile, draft, self.registry, instances)
-        draft["output"].pop("table_rules", None)
-        draft["output"].pop("artifact_rules", None)
         for limit, amount in (("max_tool_calls", "tool_calls"), ("max_runtime_ms", "runtime_ms"), ("max_external_requests", "external_requests")):
             if draft["budget"][limit] is not None:
                 consumed, reserved = task["usage"][amount], task["reserved"][amount]
@@ -1176,7 +1183,7 @@ class Runtime:
             and call.get("result_ref")]
         if not references:
             references = [task["request_ref"]]
-        data = ResultService(self.store).submit(task, plan, args["report"], state=proposed,
+        data = ResultService(self.store).submit(task, args["report"], state=proposed,
             evidence_refs=references, artifacts=args.get("artifacts", []),
             load_evidence=lambda ref, mode="model": self._load_evidence(task, ref, mode))
         task["last_report_ref"] = data["report_ref"]

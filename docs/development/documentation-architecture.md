@@ -63,5 +63,4 @@ Codex는 [AGENTS 지침 체인](https://learn.chatgpt.com/docs/agent-configurati
 같이 읽고 수정하는 짧은 내용은 절로 합치고 상세 계약은 담당 정본으로 연결한다.
 선택 근거·미결·검증 범위는 정본에, 변경 이력은 Git에 둔다.
 
-[Diátaxis](https://diataxis.fr/how-to-use-diataxis/)와 [Google 문서 구성](https://developers.google.com/tech-writing/one/documents)의 설명·참조 구분을 적용했다.
-역할과 변경 책임을 기준으로 문서를 나누며 표현·이관은 [문서 규칙](../rules/documentation.md)을 따른다.
+표현·이관은 [문서 규칙](../rules/documentation.md)을 따른다.

@@ -13,20 +13,34 @@ description: DAERI profile을 대상으로 새 업무를 요청하거나 저장�
 ## 업무 대상
 
 새 업무는 요청에 지정한 등록 profile, 현재 대화의 기본 선택 순서로 대상을 정한다.
-관리 진입의 `profile show PROFILE`이 반환한 `profile_id`를 업무 접수의 `context.profile_id`에 전달한다.
+관리 진입의 `--connect profile show PROFILE`로 현재 설치의 실행 환경·공유 저장소 연결을 확인하고 반환한 `profile_id`를 사용한다.
+저장된 접속·인증·임베딩 선택과 기존 모델·색인을 재사용한다.
 관리 인수는 macOS의 `sh "<루트>/scripts/manage.sh"`, Windows의 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\manage.ps1"` 뒤에 전달한다.
 `setup_required`이면 반환한 짧은 메시지와 현재 호스트의 [setup](../setup/SKILL.md) 호출을 안내한다.
-대상이 모호하면 실제 `profile list`에서 선택받고, 대화의 기본 선택은 [profile](../profile/SKILL.md)에서 관리한다.
+대상이 모호하면 `--connect profile list`의 실제 목록에서 선택받고, 대화의 기본 선택은 [profile](../profile/SKILL.md)에서 관리한다.
+관리 진입의 `next_action`이 `reload_host`이면 [호스트 연결 계약](../../docs/spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)에 따라 다시 읽고 실제 `runtime` 도구 목록을 확인한 뒤 업무를 시작한다.
 
-재개는 저장된 업무·대상·계획·승인·실행 기록에서 복구한다.
-업무가 모호하면 해당 profile의 최근 업무를 조회해 선택받는다.
-일시중지한 업무는 남은 작업과 현재 계획을 보여 주고 새 사용자 승인으로 이어간다.
-완료 후 추가 업무·정정은 새 요청으로 접수한다.
+## 업무 재개
+
+1. 기존 업무를 이어 달라는 요청은 `daeri_task_get`의 `profile_id`로 최근 업무 제목·상태를 확인한다.
+   요청과 일치하는 업무를 선택하고 대상이 모호하면 사용자에게 선택받는다.
+2. 선택한 `task_id`로 `daeri_task_get`을 호출해 대상·현재 계획·보고·진행 중 호출을 읽는다.
+   `request_ref`와 보완·보고·근거 참조를 `daeri_result_get`에 전달해 원래 요청과 필요한 본문을 복구하고, 현재 계획은 `daeri_plan_get`으로 읽는다.
+3. 사용자의 이어가기 의사가 확인된 업무는 `daeri_task_resume`에 `task_id`와 `handoff: true`를 전달한다.
+   `pending`·`resumed:false`와 비어 있지 않은 `unresolved_call_ids`가 반환되면 진행 중 호출 상태를 확인한 뒤 재개를 다시 요청한다.
+   인계는 기존 계획·유효 승인·사용량을 유지하며 이전 소유자·위임의 새 실행을 종료한다.
+4. 재개의 `status:ok`·`resumed:true`를 확인하면 기존 승인 범위의 남은 작업을 아래 5단계부터 이어간다.
+   `planning`은 같은 업무의 계획을 아래 2단계부터 구성하고 입력·승인 대기는 저장한 질문·현재 계획을 제시해 실제 응답을 받는다.
+   일시중지한 업무는 현재 계획·남은 작업을 보여 주고 새 승인을 받는다.
+   종료 업무는 보존 결과를 안내하고 추가 업무·정정 요청은 새 업무로 접수한다.
+
+정확한 인계·복구 조건은 [업무 재개](../../docs/spec/tasks/workflow.md#중단재개와-외부-결과-확인)를 따른다.
 
 ## 업무 흐름
 
 1. 필요한 MCP 도구를 이름으로 찾아 입력 스키마를 확인한다.
-   새 요청은 `daeri_task_create`, 재개는 `daeri_task_get`·`daeri_task_resume`을 사용한다.
+   새 업무 요청은 확인한 `profile_id`를 `context.profile_id`에 담아 `daeri_task_create`로 접수한다.
+   기존 업무의 이어가기는 위 재개 절차에서 저장한 계획·상태를 사용한다.
 2. `daeri_memory_search`로 관련 경험을 회상하고 `daeri_resource_list`·`daeri_capability_get`으로 사용할 연결과 도구를 확인한다.
    검색 0건·부분·실패는 확인한 제한으로 설명하고 가능한 업무를 이어간다.
    계획 전에 수행 불가로 판단하면 원인·확보한 근거·제한·다음 조치를 `daeri_result_submit`의 `failed` 보고로 정리한다.

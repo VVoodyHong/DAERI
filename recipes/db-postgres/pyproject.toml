@@ -8,7 +8,5 @@ dependencies = ["postgres-mcp==0.3.0"]
 package = false
 # This package uses the SDK v1 FastMCP API.
 constraint-dependencies = ["mcp<2"]
+# Upstream pins unavailable pglast==7.2.0; use the verified 7.20 override.
 override-dependencies = ["pglast==7.20"]
-
-# Upstream pins unavailable pglast==7.2.0; the tested compatibility override is explicit.
-# This is the only override; do not relax it during installation.

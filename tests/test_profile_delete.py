@@ -56,7 +56,9 @@ def test_profile_delete_previews_then_cascades_all_owned_data(store):
     task(store, first)
     task(store, other, 'task_b')
     ref = store.write_record('task_a', 'report', {'text': 'delete me'})
-    store.write_artifact('task_a', b'a,b\n1,2\n', 'csv', 'text/csv', 'csv')
+    source = Path(store.artifact_workspace('task_a')) / 'answer.csv'
+    source.write_bytes(b'a,b\n1,2\n')
+    store.import_artifact('task_a', str(source), 'text/csv')
     kept = store.write_record('task_b', 'report', {'text': 'keep me'})
     store.request_put('daeri_task_get:task_a', 'one', 'a', {'data': {'task_id': 'task_a'}})
     store.request_put('daeri_task_create:local', 'two', 'b', {'data': {'task_id': 'task_a'}})

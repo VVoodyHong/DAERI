@@ -116,7 +116,7 @@ class ResultService:
             visit(reference)
         return sorted(sources), expiry
 
-    def submit(self, task, plan, report, *, state='succeeded', evidence_refs=(), artifacts=(), load_evidence):
+    def submit(self, task, report, *, state='succeeded', evidence_refs=(), artifacts=(), load_evidence):
         require(state in {'succeeded', 'partial', 'failed', 'cancelled'}, '업무 종료 상태를 확인하세요.')
         require(task['state'] != 'paused', '일시중지한 업무에는 새 결과를 제출할 수 없습니다.')
         with self.store.transaction():

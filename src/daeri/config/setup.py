@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from daeri.infrastructure.adapters import get_adapter
 from daeri.infrastructure.credentials import resource_reference
+from daeri.core.policy import as_pointer
 from daeri.core.security import redact
 from daeri.core.errors import StoreError
 
@@ -59,7 +60,6 @@ def read_config(path):
 
 
 def _no_secrets(value, path=()):
-    _require(redact(value) == value, 'Use authentication references instead of credential values.')
     if isinstance(value, dict):
         for key, item in value.items():
             if path and path[-1] in {'auth_env', 'auth_headers'}:
@@ -73,6 +73,8 @@ def _no_secrets(value, path=()):
                 _require(not re.match(r'--?(password|passwd|token|secret|api[-_]key|authorization|database[-_]uri)(=|$)', item, re.I),
                          'Credentials cannot be supplied as process arguments.')
             _no_secrets(item, path)
+    elif isinstance(value, str):
+        _require(redact(value) == value, 'Use authentication references instead of credential values.')
 
 
 def import_profile(store, path):
@@ -296,17 +298,13 @@ def validate_setup(recipe_id, path):
     return _validate_setup_values(setup_schema(recipe_id), read_config(path))
 
 
-def _setup_pointer(path):
-    return '/' + '/'.join(str(token).replace('~', '~0').replace('/', '~1') for token in path)
-
-
 def _current_setup_values(resource, contract):
     from daeri.core.policy import pointer_get
     values = {}
     for name, paths in contract['configuration_paths'].items():
         path = paths[0]
         try:
-            value = pointer_get(resource, _setup_pointer(path))
+            value = pointer_get(resource, as_pointer(path))
         except StoreError:
             continue
         if path[:2] == ['connection', 'env']:
@@ -387,16 +385,14 @@ def build_setup_resource(store, recipe_id, profile_name, instance_id, values, ex
     for name, value in values.items():
         for destination in contract['configuration_paths'][name]:
             bound = str(value).lower() if type(value) is bool else str(value)
-            pointer_set(resource, _setup_pointer(destination),
+            pointer_set(resource, as_pointer(destination),
                         bound if destination[:2] == ['connection', 'env'] else value)
     return get_adapter(contract['adapter']).finalize_setup_resource(resource, profile_name=profile_name)
 
 
 def configure_resource(store, recipe_id, profile_name, instance_id, path, *, expected_revision, refresh_contract=False):
     """Apply explicit answers to one recipe resource in an unchanged profile revision."""
-    contract = setup_schema(recipe_id)
     supplied = read_config(path)
-    _require(_validate_setup_values(contract, supplied)['valid'], 'Setup answers are invalid.')
     _require(type(expected_revision) is int, 'An inspected profile revision is required.')
     with store.transaction():
         profile = store.get_profile(profile_name)

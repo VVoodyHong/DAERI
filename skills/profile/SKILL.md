@@ -17,17 +17,19 @@ description: DAERI profile의 선택·전환·백업·복원·삭제를 요청�
 ## 관리 명령 실행
 
 관리 인수는 macOS에서 `sh "<루트>/scripts/manage.sh"`, Windows에서 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<루트>\scripts\manage.ps1"` 뒤에 전달한다.
-`setup_required`이면 반환한 메시지와 현재 호스트의 setup 호출을 안내하고 종료한다.
+기존 profile의 조회·선택은 관리 인수 앞에 `--connect`를 붙여 현재 설치의 실행 환경과 공유 저장소 연결을 준비한다.
+`setup_required`이면 반환한 메시지와 현재 호스트의 setup 호출을 안내한다.
 선택·확인은 [호스트 질문 계약](../../docs/spec/hosts/plugins.md#setup의-정형-질문)의 현재 도구와 모드에서 받는다.
 상세 계약은 해당 단계에서 호스트의 파일 읽기 도구로 확인한다.
 
 ## 선택과 전환
 
-1. `profile list`로 실제 등록 목록을 읽는다.
+1. `--connect profile list`로 공유 저장소의 실제 등록 목록을 읽는다.
    빈 목록은 setup 안내, 조회 실패는 해당 오류 안내로 처리한다.
 2. 요청의 profile·식별자를 실제 목록에서 확인한다.
    생략·미등록·모호한 대상은 정형 질문 도구로 선택받는다.
-3. `profile show PROFILE`이 성공하면 반환한 `name`·`profile_id`를 현재 대화의 기본 선택으로 확인한다.
+3. `--connect profile show PROFILE`이 성공하면 반환한 `name`·`profile_id`를 현재 대화의 기본 선택으로 확인한다.
+   저장한 연결·인증·임베딩 선택을 재사용하고 [호스트 연결](../../docs/spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)에 따라 새 MCP 구성을 읽는다.
    오류·취소·미응답이면 기존 선택을 유지한다.
 4. 선택한 profile과 필요한 식별자, 이후 새 업무에 적용된다는 사실을 짧게 알린다.
    선택의 수명·우선순위·재확인은 [선택 계약](../../docs/spec/configuration/profiles.md#선택과-기본값)을 따른다.
