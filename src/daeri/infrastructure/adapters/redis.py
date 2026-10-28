@@ -72,7 +72,7 @@ class RedisReadAdapter(ReadAdapter):
     def validate_connection(self, config):
         super().validate_connection(config)
         connection = config["connection"]
-        if connection["transport"] == "stdio" and "REDIS_URL" in {*connection.get("env", {}), *connection.get("auth_env", {})}:
+        if "REDIS_URL" in {*connection.get("env", {}), *connection.get("auth_env", {})}:
             raise StoreError("UNSUPPORTED_CONSTRAINT", "Cache connection URLs cannot override the explicit storage-area binding.")
         env = connection.get("env", {})
         if env.get("REDIS_CLUSTER_MODE", "").lower() in ("true", "1", "t"):
@@ -94,7 +94,7 @@ class RedisReadAdapter(ReadAdapter):
 
     def launch_connection(self, config):
         connection = super().launch_connection(config)
-        if connection["transport"] == "stdio" and Path(connection["command"]).stem == self.executable:
+        if Path(connection["command"]).stem == self.executable:
             if connection.get("args"):
                 raise StoreError("UNSUPPORTED_CONSTRAINT", "The prepared Cache launcher derives target flags from registered environment; target override arguments are unsupported.")
             env = connection.get("env", {})

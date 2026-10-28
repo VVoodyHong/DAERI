@@ -349,4 +349,4 @@ coverage는 `source_complete:boolean|null`, `returned_scope:string`, `missing_sc
 ## 전달과 검증 경계
 
 [DTO](../../../src/daeri/core/contracts.py)·[runtime](../../../src/daeri/application/runtime.py)·[하위 에이전트](../../../src/daeri/application/subagents.py)·[보고 검사](../../../src/daeri/application/results.py)·[기억 출처](../../../src/daeri/application/knowledge.py)·[자동 기억](../../../src/daeri/application/automatic_memory.py)이 담당한다.
-공개 필드·실제 근거·파일·자동 기억은 로컬 시험으로 확인하고 실제 회사·호스트·OS 범위는 [구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
+공개 필드·실제 근거·파일·자동 기억은 로컬 시험으로 확인하고 실제 회사·호스트·OS 범위는 [구현과 검증](../../development/dependencies.md#구현과-대표-검증)을 따른다.

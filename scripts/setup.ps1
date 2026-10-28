@@ -37,6 +37,20 @@ function Test-DaeriUv([string]$Program) {
     }
     catch { return $false }
 }
+function Resolve-DaeriDirectory([string]$Directory) {
+    $Directory = [IO.Path]::GetFullPath($Directory)
+    $Item = Get-Item -LiteralPath $Directory -Force -ErrorAction SilentlyContinue
+    if ($Item -and -not $Item.PSIsContainer) { throw 'DAERI_DATA_DIR must identify a usable directory.' }
+    if ($Item -and ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        $Target = @($Item.Target)[0]
+        if (-not $Target) { throw 'DAERI_DATA_DIR must identify a usable directory.' }
+        if (-not [IO.Path]::IsPathRooted($Target)) { $Target = Join-Path (Split-Path -Parent $Directory) $Target }
+        return Resolve-DaeriDirectory $Target
+    }
+    $Parent = Split-Path -Parent $Directory
+    if (-not $Parent) { return $Directory }
+    return Join-Path (Resolve-DaeriDirectory $Parent) (Split-Path -Leaf $Directory)
+}
 function Get-DaeriUv {
     $Tools = Join-Path $DaeriRoot '.runtime'
     $Program = Join-Path $Tools 'uv.exe'
@@ -48,7 +62,8 @@ function Get-DaeriUv {
             { $_ -in 'X64', 'AMD64' } { $Target = 'x86_64-pc-windows-msvc'; $ExpectedHash = $DaeriPolicy.UV_WINDOWS_X64_SHA256 }
             default { throw 'DAERI preparation is incomplete: unsupported Windows CPU.' }
         }
-        $script:DaeriDownload = Join-Path ([IO.Path]::GetTempPath()) ('daeri-uv-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $Tools -Force | Out-Null
+        $script:DaeriDownload = Join-Path $Tools ('uv.prepare.' + [Guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $script:DaeriDownload | Out-Null
         $Archive = Join-Path $script:DaeriDownload 'uv.zip'
         $Url = "$($DaeriPolicy.UV_RELEASE_BASE)/$($DaeriPolicy.UV_INSTALL_VERSION)/uv-$Target.zip"
@@ -61,9 +76,7 @@ function Get-DaeriUv {
         Expand-Archive -LiteralPath $Archive -DestinationPath (Join-Path $script:DaeriDownload 'unpacked')
         $Source = Join-Path $script:DaeriDownload 'unpacked/uv.exe'
         if (-not (Test-DaeriUv $Source)) { throw 'DAERI preparation is incomplete: downloaded uv cannot run.' }
-        New-Item -ItemType Directory -Path $Tools -Force | Out-Null
-        Copy-Item -LiteralPath $Source -Destination (Join-Path $Tools 'uv.new.exe')
-        Move-Item -LiteralPath (Join-Path $Tools 'uv.new.exe') -Destination $Program -Force
+        Move-Item -LiteralPath $Source -Destination $Program -Force
     }
     return $Program
 }
@@ -92,6 +105,19 @@ try {
         }
         elseif ($env:LOCALAPPDATA) { $DaeriData = Join-Path $env:LOCALAPPDATA 'DAERI' }
         else { $DaeriData = Join-Path $env:USERPROFILE 'AppData/Local/DAERI' }
+        $DaeriExitCode = 2
+        $DataPrefix = (Resolve-DaeriDirectory $DaeriData).TrimEnd('\', '/') + '\'
+        $RootPrefix = (Resolve-DaeriDirectory $DaeriRoot).TrimEnd('\', '/') + '\'
+        if ($DataPrefix.StartsWith($RootPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            $RootPrefix.StartsWith($DataPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'DAERI_DATA_DIR and the plugin installation must not overlap.'
+        }
+        $DaeriExitCode = 1
+        $DaeriTools = Get-Item -LiteralPath (Join-Path $DaeriRoot '.runtime') -Force -ErrorAction SilentlyContinue
+        if ($DaeriTools -and (-not $DaeriTools.PSIsContainer -or
+            ($DaeriTools.Attributes -band [IO.FileAttributes]::ReparsePoint))) {
+            throw 'DAERI preparation is incomplete: .runtime must be an installation-owned directory.'
+        }
         $DaeriRuntime = [IO.Path]::GetFullPath((Join-Path $DaeriData 'runtime'))
         try { New-Item -ItemType Directory -Path $DaeriLock | Out-Null; $DaeriLocked = $true }
         catch { throw 'DAERI preparation is already running or was interrupted. Check that no setup process is active before removing .daeri-setup.lock and retrying.' }
@@ -99,6 +125,17 @@ try {
             Move-Item -LiteralPath $DaeriPrevious -Destination $DaeriEnvironment
         }
         if (Test-Path -LiteralPath $DaeriPrevious) { throw 'DAERI preparation is incomplete: inspect .venv.previous before retrying.' }
+        # The setup lock excludes a live candidate; these paths contain program scratch only.
+        @(Get-ChildItem -LiteralPath $DaeriRoot -Force -Filter '.venv.prepare.*') +
+            @(Get-ChildItem -LiteralPath $DaeriRoot -Force -Filter '.mcp.prepare.*') +
+            @(Get-ChildItem -LiteralPath (Join-Path $DaeriRoot '.runtime') -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like 'uv.prepare.*' -or $_.Name -in 'uv.new', 'uv.new.exe' }) |
+            ForEach-Object {
+                if ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                    throw 'DAERI preparation is incomplete: inspect linked preparation files before retrying.'
+                }
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force
+            }
         $env:UV_PYTHON_INSTALL_DIR = Join-Path $DaeriRuntime 'python'
         $env:UV_CACHE_DIR = Join-Path $DaeriRuntime 'cache'
         $env:UV_PYTHON_INSTALL_BIN = '0'

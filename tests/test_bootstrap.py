@@ -126,6 +126,86 @@ def test_failed_prepare_preserves_old_environment_and_profile_data(installation)
     assert not (root / '.daeri-setup.lock').exists()
 
 
+def test_explicit_prepare_cleans_abandoned_installation_files(installation):
+    root, _, _, _ = installation
+    fake_uv(root / '.runtime/uv.exe')
+    abandoned = root / '.venv.prepare.interrupted'
+    abandoned.mkdir()
+    (abandoned / 'unused-package').write_text('partial installation')
+    temporary = [root / '.mcp.prepare.interrupted',
+                 *(root / '.runtime' / name for name in ('uv.new', 'uv.new.exe', 'uv.prepare.exe'))]
+    for path in temporary:
+        path.write_text('partial publication')
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 0, result.stderr
+    assert not list(root.glob('.venv.prepare.*'))
+    assert all(not path.exists() for path in temporary)
+    assert json.loads((root / '.mcp.json').read_text())['mcpServers']['runtime']['command'] == str(root / '.venv/bin/python.exe')
+
+
+def test_prepare_preserves_an_external_runtime_directory_link(installation):
+    root, _, _, _ = installation
+    external = root.parent / 'shared programs'
+    fake_uv(external / 'uv.exe')
+    scratch = external / 'uv.prepare.keep'
+    scratch.mkdir()
+    (scratch / 'keep').write_text('external data')
+    (root / '.runtime').symlink_to(external, target_is_directory=True)
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 1
+    assert '.runtime' in result.stderr
+    assert (scratch / 'keep').read_text() == 'external data'
+    assert not (root / '.venv').exists()
+
+
+@pytest.mark.parametrize('configured', ['nested', 'normalized', 'linked', 'ancestor', 'future'])
+def test_prepare_rejects_overlapping_program_and_data_roots_without_deleting_data(installation, configured):
+    root, _, _, env = installation
+    fake_uv(root / '.runtime/uv.exe')
+    data = root / '.venv.prepare.personal'
+    if configured == 'ancestor':
+        data = root.parent
+    if configured != 'future':
+        data.mkdir(exist_ok=True)
+    sentinel = data / 'daeri.sqlite3'
+    if configured != 'future':
+        sentinel.write_text('user database')
+    if configured == 'normalized':
+        env['DAERI_DATA_DIR'] = str(data / '..' / data.name)
+    elif configured == 'linked':
+        alias = root.parent / 'data alias'
+        alias.symlink_to(data, target_is_directory=True)
+        env['DAERI_DATA_DIR'] = str(alias)
+    else:
+        env['DAERI_DATA_DIR'] = str(data)
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 2
+    assert 'DAERI_DATA_DIR' in result.stderr and 'overlap' in result.stderr
+    if configured == 'future':
+        assert not data.exists()
+    else:
+        assert sentinel.read_text() == 'user database'
+    assert not (root / '.venv').exists()
+    assert not (root / '.daeri-setup.lock').exists()
+
+
+def test_prepare_preserves_user_data_reached_through_a_case_alias(installation):
+    root, _, _, env = installation
+    alias = root.with_name(root.name.upper())
+    if not alias.is_dir():
+        pytest.skip('The fixture volume distinguishes directory letter case')
+    fake_uv(root / '.runtime/uv.exe', fail=29)
+    data = root / '.venv.prepare.personal'
+    data.mkdir()
+    (data / 'daeri.sqlite3').write_text('user database')
+    env['DAERI_DATA_DIR'] = str(alias / data.name)
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 2
+    assert 'overlap' in result.stderr
+    assert (data / 'daeri.sqlite3').read_text() == 'user database'
+    assert not (root / '.daeri-setup.lock').exists()
+
+
 def test_failed_candidate_check_preserves_diagnostic_and_previous_installation(installation):
     root, _, _, _ = installation
     fake_uv(root / '.runtime/uv.exe', runtime_ready=False)
@@ -220,13 +300,57 @@ def test_checksum_mismatch_never_executes_download(installation):
     assert not (root / '.venv').exists()
 
 
+def test_uv_publication_failure_removes_staged_executable(installation):
+    root, _, commands, _ = installation
+    install_archive(installation)
+    executable(commands / 'chmod', 'raise SystemExit(17)\n')
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 17
+    assert not list((root / '.runtime').glob('uv.*'))
+    assert not (root / '.daeri-setup.lock').exists()
+
+
 def test_parallel_prepare_is_rejected_before_any_install(installation):
     root, _, _, _ = installation
     (root / '.daeri-setup.lock').mkdir()
+    candidate = root / '.venv.prepare.running'
+    candidate.mkdir()
+    (candidate / 'keep').write_text('active preparation')
     result = prepare(installation, '--prepare')
     assert result.returncode != 0
     assert 'already' in result.stderr.lower()
     assert not (root / '.venv').exists()
+    assert (candidate / 'keep').read_text() == 'active preparation'
+
+
+def test_prepare_recovers_previous_environment_before_a_failed_retry(installation):
+    root, _, _, _ = installation
+    fake_uv(root / '.runtime/uv.exe', fail=29)
+    previous = root / '.venv.previous'
+    previous.mkdir()
+    (previous / 'keep').write_text('last working environment')
+    result = prepare(installation, '--prepare')
+    assert result.returncode == 29
+    assert (root / '.venv/keep').read_text() == 'last working environment'
+    assert not previous.exists()
+
+
+def test_runtime_check_without_environment_explains_preparation_without_writing_files(installation):
+    root, home, _, _ = installation
+    result = prepare(installation)
+    assert result.returncode == 1
+    assert result.stdout == ''
+    assert '--prepare' in result.stderr
+    assert not (root / '.venv').exists()
+    assert list(home.iterdir()) == []
+
+
+def test_setup_unknown_arguments_are_rejected_before_preparation(installation):
+    root, home, _, _ = installation
+    result = prepare(installation, '--prepare', 'unexpected')
+    assert result.returncode == 2
+    assert not (root / '.venv').exists()
+    assert list(home.iterdir()) == []
 
 
 def test_plugin_manifests_allow_skill_entry_without_runtime_mcp():
@@ -331,6 +455,13 @@ def test_windows_preparation_registers_mcp_or_restores_environment(plugin_enviro
         (root / '.mcp.json').mkdir()
     private = root / '.runtime/uv.exe'
     private.parent.mkdir()
+    abandoned = root / '.venv.prepare.interrupted'
+    abandoned.mkdir()
+    (abandoned / 'unused-package').write_text('partial installation')
+    temporary = [root / '.mcp.prepare.interrupted',
+                 *(private.parent / name for name in ('uv.new', 'uv.new.exe', 'uv.prepare.exe'))]
+    for path in temporary:
+        path.write_text('partial publication')
     source = '''public class FakeUv {
         static void Copy(string source, string target) {
             System.IO.Directory.CreateDirectory(target);
@@ -379,6 +510,7 @@ def test_windows_preparation_registers_mcp_or_restores_environment(plugin_enviro
     assert not list(root.glob('.venv.prepare.*'))
     assert not list(root.glob('.mcp.prepare.*'))
     assert not (root / '.daeri-setup.lock').exists()
+    assert all(not path.exists() for path in temporary)
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap behavior')
@@ -440,6 +572,44 @@ def test_windows_rejects_relative_data_environment_before_changing_state(tmp_pat
     assert (previous / 'keep').read_text() == 'keep'
     assert not (root / '.venv').exists()
     assert not (root / '.runtime').exists()
+    assert not (root / '.daeri-setup.lock').exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Native PowerShell bootstrap path boundary')
+@pytest.mark.parametrize('configured', ['nested', 'normalized', 'linked', 'ancestor', 'future', 'runtime_link', 'scratch_link'])
+def test_windows_preparation_preserves_overlapping_or_linked_directories(tmp_path, configured):
+    root = tmp_path / 'plugin with spaces'
+    shutil.copytree(ROOT / 'scripts', root / 'scripts')
+    data = root / '.venv.prepare.personal'
+    if configured == 'ancestor':
+        data = tmp_path
+    elif configured in {'runtime_link', 'scratch_link'}:
+        data = tmp_path / 'shared programs'
+    if configured != 'future':
+        data.mkdir(exist_ok=True)
+        (data / 'daeri.sqlite3').write_text('user database')
+    configured_data = data
+    if configured == 'normalized':
+        configured_data = data / '..' / data.name
+    elif configured in {'linked', 'runtime_link', 'scratch_link'}:
+        link = (root / '.runtime' if configured == 'runtime_link'
+                else root / '.venv.prepare.link' if configured == 'scratch_link' else tmp_path / 'data alias')
+        subprocess.run(['cmd', '/c', 'mklink', '/J', str(link), str(data)],
+                       check=True, capture_output=True, text=True, timeout=10)
+        configured_data = tmp_path / 'separate data' if configured in {'runtime_link', 'scratch_link'} else link
+    result = subprocess.run([
+        'powershell', '-NoProfile', '-ExecutionPolicy', 'RemoteSigned',
+        '-File', str(root / 'scripts/setup.ps1'), '-Prepare',
+    ], env=dict(os.environ, DAERI_DATA_DIR=str(configured_data)),
+       text=True, capture_output=True, timeout=20)
+    assert result.returncode == (1 if configured in {'runtime_link', 'scratch_link'} else 2)
+    message = '.runtime' if configured == 'runtime_link' else 'linked preparation' if configured == 'scratch_link' else 'overlap'
+    assert message in result.stderr
+    if configured == 'future':
+        assert not data.exists()
+    else:
+        assert (data / 'daeri.sqlite3').read_text() == 'user database'
+    assert not (root / '.venv').exists()
     assert not (root / '.daeri-setup.lock').exists()
 
 

@@ -4,7 +4,7 @@
 상세 규칙은 `docs` 하위에서 관리한다.
 
 제품 구현과 사양 문서화를 함께 진행한다.
-현재 제공 범위와 실제 검증 경계는 [최초 구현 계획](docs/plans/initial-implementation.md)에서 확인한다.
+현재 제공 범위는 [제품 명세](docs/spec/product.md#현재-제공-범위), 구현과 실제 검증 경계는 [개발 안내](docs/development/dependencies.md#구현과-대표-검증)에서 확인한다.
 프로그램 설치·실제 리소스 연결은 요청된 작업 범위에서 진행한다.
 
 ## 시작과 작업 재개

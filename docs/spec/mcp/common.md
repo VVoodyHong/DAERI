@@ -5,7 +5,7 @@
 모델용 입력과 runtime의 응답을 정의한다.
 업무 동작은 [업무 흐름](../tasks/workflow.md), 입력 모델은 [contracts.py](../../../src/daeri/core/contracts.py)가 담당한다.
 
-## 초기 도구 목록
+## 도구 목록
 
 | 도구 | 역할 | 정본 |
 |---|---|---|
@@ -26,7 +26,7 @@
 | `daeri_result_submit` | 보고·파일과 선별 기억 저장 | [결과](tasks.md#daeri_result_submit) |
 | `daeri_result_get` | 보존 기록·파일 조회 | [결과](tasks.md#daeri_result_get) |
 
-## 첫 버전의 실행 범위
+## 실행 범위
 
 등록한 읽기 기능의 `collect`·`verify`를 실행한다.
 호스트는 승인한 연결·범위 안에서 도구·질의·페이지·병렬 하위 에이전트·분석 방법을 선택한다.
@@ -144,4 +144,4 @@ MCP `structuredContent`와 텍스트에는 같은 응답 JSON을 제공한다.
 ## 스키마와 호환성 검증
 
 입력·응답과 계획·승인·호출·보고·기억 연결은 로컬 계약·stdio 통합 시험으로 확인한다.
-검증 대상과 실제 환경의 남은 범위는 [구현 계획](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
+검증 대상과 실제 환경의 남은 범위는 [구현과 검증](../../development/dependencies.md#구현과-대표-검증)을 따른다.

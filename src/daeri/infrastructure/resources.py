@@ -21,6 +21,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 from daeri.infrastructure.adapters import get_adapter
+from daeri.infrastructure.adapters.base import json_text as _json
 from daeri.core.security import redact
 from daeri.core.errors import StoreError
 from daeri.infrastructure.storage import _regular_file
@@ -30,13 +31,6 @@ _SECRET_NAME = re.compile(r"(?i)(password|passwd|pwd|token|secret|api.?key|autho
 _GUARDS = {"fixed", "allowed_values", "path_prefixes", "max_values", "sql_field", "tables", "columns", "max_rows", "region", "command_field"}
 _SCOPE = {"equals", "one_of", "path_prefixes", "max_values"}
 _NORMALIZATION_CONTRACT = 'daeri-read-normalization-v3'
-
-
-def _json(value):
-    try:
-        return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"))
-    except (TypeError, ValueError, UnicodeError):
-        raise StoreError("INVALID_INPUT", "A bounded JSON value is required.") from None
 
 
 def _hash(value):

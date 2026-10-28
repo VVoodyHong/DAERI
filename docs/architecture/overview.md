@@ -111,7 +111,7 @@ SQLite는 업무·profile별 기억 정본과 벡터를 보관하고 FTS5·sqlit
 DAERI는 호스트에는 MCP 서버, 외부 서비스의 하위 리소스에는 MCP 클라이언트로 동작한다.
 어댑터는 제품별 대상·입출력·읽기 의미를 해소한다.
 로컬 Source는 호스트가 등록 디렉터리를 기존 도구로 조사하고 `local_source` 어댑터가 그 관찰을 업무 근거로 연결한다.
-로컬 편집·실행·Git 작업의 권한과 인증은 호스트 환경을 따르며 [Source 지원 범위](../spec/resources/initial-adapters.md#로컬-소스-코드)를 따른다.
+로컬 편집·실행·Git 작업의 권한과 인증은 호스트 환경을 따르며 [Source 지원 범위](../spec/resources/adapters.md#로컬-소스-코드)를 따른다.
 
 ## 업무와 설정의 연결
 
@@ -125,7 +125,7 @@ setup의 접속·인증 YAML 적용 → 업무 요청 → 계획 승인 → 자�
 | YAML·profile·인증·저장·삭제 | [사용자 구성](../spec/configuration/profiles.md) |
 | 도구·입출력·오류 | [MCP 규격](../spec/mcp/common.md) |
 | 설치·업데이트·모델 준비 | [환경 준비](../spec/installation/environment.md) |
-| 구현·검증 위치 | [패키지 책임·의존 관계](../development/dependencies.md#실행-진입점과-모듈)·[구현 계획](../plans/initial-implementation.md) |
+| 구현·검증 위치 | [패키지 책임·의존 관계](../development/dependencies.md#실행-진입점과-모듈)·[구현과 검증](../development/dependencies.md#구현과-대표-검증) |
 
 ## 권한과 데이터의 경계
 
@@ -148,5 +148,5 @@ DAERI 도구의 실행은 실제 사용자 승인·읽기 전용 경계·연결 
 보고·파일의 형식과 내용은 호스트 도구가 작성하고 runtime은 실행·출처·저장을 맡는다.
 판단·실행 루프는 호스트·PC의 활성 상태를 따르며 중단 뒤 저장 기록에서 재개한다.
 
-로컬 계약·모의 리소스·패키징·임베딩의 확인 범위는 [구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)을 따른다.
+로컬 계약·모의 리소스·패키징·임베딩의 확인 범위는 [구현과 검증](../development/dependencies.md#구현과-대표-검증)을 따른다.
 실제 회사 인증·API·리소스, 호스트 설치·하위 에이전트 실행과 Windows 환경은 별도 검증 대상이다.

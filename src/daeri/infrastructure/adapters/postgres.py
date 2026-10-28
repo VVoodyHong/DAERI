@@ -95,8 +95,6 @@ class PostgresReadAdapter(ReadAdapter):
     def validate_connection(self, config):
         super().validate_connection(config)
         connection = config["connection"]
-        if connection["transport"] != "stdio":
-            return
         env = connection.get("env", {})
         if len(set(connection.get("auth_env", {})) & self.authentication_fields) > 1:
             raise StoreError("UNSUPPORTED_CONSTRAINT", "Select one DB password or legacy URI authentication reference.")

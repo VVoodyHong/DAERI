@@ -26,11 +26,13 @@ TOOL_NAMES = {
 
 
 @asynccontextmanager
-async def connect(data_dir, *, launch=False, plugin_root=ROOT):
+async def connect(data_dir, *, plugin_root=None):
+    config = (json.loads((plugin_root / '.mcp.json').read_text())['mcpServers']['runtime']
+              if plugin_root is not None else {})
     parameters = StdioServerParameters(
-        command="/bin/sh" if launch else sys.executable,
-        args=[str(plugin_root / "scripts/launch.sh")] if launch else ["-I", "-m", "daeri.server"],
-        env={"DAERI_DATA_DIR": str(data_dir), "__PYVENV_LAUNCHER__": ""},
+        command=config.get('command', sys.executable),
+        args=config.get('args', ['-I', '-m', 'daeri.server']),
+        env={"DAERI_DATA_DIR": str(data_dir), "__PYVENV_LAUNCHER__": "", **config.get('env', {})},
         cwd=data_dir.parent,
     )
     async with stdio_client(parameters, errlog=sys.stderr) as (reader, writer):
@@ -86,10 +88,14 @@ def test_stdio_handshake_lists_the_implemented_tools_and_strict_schemas(tmp_path
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("launch", [False, pytest.param(True, marks=pytest.mark.skipif(os.name == "nt", reason="POSIX launcher"))])
-def test_stdio_create_and_get_use_the_selected_local_data_directory(tmp_path, plugin_environment, launch):
+@pytest.mark.parametrize('registered', [False, True])
+def test_stdio_create_and_get_use_the_selected_local_data_directory(tmp_path, plugin_environment, registered):
+    if registered:
+        subprocess.run([str(plugin_environment / '.venv/bin/python.exe'), '-I',
+                        str(plugin_environment / 'scripts/register_mcp.py')], check=True, timeout=10)
+
     async def scenario():
-        async with connect(tmp_path / "data", launch=launch, plugin_root=plugin_environment) as (session, _):
+        async with connect(tmp_path / "data", plugin_root=plugin_environment if registered else None) as (session, _):
             created = envelope(await session.call_tool("daeri_task_create", {
                 "request_id": "stdio-create", "request_text": "로컬 계획을 준비해줘",
             }))
@@ -239,6 +245,8 @@ def test_malformed_protocol_arguments_do_not_leak_input_to_diagnostics(tmp_path)
 
 
 def test_subprocess_local_plan_approval_pause_and_resume_lifecycle(tmp_path, plugin_environment):
+    subprocess.run([str(plugin_environment / '.venv/bin/python.exe'), '-I',
+                    str(plugin_environment / 'scripts/register_mcp.py')], check=True, timeout=10)
     data_dir = tmp_path / "data"
     store = Store(data_dir)
     try:
@@ -247,7 +255,7 @@ def test_subprocess_local_plan_approval_pause_and_resume_lifecycle(tmp_path, plu
         store.close()
 
     async def scenario():
-        async with connect(data_dir, launch=os.name != "nt", plugin_root=plugin_environment) as (session, _):
+        async with connect(data_dir, plugin_root=plugin_environment) as (session, _):
             async def call(name, args):
                 return envelope(await session.call_tool(name, args))
 

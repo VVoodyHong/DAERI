@@ -143,4 +143,4 @@ runtime은 현재 대기·업무·계획·저장 응답을 연결한다.
 ## 구현과 검증 경계
 
 [DTO](../../../src/daeri/core/contracts.py)·[계획 검사](../../../src/daeri/application/planning.py)·[runtime](../../../src/daeri/application/runtime.py)이 담당한다.
-선택 입력·실제 승인·재계획·범위·예산은 로컬 테스트로 확인하며 실제 대화·회사 리소스는 [검증 범위](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)를 따른다.
+선택 입력·실제 승인·재계획·범위·예산은 로컬 테스트로 확인하며 실제 대화·회사 리소스는 [검증 범위](../../development/dependencies.md#구현과-대표-검증)를 따른다.

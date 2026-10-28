@@ -199,4 +199,4 @@ runtime은 [자동 기억 처리](memory.md#업무-후-갱신과-정정)로 정�
 
 담당 구현은 [runtime](../../../src/daeri/application/runtime.py), [위임](../../../src/daeri/application/subagents.py), [보고·파일](../../../src/daeri/application/results.py)다.
 [업무 통합](../../../tests/test_execution_flow.py)·[병렬 하위 에이전트](../../../tests/test_subagents.py)·[후속 페이지](../../../tests/test_paged_execution.py)·[파일 경계](../../../tests/test_host_results.py)가 로컬 동작을 검증한다.
-실제 호스트의 판단·표시·회사 연결과 OS별 확인 범위는 [구현 계획](../../plans/initial-implementation.md#확보한-검증-근거)을 따른다.
+실제 호스트의 판단·표시·회사 연결과 OS별 확인 범위는 [구현과 검증](../../development/dependencies.md#검증-경계)을 따른다.

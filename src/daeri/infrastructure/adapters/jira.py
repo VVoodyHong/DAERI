@@ -63,8 +63,6 @@ class JiraReadAdapter(ReadAdapter):
     def validate_connection(self, config):
         super().validate_connection(config)
         connection = config['connection']
-        if connection['transport'] != 'stdio':
-            return
         env = connection.get('env', {})
         allowed = {'JIRA_URL', 'JIRA_USERNAME', 'DAERI_JIRA_AUTH_TYPE', 'JIRA_SSL_VERIFY',
                    'READ_ONLY_MODE', 'ENABLED_TOOLS'}
@@ -100,10 +98,9 @@ class JiraReadAdapter(ReadAdapter):
 
     def launch_connection(self, config):
         connection = super().launch_connection(config)
-        if connection['transport'] == 'stdio':
-            connection['env'].pop('DAERI_JIRA_AUTH_TYPE', None)
-            if 'JIRA_PERSONAL_TOKEN' in connection.get('auth_env', {}):
-                connection['env'].pop('JIRA_USERNAME', None)
+        connection['env'].pop('DAERI_JIRA_AUTH_TYPE', None)
+        if 'JIRA_PERSONAL_TOKEN' in connection.get('auth_env', {}):
+            connection['env'].pop('JIRA_USERNAME', None)
         return connection
 
     def binding_files(self, config, credentials):

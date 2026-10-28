@@ -183,7 +183,7 @@ runtime은 승인·실제 출처·대상·허용 필드·기한·비밀 패턴�
 
 ## 구현 선택과 확인 범위
 
-### 첫 버전의 실제 처리
+### 기억 처리
 
 기억은 현재 허용·제공·보관·기억 출처 필드의 교집합에 연결한다.
 호스트는 그 근거로 후보를 선별하고 runtime은 실제 출처·대상·조건을 확인한다.
@@ -219,7 +219,7 @@ JSON 보고서는 자료 버전·지문·제공자·모델·Python·SQLite·기�
 담당 구현은 [기억·검색·색인](../../../src/daeri/infrastructure/memory.py), [임베딩](../../../src/daeri/infrastructure/embedding.py), [출처](../../../src/daeri/application/knowledge.py), [자동 처리](../../../src/daeri/application/automatic_memory.py)다.
 [자동 기억](../../../tests/test_automatic_memory.py)·[출처와 정정](../../../tests/test_knowledge.py)·[업무 통합](../../../tests/test_memory_flow.py)·[10,000건 이후 검색 회귀](../../../tests/test_memory_search_scale.py)·[회상 평가](../../../tests/test_memory_recall_evaluation.py)가 로컬 동작을 검증한다.
 모의 HTTP·벡터 검증과 실제 제공자의 의미 품질·회사 네트워크·인증·Windows 검증은 구분한다.
-확보한 결과와 추가 확인은 [구현 계획](../../plans/initial-implementation.md#확보한-검증-근거)을 따른다.
+확보한 결과와 추가 확인은 [구현과 검증](../../development/dependencies.md#검증-경계)을 따른다.
 
 설계는 [Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval)의 맥락·혼합 검색과 [Hindsight](https://hindsight.vectorize.io/)의 기억 저장·회수 흐름을 참고했다.
 로컬 구현은 [FastEmbed](https://github.com/qdrant/fastembed)·[sqlite-vec](https://alexgarcia.xyz/sqlite-vec/python.html), 모델 배경은 [다국어 E5 보고서](https://arxiv.org/abs/2402.05672)를 참고하며 실제 운영 품질은 별도 측정한다.

@@ -37,6 +37,24 @@ uv_supported() {
         *) return 1 ;;
     esac
 }
+resolve_directory() (
+    if [ -d "$1" ]; then CDPATH= cd -P -- "$1" && pwd -P; return; fi
+    if [ -e "$1" ] || [ -L "$1" ]; then return 1; fi
+    DAERI_PARENT=$(resolve_directory "$(dirname -- "$1")") || return 1
+    case "$(basename -- "$1")" in
+        .) printf '%s\n' "$DAERI_PARENT" ;;
+        ..) dirname -- "$DAERI_PARENT" ;;
+        *) printf '%s/%s\n' "${DAERI_PARENT%/}" "$(basename -- "$1")" ;;
+    esac
+)
+contains_directory() (
+    DAERI_CURSOR=$1
+    while :; do
+        [ "$DAERI_CURSOR" -ef "$2" ] && return 0
+        [ "$DAERI_CURSOR" != / ] || return 1
+        DAERI_CURSOR=$(dirname -- "$DAERI_CURSOR")
+    done
+)
 prepare_uv() {
     DAERI_TOOL_DIR="$DAERI_ROOT/.runtime"
     DAERI_UV="$DAERI_TOOL_DIR/uv.exe"
@@ -49,7 +67,8 @@ prepare_uv() {
         for DAERI_TOOL in curl shasum tar; do
             command -v "$DAERI_TOOL" >/dev/null 2>&1 || { printf 'DAERI preparation is incomplete: required OS tool %s is unavailable.\n' "$DAERI_TOOL" >&2; exit 1; }
         done
-        DAERI_DOWNLOAD=$(mktemp -d "${TMPDIR:-/tmp}/daeri-uv.XXXXXX")
+        mkdir -p "$DAERI_TOOL_DIR"
+        DAERI_DOWNLOAD=$(mktemp -d "$DAERI_TOOL_DIR/uv.prepare.XXXXXX")
         DAERI_ARCHIVE="$DAERI_DOWNLOAD/uv.tar.gz"
         printf 'Preparing private uv %s from the pinned official release.\n' "$UV_INSTALL_VERSION" >&2
         curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error --connect-timeout 15 --max-time 120 --output "$DAERI_ARCHIVE" "$UV_RELEASE_BASE/$UV_INSTALL_VERSION/uv-$DAERI_ARCH.tar.gz"
@@ -58,11 +77,9 @@ prepare_uv() {
             printf 'DAERI preparation is incomplete: uv archive checksum mismatch.\n' >&2; exit 1
         fi
         tar -xzf "$DAERI_ARCHIVE" -C "$DAERI_DOWNLOAD" "uv-$DAERI_ARCH/uv"
-        mkdir -p "$DAERI_TOOL_DIR"
-        cp "$DAERI_DOWNLOAD/uv-$DAERI_ARCH/uv" "$DAERI_TOOL_DIR/uv.new"
-        chmod 700 "$DAERI_TOOL_DIR/uv.new"
-        uv_supported "$DAERI_TOOL_DIR/uv.new" || { printf 'DAERI preparation is incomplete: downloaded uv cannot run.\n' >&2; exit 1; }
-        mv "$DAERI_TOOL_DIR/uv.new" "$DAERI_UV"
+        chmod 700 "$DAERI_DOWNLOAD/uv-$DAERI_ARCH/uv"
+        uv_supported "$DAERI_DOWNLOAD/uv-$DAERI_ARCH/uv" || { printf 'DAERI preparation is incomplete: downloaded uv cannot run.\n' >&2; exit 1; }
+        mv "$DAERI_DOWNLOAD/uv-$DAERI_ARCH/uv" "$DAERI_UV"
     fi
 }
 
@@ -76,6 +93,15 @@ if [ "$DAERI_MODE" = --prepare ] || [ "$DAERI_MODE" = --prepare-local-embedding 
         /*) ;;
         *) printf 'DAERI_DATA_DIR must be an absolute path; current-user ~/ paths are supported.\n' >&2; exit 2 ;;
     esac
+    DAERI_RESOLVED_DATA=$(resolve_directory "$DAERI_DATA") || {
+        printf 'DAERI_DATA_DIR must identify a usable directory.\n' >&2; exit 2;
+    }
+    if contains_directory "$DAERI_RESOLVED_DATA" "$DAERI_ROOT" || contains_directory "$DAERI_ROOT" "$DAERI_RESOLVED_DATA"; then
+        printf 'DAERI_DATA_DIR and the plugin installation must not overlap.\n' >&2; exit 2
+    fi
+    if [ -L "$DAERI_ROOT/.runtime" ] || { [ -e "$DAERI_ROOT/.runtime" ] && [ ! -d "$DAERI_ROOT/.runtime" ]; }; then
+        printf 'DAERI preparation is incomplete: .runtime must be an installation-owned directory.\n' >&2; exit 1
+    fi
     if ! mkdir "$DAERI_ROOT/.daeri-setup.lock" 2>/dev/null; then
         printf 'DAERI preparation is already running or was interrupted. Check that no setup process is active before removing .daeri-setup.lock and retrying.\n' >&2
         exit 1
@@ -90,6 +116,9 @@ if [ "$DAERI_MODE" = --prepare ] || [ "$DAERI_MODE" = --prepare-local-embedding 
         printf 'DAERI preparation is incomplete: inspect .venv.previous before retrying.\n' >&2
         exit 1
     fi
+    # The setup lock excludes a live candidate; these paths contain program scratch only.
+    rm -rf -- "$DAERI_ROOT"/.venv.prepare.* "$DAERI_ROOT/.runtime"/uv.prepare.*
+    rm -f -- "$DAERI_ROOT"/.mcp.prepare.* "$DAERI_ROOT/.runtime/uv.new" "$DAERI_ROOT/.runtime/uv.new.exe"
     DAERI_RUNTIME="$DAERI_DATA/runtime"
     mkdir -p "$DAERI_RUNTIME/python" "$DAERI_RUNTIME/cache"
     DAERI_RUNTIME=$(CDPATH= cd -- "$DAERI_RUNTIME" && pwd -P)

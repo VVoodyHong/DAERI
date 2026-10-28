@@ -48,7 +48,7 @@
 
 입력 스키마는 실행·관찰 기능의 실제 계약, 출력 스키마는 어댑터가 정규화한 제공 결과다.
 페이지 인수가 있는 하위 도구는 호스트가 실제 응답·cursor·total을 보고 반복 호출한다.
-등록 범위·읽기 판정은 [어댑터 기준](../resources/initial-adapters.md)을 따른다.
+등록 범위·읽기 판정은 [어댑터 기준](../resources/adapters.md)을 따른다.
 
 ### 리소스 읽기 묶음
 
@@ -98,7 +98,7 @@ runtime은 현재 루트의 존재·읽기·탐색 접근과 각 상대 경로�
 진단 뒤 루트의 실제 대상이 바뀌면 `CONTEXT_CHANGED`로 경로 재설정·진단을 안내한다.
 파일·Git 실행과 요약의 의미·충분성 확인은 호스트가, 경로 검사와 관찰 보존은 runtime이 담당한다.
 등록 결과의 `evidence_refs`를 기존 보고·파일·기억의 실제 기여 출처로 사용한다.
-연결·준비·실행 책임은 [로컬 Source 계약](../resources/initial-adapters.md#로컬-소스-코드)을 따른다.
+연결·준비·실행 책임은 [로컬 Source 계약](../resources/adapters.md#로컬-소스-코드)을 따른다.
 
 ### 원 호출과 상태 확인의 연결
 
@@ -151,4 +151,4 @@ runtime은 소비·시간 예약을 정리하고 읽기 재시도 여부는 호�
 ## 구현과 검증 경계
 
 [리소스 등록·전송](../../../src/daeri/infrastructure/resources.py)과 [runtime](../../../src/daeri/application/runtime.py)이 담당한다.
-로컬 stdio의 탐색·호출·인증·범위·실패와 Source의 경로·호스트 관찰 등록을 구분해 확인하며 [검증 범위](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)를 따른다.
+로컬 stdio의 탐색·호출·인증·범위·실패와 Source의 경로·호스트 관찰 등록을 구분해 확인하며 [검증 범위](../../development/dependencies.md#구현과-대표-검증)를 따른다.

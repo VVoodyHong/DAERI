@@ -93,8 +93,6 @@ class AwsReadAdapter(ReadAdapter):
     def validate_connection(self, config):
         super().validate_connection(config)
         connection = config["connection"]
-        if connection["transport"] != "stdio":
-            return
         env = connection.get("env", {})
         if any(item['constraints'].get('region', config['target'].get('region')) != config['target'].get('region')
                for item in config.get('capabilities', [])):
@@ -168,12 +166,11 @@ class AwsReadAdapter(ReadAdapter):
 
     def launch_connection(self, config):
         connection = super().launch_connection(config)
-        if connection["transport"] == "stdio":
-            env = connection.setdefault("env", {})
-            env.update({"AWS_API_MCP_PROFILE_NAME": env["AWS_PROFILE"], "AWS_DEFAULT_REGION": env["AWS_REGION"],
-                        "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS": "true", "AWS_EC2_METADATA_DISABLED": "true",
-                        "READ_OPERATIONS_ONLY": "true", "AWS_API_MCP_TELEMETRY": "false", "EXPERIMENTAL_AGENT_SCRIPTS": "false",
-                        "AWS_API_MCP_ALLOW_UNRESTRICTED_LOCAL_FILE_ACCESS": "no-access"})
+        env = connection.setdefault("env", {})
+        env.update({"AWS_API_MCP_PROFILE_NAME": env["AWS_PROFILE"], "AWS_DEFAULT_REGION": env["AWS_REGION"],
+                    "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS": "true", "AWS_EC2_METADATA_DISABLED": "true",
+                    "READ_OPERATIONS_ONLY": "true", "AWS_API_MCP_TELEMETRY": "false", "EXPERIMENTAL_AGENT_SCRIPTS": "false",
+                    "AWS_API_MCP_ALLOW_UNRESTRICTED_LOCAL_FILE_ACCESS": "no-access"})
         return connection
 
     def normalize(self, parameters, constraints, scope):

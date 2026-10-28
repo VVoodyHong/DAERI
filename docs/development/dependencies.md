@@ -1,9 +1,9 @@
 # 개발 의존성과 로컬 실행
 
-상태: 첫 버전의 준비·실행·구현 책임과 로컬 검증 정리; 실제 회사·호스트·Windows 검증은 별도
+상태: 준비·실행·구현 책임과 자동 검증 기준; 실제 회사·호스트·Windows 검증은 별도
 
 어떤 프로그램이 설치되고 구성 요소가 어떤 자료를 주고받는지 설명한다.
-업무·설정·보존 계약은 [제품 명세 지도](documentation-architecture.md#정본-지도), 제공 범위와 실제 확인 경계는 [최초 구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)이 정본이다.
+업무·설정·보존 계약은 [제품 명세 지도](documentation-architecture.md#정본-지도), 현재 제공 범위는 [제품 명세](../spec/product.md#현재-제공-범위)를 따른다.
 
 ## 의존성의 정본
 
@@ -108,7 +108,7 @@ GitHub runner에 기본 설치된 OS 도구와 캐시 없는 회사 PC의 전체
 회사 API·운영 리소스·SSO·호스트 UI·재연결의 검증은 해당 환경에서 진행한다.
 이 workflow는 읽기 권한·고정 액션 참조를 사용하고 외부 배포·병합은 별도 Git 작업의 범위다.
 실행 설정은 [uv의 공식 CI 안내](https://docs.astral.sh/uv/guides/integration/github/)와 [GitHub workflow 규격](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)을 기준으로 구성했다.
-현재 확인한 로컬·호스팅 실행 경계는 [구현 계획](../plans/initial-implementation.md#확보한-검증-근거)을 따른다.
+로컬·호스팅 실행 결과는 아래 [검증 경계](#검증-경계)와 구분해 해석한다.
 
 ### 기억 회상 평가
 
@@ -228,7 +228,7 @@ src/daeri/
 
 | 위치 | 담당 구현 | 책임 |
 |---|---|---|
-| 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#초기-도구-목록)를 받아 설정·업무 처리로 전달 |
+| 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#도구-목록)를 받아 설정·업무 처리로 전달 |
 | `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 필드·기억·보존 정책, 공통 오류, 인증 문자열 보조 검사와 정규 JSON 표현 |
 | `application/` | `runtime.py`·`planning.py`·`subagents.py`·`results.py`·`knowledge.py`·`automatic_memory.py` | 업무·계획·승인·위임·읽기 실행, 보고·파일의 근거 연결, 기억 후보 검증·갱신·재시도 |
 | `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP·인증·Source 경로와 관찰 등록, 기억 검색·색인과 임베딩 제공자 연결 |
@@ -248,7 +248,7 @@ src/daeri/
 개발용 `scripts/check.py`·`check_docs.py`는 [공통 검사](#공통-자동-검사)를, `.github/workflows/check.yml`은 GitHub의 트리거·실행 환경·결과 보관을 소유한다.
 
 리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
-어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [첫 연결 사양](../spec/resources/initial-adapters.md#어댑터별-실제-지원-경계)을 따른다.
+어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [어댑터 사양](../spec/resources/adapters.md#어댑터별-실제-지원-경계)을 따른다.
 
 ## 저장 위치와 데이터 역할
 
@@ -271,10 +271,42 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 인증 문자열 제거는 알려진 패턴을 검사하는 보조 기능이며 자료 제공은 필드 허용·마스킹·현재 정책을 함께 검사한다.
 임의 비밀·개인정보의 탐지는 별도의 검증 대상이다.
 
-## 검증의 해석
+## 구현과 대표 검증
 
-로컬 자동 테스트는 허용·거부·부분 결과·충돌·복구와 실제 stdio 전달을 확인한다.
-하위 에이전트 게이트웨이·공유 예산·동시 호출의 로컬 검증과 실제 호스트의 하위 에이전트 생성·MCP 전달·완료 회수는 각각의 근거로 확인한다.
-하위 프로그램의 잠긴 설치·import·도구 메타데이터 확인과 모의 리소스의 전체 실행은 서로 다른 검증이다.
-실제 호스트 설치·대화 의미 해석·하위 에이전트 생성과 도구 권한·회사 리소스·제공자 로그인·Windows 실행은 별도의 근거가 필요하다.
-현재 검증·남은 범위·실행 결과는 [최초 구현 계획](../plans/initial-implementation.md#현재-구현-단위와-검증-경계)에서 관리한다.
+| 영역 | 구현한 동작 | 대표 자동 검증 |
+|---|---|---|
+| 호스트·준비 | 두 호스트 패키지·네 Skill·하위 에이전트 지침, 정상 미준비 판정·격리 환경·준비 후 MCP 등록·실패 복구 | [MCP 진입](../../tests/test_mcp_server.py)·[준비](../../tests/test_bootstrap.py)·[관리](../../tests/test_management_entry.py) |
+| 사용자 설정 | 접속·인증 YAML, 복수 연결·개정·설정 이관·읽기 계약 갱신 | [YAML](../../tests/test_onboarding.py)·[인증](../../tests/test_onboarding_credentials.py)·[설정](../../tests/test_setup_fields.py) |
+| 삭제·저장 | profile 귀속 자료 cascade·사용 차단·실패 재시도, SQLite·파일·기한·해시 | [삭제](../../tests/test_profile_delete.py)·[저장](../../tests/test_storage.py)·[파일](../../tests/test_artifact_storage.py) |
+| 전체 이관 | 단일 profile의 허용 이력·기억·파일 암호화, 검증·확인 후 새 공간 복원·새 실행 권한 확인 | [통합](../../tests/test_profile_portability.py)·[논리 검증](../../tests/test_profile_bundle_validation.py)·[암호화](../../tests/test_portable_archive.py)·[CLI](../../tests/test_profile_portability_cli.py) |
+| 업무·승인 | 접수·보완·복구·불변 계획·실제 대화 응답·재승인·자동 기록 | [업무](../../tests/test_runtime.py)·[계획](../../tests/test_planning.py) |
+| 자율 읽기 | 기존 MCP 도구 탐색·선택, 읽기 묶음·스키마·명시 범위 검사 | [등록](../../tests/test_resources.py)·[자율 조회](../../tests/test_resource_autonomy.py)·[경계](../../tests/test_resource_boundary_regressions.py) |
+| 로컬 소스 코드 | 복수 경로·제품 교체·무설치 준비, 호스트 관찰·경로 검사와 보고·기억 근거 연결 | [설정](../../tests/test_setup_local_source.py)·[관찰·근거](../../tests/test_local_source.py)·[소스 원본 보존·설정 이관](../../tests/test_local_source_portability.py) |
+| 하위 에이전트 | 하위 에이전트 게이트웨이의 위임·배정·병렬 기능 선택·실제 근거 반환·철회·복구 | [위임](../../tests/test_subagents.py)·[패키징](../../tests/test_subagent_packaging.py) |
+| 결과 | 자유형 본문·호스트의 완료 판단·별도 출처, 임의 형식 파일 등록·재전달·현재 권한 조회 | [자유형 결과](../../tests/test_free_results.py)·[호스트 결과](../../tests/test_host_results.py)·[실행](../../tests/test_execution_flow.py)·[현재 정책](../../tests/test_derived_visibility.py) |
+| 페이지 사용 | 호스트가 기존 MCP의 다음 페이지를 조회하고 파일·보고·기억 후보를 제출 | [페이지 stdio](../../tests/test_paged_execution.py) |
+| 기억 | 호스트 후보의 자동 검증·정본 저장·색인·재시도·검색·정정·무효화 | [자동 갱신](../../tests/test_automatic_memory.py)·[출처](../../tests/test_knowledge.py)·[검색](../../tests/test_embedding_memory.py)·[규모](../../tests/test_memory_search_scale.py) |
+| 회상 평가 | 고정 합성 기억·질의의 유형별 회수율·순위·시간·접근 불가 반환 검사 | [평가 명령](../../evaluations/memory_recall.py)·[자료](../../evaluations/memory_recall.json)·[평가 회귀](../../tests/test_memory_recall_evaluation.py) |
+| 임베딩 | 로컬·OpenAI 호환 회사 API·키워드 전용 선택과 전송·응답·모델 호환 검사 | [API](../../tests/test_embedding_provider.py)·[통합](../../tests/test_embedding_integration.py) |
+| 공개 MCP | 16개 도구·호스트 호환 입력·구조화 응답·실제 stdio·요청 취소 후 연결 유지 | [스키마](../../tests/test_contracts.py)·[stdio](../../tests/test_mcp_server.py) |
+| 개발 검사 | 코어 의존 경계·패키지 자원 경로·공통 검증·실패 결과 보존·문서 링크·배포 원본 대조와 GitHub 실행 구성 | [패키지 경계](../../tests/test_package_boundaries.py)·[저장소 검사](../../tests/test_repository_checks.py)·[문서 링크](../../tests/test_documentation_links.py) |
+
+[첫 업무](../../tests/test_first_work_defaults.py)는 접속 전용 YAML → 승인 조회 → 호스트 보고·파일 → 선별 기억 → 다음 업무 회상을 확인한다.
+[피드백](../../tests/test_feedback_memory.py)은 정정 요청·새 승인·기존 지식 무효화·수정 경험의 회상을 확인한다.
+자료 제공·출처·내보내기·보존 조건은 [profile](../spec/configuration/profiles.md#로컬-저장-구조)과 [기억](../spec/tasks/memory.md)이 소유한다.
+
+[단순 계획](../../tests/test_simple_plan.py)·[기본 수행](../../tests/test_simple_workflow.py)은 최소 입력의 업무 흐름을, [실행 복구](../../tests/test_execution_persistence.py)는 중단 뒤 새 관찰과 설정·인증 갱신 뒤 수행 유지를 확인한다.
+
+### 검증 경계
+
+대표 자동 검증은 로컬 계약·모의 리소스의 허용·거부·부분 결과·동시성·저장 실패·복구와 실제 MCP stdio 전달을 대상으로 한다.
+하위 프로그램의 잠긴 설치·import·도구 메타데이터, 모의 HTTP·제공자 SDK, 준비한 실제 로컬 모델의 DNS 차단 검색은 각각의 검사 범위다.
+실제 모델 검사는 지정한 모델 경로가 있는 경우만 실행하며 검사별 결과·조건부 생략·실패 근거는 [공통 검사 보고서](#공통-자동-검사)에 기록한다.
+
+| 실제 환경 확인 대상 | 자동 검사와 구분할 범위 |
+|---|---|
+| Codex·Claude Code | 마켓플레이스 설치·Skill 진입·대화 승인 해석·도구 선택·파일 작성·하위 에이전트 생성·MCP 전달·완료 회수·UI |
+| 회사 리소스·임베딩 API | 실제 계정 권한·네트워크·SSO·회사 API 호환성과 의미 검색 품질 |
+| 사용자 PC·Windows | 캐시 없는 PC의 전체 준비, 실제 Windows 실행·정책·인증 UI; Windows 스크립트·구성과 가짜 API 회귀는 별도 근거 |
+| 호스트 생성 파일 | 등록 전후 시험 바이트·메타데이터 검사는 보존 무결성 확인; XLSX·PDF 등의 문서 구조·내용·레이아웃은 해당 작성 도구로 확인 |
+| 로컬 Source | 가상 디렉터리·관찰 등록·근거 연결 회귀와 실제 호스트의 파일·Git 조사 수행 |

@@ -10,7 +10,7 @@ profile에 리소스·운영 맥락·기억 정책을 묶고 연결 준비와 �
 
 profile은 서비스·환경별 리소스와 운영 정보를 묶는 DAERI의 설정 단위다.
 DB·Cache·Infra·Source·Document·Issue 등 필요한 범주와 여러 인스턴스를 함께 등록한다.
-범주 예시는 [리소스 범주](../resources/initial-adapters.md), 실제 사용 예정 제품은 [사용 예정 환경](../product.md#사용-예정-환경)을 따른다.
+범주 예시는 [리소스 범주](../resources/adapters.md), 실제 사용 예정 제품은 [사용 예정 환경](../product.md#사용-예정-환경)을 따른다.
 
 | 구분 | 가상 예시 | 책임 |
 |---|---|---|
@@ -115,7 +115,7 @@ stdio 연결은 이미 준비할 실행 파일의 절대 경로와 문자열 인
 설정 구조는 절대 경로 문법과 연결 필드를 검증하며 다른 PC의 경로도 저장·조회·복원할 수 있다.
 setup 입력은 현재 디렉터리의 존재·읽기·탐색 접근을 확인하고 심볼릭 링크를 해소한 실제 경로로 저장한다.
 준비·진단·관찰 등록은 해당 PC의 접근 가능 여부와 저장된 실제 경로의 일치를 다시 확인한다.
-`local_source` 어댑터의 `source-observe` 관찰 기능은 [Source 연결 계약](../resources/initial-adapters.md#로컬-소스-코드)을 따른다.
+`local_source` 어댑터의 `source-observe` 관찰 기능은 [Source 연결 계약](../resources/adapters.md#로컬-소스-코드)을 따른다.
 
 인증 참조는 `credential:이름` 또는 명시적으로 선택한 `env:환경변수명`이다.
 전자는 OS 인증 저장소, 후자는 현재 호스트가 받은 해당 환경 변수에서만 해소한다.
@@ -124,14 +124,14 @@ setup 입력은 현재 디렉터리의 존재·읽기·탐색 접근을 확인�
 
 인스턴스·범주·인증 문맥·기능의 ID는 영문·숫자로 시작하는 영문·숫자·`_`·`.`·`:`·`-`의 1~128자다.
 각 리소스 설정은 UTF-8 JSON 256 KiB 이내이며 필드·타입·어댑터 조합과 비밀 참조를 저장 전에 검사한다.
-자동 탐색으로 추가한 실제 도구의 개수·이름·스키마 조건은 [등록 설정과 진단](../resources/initial-adapters.md#등록-설정과-진단)을 따른다.
+자동 탐색으로 추가한 실제 도구의 개수·이름·스키마 조건은 [등록 설정과 진단](../resources/adapters.md#등록-설정과-진단)을 따른다.
 
 외부 서비스의 새 연결은 인증 문맥을 `identity:<profile>:<인스턴스>`로 생성하고 128자를 넘으면 두 값의 해시로 구성한다.
 인증 비밀의 기본 참조는 profile·인스턴스·인증 필드로 생성한다.
 조합한 이름이 인증 참조의 문자·길이 조건을 벗어나면 세 값의 결합을 해시한 고유 참조를 사용한다.
 같은 입력은 같은 참조로 생성하고 기존에 등록한 유효 참조는 유지한다.
 
-도구 등록·대상 해석·계약 변경은 [리소스 계약](../resources/contract.md), 제품별 호환 식별자는 [어댑터 지원 경계](../resources/initial-adapters.md#어댑터별-실제-지원-경계)를 따른다.
+도구 등록·대상 해석·계약 변경은 [리소스 계약](../resources/contract.md), 제품별 호환 식별자는 [어댑터 지원 경계](../resources/adapters.md#어댑터별-실제-지원-경계)를 따른다.
 `discover_tools`는 카탈로그와 확인한 기능 갱신에서 구성하고 실제 사용은 현재 정책·승인 검사를 거친다.
 
 ### 자료 제공·보관 정책
@@ -265,7 +265,7 @@ setup은 [호스트 질문 계약](../hosts/plugins.md#setup의-정형-질문)�
 
 설정을 완료한 profile은 [선택 계약](#선택과-기본값)에 따라 해당 대화의 새 업무 대상으로 안내한다.
 최소 진단은 연결·인증 문맥·도구 계약을 확인하고 실제 자료 조회는 업무 계획 승인 뒤 시작한다.
-준비 실패는 저장한 설정을 유지한 채 미완료 단계만 재시도하며 오류·지원 한계는 [리소스 진단](../resources/initial-adapters.md#오류와-확인-경계)을 따른다.
+준비 실패는 저장한 설정을 유지한 채 미완료 단계만 재시도하며 오류·지원 한계는 [리소스 진단](../resources/adapters.md#오류와-확인-경계)을 따른다.
 
 ## 사용자용 setup YAML
 
@@ -463,7 +463,7 @@ resources:
 `api_token`은 계정·API 토큰, `personal_token`은 Server/Data Center의 개인 액세스 토큰(PAT)을 사용한다.
 Cloud는 `api_token`과 사용자명이 필요하다.
 두 방식 모두 `credentials.token`에 입력하고 선택한 인증 방식의 저장 참조로 연결한다.
-제품별 조회·인증 경계는 [실제 지원 범위](../resources/initial-adapters.md#어댑터별-실제-지원-경계)를 따른다.
+제품별 조회·인증 경계는 [실제 지원 범위](../resources/adapters.md#어댑터별-실제-지원-경계)를 따른다.
 
 ### 접속 정보와 인증값
 
@@ -539,7 +539,7 @@ YAML의 [주석과 자료 표현](https://yaml.org/spec/1.2.2/)을 사용하되 
 대상·환경·인증·기능은 새 어댑터의 계약으로 구성하며 변경 요약을 확인한 적용에서 함께 저장한다.
 과거 업무는 당시 설정 스냅샷을 보존하고 교체한 연결은 준비·진단 뒤 새 업무에서 사용한다.
 
-새 연결은 해당 어댑터의 읽기·관찰 기능과 실제 접근 권한을 사용하며 [어댑터 지원 경계](../resources/initial-adapters.md#어댑터별-실제-지원-경계)를 따른다.
+새 연결은 해당 어댑터의 읽기·관찰 기능과 실제 접근 권한을 사용하며 [어댑터 지원 경계](../resources/adapters.md#어댑터별-실제-지원-경계)를 따른다.
 호스트는 실제 읽기 권한과 명시한 범위 안에서 필요한 질의·키 탐색·후속 조회를 선택한다.
 명시적 관리자 조건은 전체 JSON의 `capabilities[].constraints`로 적용하고 자료 정책은 보존한다.
 일반 접속값 갱신은 기존 도구 선택과 조건을 유지한다.
@@ -766,7 +766,7 @@ profile 선택·목록 조회는 저장된 구성·기존 업무·승인을 보�
 
 업무 실행은 선택한 profile의 현재 권한과 해당 업무의 유효한 계획 승인을 함께 요구한다.
 
-초기에는 업무당 하나의 DAERI profile을 적용한다.
+업무당 하나의 DAERI profile을 적용한다.
 한 profile에 여러 리소스·제품·계정을 등록할 수 있다.
 다른 profile의 리소스가 필요하면 사용할 묶음을 명시적으로 구성해 새 업무로 시작한다.
 
@@ -799,13 +799,49 @@ macOS의 사용자 전용 파일 권한·경로 검증은 로컬 테스트로 �
 
 설치 배포물·모델 파일과 사용자 원본 자료를 구분한다.
 플러그인 업데이트·재설치·색인 재생성은 설정·업무 기록·유효한 기억을 보존한다.
-초기 기억 저장·검색의 지원 단위는 같은 OS 사용자의 로컬 저장소다.
+기억 저장·검색의 지원 단위는 같은 OS 사용자의 로컬 저장소다.
 
 ## 로컬 저장 구조
 
 사용자 설정 YAML·적용된 JSON·사용자별 SQLite·관리 파일·인증 저장소의 책임을 나눈다.
 SQLite는 DAERI 내부 로컬 저장 엔진이며 외부 DB 리소스는 등록 어댑터를 통해 연결한다.
 별도 DB 서버나 벡터 DB 서버를 운영할 필요가 없는 구성을 기본으로 한다.
+
+### 디렉터리 구성
+
+기본 저장 위치 아래의 구성은 다음과 같다.
+모델·연결 도구·작업 영역은 해당 기능을 준비하거나 사용할 때 생성한다.
+
+```text
+DAERI/
+├── config/profiles/<profile>.yaml
+├── setup/<profile>/draft.json
+├── profiles/<id>.json
+├── daeri.sqlite3
+├── records/<id>.json
+├── artifacts/<id>.<확장자>
+├── workspaces/<업무 지문>/
+├── resources/
+│   ├── <profile·인스턴스 지문>.json
+│   └── processes/<연결 지문>/
+├── tools/<recipe>/<버전-잠금 지문>/
+│   ├── .venv/
+│   └── prepared.json
+├── models/
+│   ├── prepared.json
+│   └── <모델·토크나이저 파일>
+├── runtime/
+│   ├── python/
+│   └── cache/
+└── staging/<id>.json
+```
+
+`config/profiles`는 사람이 편집할 입력이고 `profiles`는 적용한 구성의 불변 파일이다.
+`setup`은 같은 입력을 다시 검증·적용할 기준 개정과 규격 지문을 보관한다.
+SQLite가 생성하는 `daeri.sqlite3-wal`·`daeri.sqlite3-shm`은 DB와 함께 사용하는 보조 파일이다.
+리소스 도구 준비 중에는 `tools/<recipe>/.prepare.lock/`·`.prepare.<id>/`를 사용하고 정상 종료·실패 시 정리한다.
+중단으로 잠금이 남으면 실행 중인 준비의 유무와 후보 상태를 확인한 뒤 복구한다.
+설치 사본의 프로그램·임시 파일 수명은 [설치 파일 구성](../installation/environment.md#설치-파일-구성)을 따른다.
 
 ### 데이터별 정본과 형식
 
@@ -1123,7 +1159,7 @@ macOS는 키체인, Windows는 자격 증명 보관 기능의 native backend를 
 기본 setup은 [YAML 인증 필드](#접속-정보와-인증값)로 입력·수정하고 확인한 적용에서 OS 인증 저장소에 등록한다.
 호스트는 현재 연결의 `auth_env`·`auth_headers`와 API의 `credential_ref`를 기준으로 `auth status REFERENCE`를 확인한다.
 누락·실패한 인증은 같은 파일의 해당 항목을 수정·적용한 뒤 실제 연결을 재진단한다.
-제품별 실제 인증·대상 바인딩은 [접속 계약](../resources/initial-adapters.md#실제-접속-대상과-인증-문맥)을 따른다.
+제품별 실제 인증·대상 바인딩은 [접속 계약](../resources/adapters.md#실제-접속-대상과-인증-문맥)을 따른다.
 
 `auth set/status/delete`는 개별 인증을 관리하는 별도 CLI 경로다.
 
@@ -1208,7 +1244,7 @@ macOS는 키체인, Windows는 자격 증명 보관 기능의 native backend를 
 
 담당 구현은 [정형 YAML](../../../src/daeri/config/onboarding.py)·[설정 관리](../../../src/daeri/config/setup.py)·[저장소](../../../src/daeri/infrastructure/storage.py)·[profile 삭제](../../../src/daeri/config/profile_deletion.py)다.
 [온보딩 검증](../../../tests/test_onboarding.py)은 복수 연결·입력 기본값·인증 참조 치환·확인값·개정 충돌·읽기 계약 변경 미리보기를 대조한다.
-가져오기·내보내기·준비·삭제·보존과 기억 격리의 대표 검증은 [구현 범위 표](../../plans/initial-implementation.md#현재-구현-단위와-검증-경계)에서 찾는다.
+가져오기·내보내기·준비·삭제·보존과 기억 격리의 대표 검증은 [구현 범위 표](../../development/dependencies.md#구현과-대표-검증)에서 찾는다.
 
 로컬 자동 검증과 고정 프로그램 설치의 확인 범위는 실제 회사 로그인·운영 권한·호스트 대화·OS 인증 UI·Windows 실행과 구분한다.
 후자는 사용자 환경의 검증 대상이다.

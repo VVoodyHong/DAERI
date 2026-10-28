@@ -132,7 +132,7 @@ def validate_plan(profile, draft, registry, evidence_instances=()):
         descriptor = registry.get(profile, step["instance_id"], step["capability_id"])
         check(step["contract_ref"] == descriptor["contract_ref"], "현재 등록 계약으로 계획을 갱신하세요.")
         check(step["purpose"] in descriptor["supported_purposes"], "기능이 해당 실행 목적을 지원하지 않습니다.")
-        check(not descriptor["effects"]["changes_state"] and step["purpose"] in {"collect", "verify"}, "첫 버전은 등록된 읽기·검증 기능만 지원합니다.")
+        check(not descriptor["effects"]["changes_state"] and step["purpose"] in {"collect", "verify"}, "리소스 실행은 등록된 읽기·검증 기능을 지원합니다.")
         try:
             Draft202012Validator(descriptor["scope_schema"]).validate(step["scope"])
         except Exception:
