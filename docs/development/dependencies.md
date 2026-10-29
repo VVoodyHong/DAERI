@@ -62,7 +62,7 @@ macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -Exe
 리소스 인증·진단·기억 모델은 해당 관리 경로의 결과로 확인한다.
 저장소 개설 전의 runtime 검사와 저장된 profile의 연결 진단은 별도 결과로 제공한다.
 
-### 공통 자동 검사
+### 로컬 개발 검사
 
 개발 환경을 준비한 뒤 저장소 루트에서 [공통 검사 명령](../../scripts/check.py)을 실행한다.
 이 명령은 아래 검사를 차례로 수행하고 실패가 있어도 나머지 독립 검사의 결과를 기록한다.
@@ -90,25 +90,10 @@ uv run --no-sync python -m scripts.check
 외부 URL의 접속 상태, 참조형 링크와 Setext 제목의 추가는 해당 형식 도입 시 검사 계약에 반영한다.
 배포 검사·로그 보존의 회귀는 [저장소 검사 테스트](../../tests/test_repository_checks.py), 링크 경계는 [문서 링크 테스트](../../tests/test_documentation_links.py)로 확인한다.
 
-### GitHub 실행과 별도 확인
+### 실제 환경 확인
 
-[GitHub workflow](../../.github/workflows/check.yml)는 `main` push·PR·수동 실행에서 Ubuntu의 Python 3.12·3.14로 같은 공통 명령을 수행한다.
-uv 버전은 [준비 도구 정책](../../scripts/dependencies.env)을 읽고 잠긴 개발 환경을 준비한다.
-각 job은 실패 상태를 전달하고 성공·실패의 요약·로그·평가·검증한 배포물을 GitHub 결과에 보관한다.
-
-수동 실행의 선택 항목은 기본값이 꺼져 있으며 다음 검사를 추가한다.
-
-| 선택 항목 | 실행 범위 |
-|---|---|
-| `native` | macOS의 공통 검사와 Windows의 native bootstrap 회귀 |
-| `local_model` | 공개 로컬 모델 다운로드·준비 → DNS 차단 실제 추론 회귀 → 같은 합성 자료의 의미 회상 평가 |
-| `clean_bootstrap` | macOS·Windows의 빈 플러그인 실행 환경·별도 사용자 경로에서 실제 준비 → MCP 구성 발행·runtime 검사 |
-
-GitHub runner에 기본 설치된 OS 도구와 캐시 없는 회사 PC의 전체 설치 경험은 각각의 근거로 확인한다.
-회사 API·운영 리소스·SSO·호스트 UI·재연결의 검증은 해당 환경에서 진행한다.
-이 workflow는 읽기 권한·고정 액션 참조를 사용하고 외부 배포·병합은 별도 Git 작업의 범위다.
-실행 설정은 [uv의 공식 CI 안내](https://docs.astral.sh/uv/guides/integration/github/)와 [GitHub workflow 규격](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)을 기준으로 구성했다.
-로컬·호스팅 실행 결과는 아래 [검증 경계](#검증-경계)와 구분해 해석한다.
+macOS·Windows의 전체 준비와 회사 API·운영 리소스·SSO·호스트 UI·재연결은 해당 환경에서 확인한다.
+로컬 개발 검사 결과와 실제 환경의 확인 범위는 아래 [검증 경계](#검증-경계)로 구분한다.
 
 ### 기억 회상 평가
 
@@ -249,7 +234,7 @@ src/daeri/
 
 개발용 `evaluations/memory_recall.py`·JSON은 [회상 품질 평가](#기억-회상-평가)의 명령·고정 자료를 소유한다.
 제품 runtime의 공개 도구와 별도로 실행하고 지표·격리·실패 처리는 [평가 회귀](../../tests/test_memory_recall_evaluation.py)로 확인한다.
-개발용 `scripts/check.py`·`check_docs.py`는 [공통 검사](#공통-자동-검사)를, `.github/workflows/check.yml`은 GitHub의 트리거·실행 환경·결과 보관을 소유한다.
+개발용 `scripts/check.py`·`check_docs.py`는 [로컬 개발 검사](#로컬-개발-검사)의 실행·결과 보관을 소유한다.
 
 리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
 어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [어댑터 사양](../spec/resources/adapters.md#어댑터별-실제-지원-경계)을 따른다.
@@ -293,7 +278,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 | 회상 평가 | 고정 합성 기억·질의의 유형별 회수율·순위·시간·접근 불가 반환 검사 | [평가 명령](../../evaluations/memory_recall.py)·[자료](../../evaluations/memory_recall.json)·[평가 회귀](../../tests/test_memory_recall_evaluation.py) |
 | 임베딩 | 로컬·OpenAI 호환 회사 API·키워드 전용 선택과 전송·응답·모델 호환 검사 | [API](../../tests/test_embedding_provider.py)·[통합](../../tests/test_embedding_integration.py) |
 | 공개 MCP | 16개 도구·호스트 호환 입력·구조화 응답·실제 stdio·요청 취소 후 연결 유지 | [스키마](../../tests/test_contracts.py)·[stdio](../../tests/test_mcp_server.py) |
-| 개발 검사 | 코어 의존 경계·패키지 자원 경로·공통 검증·실패 결과 보존·문서 링크·배포 원본 대조와 GitHub 실행 구성 | [패키지 경계](../../tests/test_package_boundaries.py)·[저장소 검사](../../tests/test_repository_checks.py)·[문서 링크](../../tests/test_documentation_links.py) |
+| 개발 검사 | 코어 의존 경계·패키지 자원 경로·공통 검증·실패 결과 보존·문서 링크·배포 원본 대조 | [패키지 경계](../../tests/test_package_boundaries.py)·[저장소 검사](../../tests/test_repository_checks.py)·[문서 링크](../../tests/test_documentation_links.py) |
 
 [첫 업무](../../tests/test_first_work_defaults.py)는 접속 전용 YAML → 승인 조회 → 호스트 보고·파일 → 선별 기억 → 다음 업무 회상을 확인한다.
 [피드백](../../tests/test_feedback_memory.py)은 정정 요청·새 승인·기존 지식 무효화·수정 경험의 회상을 확인한다.
@@ -306,7 +291,7 @@ CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
 
 대표 자동 검증은 로컬 계약·모의 리소스의 허용·거부·부분 결과·동시성·저장 실패·복구와 실제 MCP stdio 전달을 대상으로 한다.
 하위 프로그램의 잠긴 설치·import·도구 메타데이터, 모의 HTTP·제공자 SDK, 준비한 실제 로컬 모델의 DNS 차단 검색은 각각의 검사 범위다.
-실제 모델 검사는 지정한 모델 경로가 있는 경우만 실행하며 검사별 결과·조건부 생략·실패 근거는 [공통 검사 보고서](#공통-자동-검사)에 기록한다.
+실제 모델 검사는 지정한 모델 경로가 있는 경우만 실행하며 검사별 결과·조건부 생략·실패 근거는 [로컬 개발 검사 보고서](#로컬-개발-검사)에 기록한다.
 
 확보한 별도 실제 실행 근거는 다음과 같다.
 

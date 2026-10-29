@@ -7,7 +7,6 @@ import tomllib
 import zipfile
 
 import pytest
-import yaml
 
 from scripts import check
 
@@ -162,20 +161,6 @@ def test_validation_commands_isolate_user_data_and_check_every_lock(monkeypatch,
     assert len(commands) == 6
     assert all('--check' in command for command in commands)
     assert all('--no-python-downloads' in command for command in commands)
-
-
-def test_workflow_uses_available_job_contexts_and_readonly_pull_requests():
-    workflow = yaml.load((ROOT / '.github/workflows/check.yml').read_text(), Loader=yaml.BaseLoader)
-    assert set(workflow['on']) == {'push', 'pull_request', 'workflow_dispatch'}
-    assert workflow['permissions'] == {'contents': 'read'}
-    for job in workflow['jobs'].values():
-        assert all('runner.' not in value for value in job.get('env', {}).values())
-        assert job.get('continue-on-error', 'false') == 'false'
-        for step in job['steps']:
-            if 'uses' in step:
-                assert len(step['uses'].rsplit('@', 1)[1]) == 40
-                if step['uses'].startswith('actions/checkout@'):
-                    assert step['with']['persist-credentials'] == 'false'
 
 
 def test_previous_uv_generated_ignore_allows_repeated_check_output(tmp_path):
