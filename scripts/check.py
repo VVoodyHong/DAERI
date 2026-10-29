@@ -1,4 +1,4 @@
-"""Run the same repository checks locally and in CI."""
+"""Run repository checks from the local development environment."""
 
 import argparse
 import json
@@ -21,7 +21,7 @@ from scripts.check_docs import check_docs
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = ('pyproject.toml', 'uv.lock', 'AGENTS.md', 'CLAUDE.md', 'README.md')
 SOURCE_DIRS = ('src', 'recipes', 'scripts', 'skills', 'agents', 'docs',
-               '.claude-plugin', '.codex-plugin', '.agents', '.github', 'evaluations', 'tests')
+               '.claude-plugin', '.codex-plugin', '.agents', 'evaluations', 'tests')
 
 
 def _toml(path):
