@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1320" viewBox="0 0 1800 1320" role="img" aria-labelledby="title desc">
+  <title id="title">DAERI AWS AgentCore 이관 목표 아키텍처</title>
+  <desc id="desc">사용자는 Claude Code와 Codex 플러그인으로 요청하고 승인한다. DAERI 서버 연결부가 관련 기억을 제공하고 AgentCore Runtime의 managed harness를 호출한다. Harness는 모델과 도구 호출 루프를 실행하고 AgentCore Memory로 업무별 대화를 보관한다. Gateway는 리소스와 DAERI 업무 지식 도구를 연결한다. DAERI 지식 서비스가 경험을 정리하고 공용 PostgreSQL pgvector와 S3에 보관한다. 모델과 임베딩은 각각 사내 API 또는 Amazon Bedrock에서 선택한다. AWS 이관 후 구현할 목표 설계다.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#63758a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#306cb5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <style>
+      text{font-family:"Apple SD Gothic Neo","Noto Sans KR",Arial,sans-serif;fill:#203247}
+      .title{font-size:38px;font-weight:750;letter-spacing:-1px}.subtitle{font-size:22px;fill:#62748a}
+      .group{font-size:23px;font-weight:700}.heading{font-size:26px;font-weight:750;letter-spacing:-.4px}.body{font-size:21px;fill:#506277}.small{font-size:19px;fill:#61738a}.label{font-size:20px;fill:#4d627b}.tag{font-size:18px;font-weight:650}
+      .line{fill:none;stroke:#63758a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+      .two{marker-start:url(#arrow)}.blue{stroke:#306cb5;marker-end:url(#blueArrow);marker-start:url(#blueArrow)}
+      .providerLine{fill:none;stroke:#8a73b5;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:7 6;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1800" height="1320" fill="#f7f9fc"/>
+  <text x="55" y="65" class="title">DAERI · AWS AgentCore 아키텍처</text>
+  <text x="56" y="104" class="subtitle">AWS는 수행·연결·대화 관리를, DAERI는 업무와 공유 기억의 연결을 담당합니다.</text>
+  <g transform="translate(1215 46)">
+    <rect width="125" height="30" rx="15" fill="#fff0d9"/><text x="62" y="21" text-anchor="middle" class="tag" style="fill:#925313">AWS 관리형</text>
+    <rect x="137" width="105" height="30" rx="15" fill="#e8f0ff"/><text x="189" y="21" text-anchor="middle" class="tag" style="fill:#275b9b">DAERI</text>
+    <rect x="254" width="110" height="30" rx="15" fill="#e5f4eb"/><text x="309" y="21" text-anchor="middle" class="tag" style="fill:#26764f">공유 저장</text>
+    <rect x="376" width="145" height="30" rx="15" fill="#f0eafa"/><text x="448" y="21" text-anchor="middle" class="tag" style="fill:#705497">선택 API</text>
+  </g>
+
+  <rect x="380" y="155" width="1000" height="1040" rx="23" fill="#fff" stroke="#d7dfe9" stroke-width="2"/>
+  <rect x="380" y="155" width="1000" height="57" rx="23" fill="#fff0d9"/>
+  <rect x="381" y="184" width="998" height="28" fill="#fff0d9"/>
+  <text x="410" y="192" class="group" style="fill:#925313">AWS 공용 플랫폼</text>
+  <text x="1350" y="191" text-anchor="end" class="small">프로젝트·서비스별 공유</text>
+
+  <rect x="50" y="260" width="270" height="190" rx="18" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="77" y="300" class="small">사용자 PC</text>
+  <text x="77" y="341" class="heading">Claude Code</text>
+  <text x="77" y="375" class="heading">Codex 플러그인</text>
+  <text x="77" y="418" class="body">요청 · 승인 · 결과 확인</text>
+
+  <rect x="430" y="260" width="300" height="175" rx="18" fill="#edf3ff" stroke="#adc6e7" stroke-width="2"/>
+  <text x="455" y="305" class="heading">DAERI 서버 연결부</text>
+  <text x="455" y="347" class="body">사용자·업무·세션 연결</text>
+  <text x="455" y="380" class="body">실제 승인 전달 · 응답 기록</text>
+  <text x="455" y="413" class="small">시작 회상 · 지식 갱신 등록</text>
+
+  <rect x="800" y="240" width="530" height="225" rx="19" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
+  <text x="826" y="276" class="group" style="fill:#925313">AgentCore Runtime</text>
+  <rect x="822" y="298" width="486" height="145" rx="13" fill="#fff0d9" stroke="#edce9f"/>
+  <text x="845" y="339" class="heading">Managed harness</text>
+  <text x="845" y="378" class="body">모델·도구 호출 루프 · 문맥 관리</text>
+  <text x="845" y="414" class="small">orchestrator · subagent 실행</text>
+
+  <rect x="840" y="515" width="490" height="105" rx="16" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
+  <text x="866" y="555" class="heading">AgentCore Memory</text>
+  <text x="866" y="592" class="body">업무별 대화·도구 이력 저장·복구</text>
+
+  <rect x="430" y="700" width="390" height="175" rx="18" fill="#edf3ff" stroke="#adc6e7" stroke-width="2"/>
+  <text x="456" y="744" class="heading">DAERI 업무·지식 MCP</text>
+  <text x="456" y="785" class="body">업무·승인 근거 · 자동 기억 처리</text>
+  <text x="456" y="819" class="body">회상 · 경험 정리 · 색인 · 정정</text>
+  <text x="456" y="852" class="small">저장·임베딩 상태 추적과 재처리</text>
+
+  <rect x="950" y="700" width="380" height="175" rx="18" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
+  <text x="976" y="744" class="heading">AgentCore Gateway</text>
+  <text x="976" y="785" class="body">Policy · Identity</text>
+  <text x="976" y="819" class="body">도구 연결 · 인증 · 정책 집행</text>
+  <text x="976" y="852" class="small">리소스와 지식 도구를 각각 연결</text>
+
+  <rect x="430" y="955" width="390" height="108" rx="16" fill="#eaf6ef" stroke="#a2cfb5" stroke-width="2"/>
+  <text x="456" y="996" class="heading">공용 PostgreSQL · pgvector</text>
+  <text x="456" y="1033" class="body">서비스 지식 · 벡터 · 업무·승인 기록</text>
+  <rect x="950" y="955" width="380" height="108" rx="16" fill="#eaf6ef" stroke="#a2cfb5" stroke-width="2"/>
+  <text x="976" y="996" class="heading">Amazon S3</text>
+  <text x="976" y="1033" class="body">근거 자료 · CSV 등 산출물 파일</text>
+
+  <rect x="1450" y="180" width="300" height="405" rx="18" fill="#f4f0fa" stroke="#c5b5db" stroke-width="2"/>
+  <text x="1475" y="222" class="group" style="fill:#705497">모델·임베딩 제공 경로</text>
+  <text x="1475" y="254" class="small">각각 선택 · 배포 위치에 맞춰 연결</text>
+  <rect x="1470" y="278" width="260" height="105" rx="12" fill="#fff" stroke="#d8cce6"/>
+  <text x="1490" y="314" class="heading">모델 API</text>
+  <text x="1490" y="348" class="body">사내·호환 API / Bedrock</text>
+  <rect x="1470" y="412" width="260" height="105" rx="12" fill="#fff" stroke="#d8cce6"/>
+  <text x="1490" y="449" class="heading">임베딩 API</text>
+  <text x="1490" y="483" class="body">사내·호환 API / Bedrock</text>
+  <text x="1475" y="555" class="small">Amazon Bedrock은 AWS 서비스</text>
+
+  <rect x="1450" y="700" width="300" height="175" rx="18" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="1475" y="741" class="heading">리소스 MCP · API</text>
+  <text x="1475" y="782" class="body">DB · 문서 · 이슈 · 소스 도구</text>
+  <text x="1475" y="819" class="small">직접 연결 또는 필요한 변환</text>
+  <text x="1475" y="851" class="small">사내·AWS 등 실제 대상 위치</text>
+
+  <path d="M320 347H430" class="line two"/>
+  <rect x="332" y="296" width="86" height="36" rx="8" fill="#f7f9fc"/>
+  <text x="375" y="321" text-anchor="middle" class="label">요청·승인</text>
+  <text x="375" y="381" text-anchor="middle" class="label">진행·결과</text>
+  <path d="M730 347H800" class="line two"/>
+  <text x="765" y="246" text-anchor="middle" class="small">InvokeHarness</text>
+  <path d="M1085 465V515" class="line two"/>
+  <text x="1105" y="497" class="label">대화 저장·복구</text>
+  <path d="M580 435V700" class="line blue"/>
+  <rect x="455" y="539" width="250" height="74" rx="11" fill="#fff"/>
+  <text x="580" y="568" text-anchor="middle" class="label" style="fill:#306cb5">시작 시 기억 제공</text>
+  <text x="580" y="597" text-anchor="middle" class="label" style="fill:#306cb5">결과·피드백 자동 기록</text>
+  <path d="M1330 417H1360V753H1330" class="line"/>
+  <text x="1317" y="663" text-anchor="end" class="label">승인 범위의 도구 호출</text>
+  <path d="M950 788H820" class="line"/>
+  <text x="884" y="766" text-anchor="middle" class="label">지식 도구</text>
+  <path d="M1330 788H1450" class="line"/>
+  <text x="1390" y="766" text-anchor="middle" class="label">직접 호출</text>
+  <path d="M620 875V955" class="line two"/>
+  <text x="643" y="925" class="label">저장·검색</text>
+  <path d="M820 837H892V1009H950" class="line two"/>
+  <rect x="859" y="890" width="67" height="54" rx="8" fill="#fff"/>
+  <text x="893" y="914" text-anchor="middle" class="small">파일</text>
+  <text x="893" y="938" text-anchor="middle" class="small">보관</text>
+  <path d="M1330 330H1470" class="providerLine"/>
+  <text x="1398" y="307" text-anchor="middle" class="label">추론·판단</text>
+  <path d="M800 875V917H1410V799Q1398 788 1410 777V362H1470" class="providerLine"/>
+  <path d="M1410 465H1470" class="providerLine"/>
+  <rect x="1000" y="894" width="257" height="40" rx="10" fill="#fff"/>
+  <text x="1128" y="922" text-anchor="middle" class="label" style="fill:#705497">경험 정리 · 임베딩</text>
+
+  <rect x="430" y="1090" width="900" height="77" rx="14" fill="#f6f8fb" stroke="#e0e6ef"/>
+  <text x="451" y="1121" class="small">공통 관리 기반</text>
+  <text x="451" y="1149" class="body">SSO · Cognito안 · IAM · Identity · Secrets Manager</text>
+  <line x1="1015" y1="1104" x2="1015" y2="1154" stroke="#dce3ec"/>
+  <text x="1036" y="1121" class="small">실행 추적 · 품질 평가</text>
+  <text x="1036" y="1149" class="body">Observability · Evaluations</text>
+
+  <rect x="50" y="615" width="270" height="260" rx="17" fill="#edf3ff"/>
+  <text x="73" y="656" class="group" style="fill:#275b9b">다음 구성원의 첫 업무</text>
+  <text x="73" y="699" class="body">관련 업무 경험과 근거를</text>
+  <text x="73" y="732" class="body">현재 권한으로 찾아 활용</text>
+  <line x1="73" y1="756" x2="295" y2="756" stroke="#ccdcef"/>
+  <text x="73" y="789" class="body">계획·승인·실행 문맥은</text>
+  <text x="73" y="823" class="body">각자의 업무에 연결</text>
+  <text x="73" y="854" class="small">공유 기억과 개별 수행을 분리</text>
+
+  <text x="55" y="1244" class="small">목표 설계 · AWS 연동·배포 전 검증 대상</text>
+  <text x="55" y="1278" class="small">DB 구현안: Aurora PostgreSQL Serverless · Data API  |  소스 실행 위치: 사용자 PC / AWS 검토 중  |  현재 권한으로 공유 지식 검색</text>
+</svg>

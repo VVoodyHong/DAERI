@@ -1,148 +1,116 @@
 # DAERI 아키텍처
 
-상태: 호스트 총괄 에이전트·하위 에이전트와 공통 MCP runtime의 협업 구현; 실제 호스트 하위 에이전트·회사 연결은 별도 검증
+상태: AWS 기반 공용 서비스의 확정 구조와 구현 경계.
+클라우드 기능은 개발 중이며 현재 구현·검증 범위는 [개발 안내](../development/dependencies.md#클라우드-개발-상태)를 따른다.
+기존 PC 실행 제품은 `local-agent` 브랜치에 보존한다.
 
-DAERI는 Claude Code·Codex의 총괄 에이전트와 하위 에이전트가 서버 운영 업무를 수행하는 멀티 오케스트레이션 에이전트다.
-호스트는 판단·협업·분석을, 사용자 PC의 DAERI runtime은 승인된 실행·기록·공유 기억을 맡는다.
-이 문서는 구성 요소와 책임 경계를 설명한다.
+DAERI는 같은 서비스를 담당하는 사람들이 업무 경험을 공유하는 멀티 오케스트레이션 에이전트다.
+사용자는 Claude Code·Codex에서 요청하고, AWS 관리형 실행 환경이 업무를 수행하며 공용 기억을 다음 업무에 제공한다.
 
 ## 구조와 용어
 
-| 개념 | 역할 |
-|---|---|
-| 멀티 오케스트레이션 에이전트 | 총괄 에이전트와 필요한 하위 에이전트가 목표·완료 조건을 나누어 협업하는 구성 |
-| 총괄 에이전트(orchestrator) | 요청·계획·실제 승인 응답 연결·업무 배정·근거 통합·완료 판단·지식 선별 |
-| 하위 에이전트(subagent) | 배정한 목표의 조회·분석·검증·후속 행동 선택과 근거 반환 |
-| 오케스트레이션 | 업무 분해·배정·진행 확인·근거 통합 |
-| runtime | 승인·위임·읽기 실행·이력·기억을 관리하는 로컬 DAERI MCP 서버 |
-| MCP | 호스트·runtime·하위 리소스 도구 사이의 통신 규격 |
-| 포트·어댑터 | 리소스 범주의 공통 기능과 제품별 연결·입출력 처리 |
+![DAERI AWS 서비스 구성도](../assets/daeri-agentcore-architecture.svg)
 
-하위 에이전트의 역할은 배정한 목표·단계로 정한다.
-한 하위 에이전트가 여러 리소스를 조합하고 같은 범주의 독립 조사를 여러 하위 에이전트가 나누어 수행할 수 있다.
-실제 협업은 호스트의 네이티브 하위 에이전트 기능을 사용한다.
-
-## 실행 위치와 책임
-
-모델 추론은 호스트의 계정·플랫폼 설정을 따른다.
-각 호스트의 설치 사본은 자신의 DAERI MCP runtime을 실행하고 같은 OS 사용자의 profile·업무·기억·인증 저장소를 공유한다.
-호스트 전환 시 현재 설치의 실행 환경을 준비하고 저장된 업무·유효 승인을 [인계 절차](../spec/hosts/plugins.md#재개동시-사용환경-고정)로 이어간다.
-
-```mermaid
-flowchart TB
-    U[사용자]
-    subgraph PC[사용자 PC]
-        subgraph Host[Claude Code 또는 Codex]
-            H[총괄 에이전트 + work Skill]
-            W[필요한 수의 하위 에이전트]
-            T[호스트 도구: Source 조사·분석·보고·파일 작성·검증]
-            H <-->|목표 배정·근거 회수| W
-            H <--> T
-            W <--> T
-        end
-        D[현재 호스트의 DAERI MCP runtime]
-        H2[다른 호스트의 총괄·하위 에이전트와 도구]
-        D2[다른 설치의 DAERI MCP runtime]
-        S[profile·업무·승인·호출·보고·파일]
-        C[OS·제공자 인증 저장소]
-        M[profile별 공유 기억: SQLite·FTS5·벡터]
-        E[선택한 임베딩 제공자]
-        A[외부 서비스 어댑터·하위 MCP]
-        LS[Source: 로컬 소스 코드 디렉터리]
-        H <-->|계획·승인·실행·보고·지식 후보| D
-        W <-->|배정 범위의 검색·실행·근거| D
-        D <--> S
-        D <-->|인증 참조 해소| C
-        D <-->|검색·자동 저장·색인| M
-        M <--> E
-        D -->|승인한 읽기| A
-        H2 <-->|계획·인계·실행·보고| D2
-        D2 <--> S
-        D2 <--> C
-        D2 <--> M
-        D2 -->|승인한 읽기| A
-        T -->|기존 파일·검색·Git 도구| LS
-        H -->|Source 관찰 등록| D
-    end
-    U <-->|요청·계획 승인·피드백·결과| H
-    U <-->|이어서 수행·새 업무| H2
-    A --> R[DB · Cache · Infra · Document · Issue]
-    E --> L[준비한 로컬 임베딩 모델]
-    E --> API[회사 임베딩 API]
-```
+[구성도 SVG](../assets/daeri-agentcore-architecture.svg) · [편집 가능한 FigJam](https://www.figma.com/board/608t1y0YwO88V7Q60xhkkq?node-id=1-2)
 
 | 구성 | 책임 |
 |---|---|
-| 호스트 도구 | 로컬 Source 조사, 계산·보고·표·파일 내용 작성·검증과 하위 에이전트 생성 |
-| 플러그인·Skill | 업무 진입·역할 지침·호스트별 runtime 연결 |
-| DAERI runtime | 연결·승인·범위·현재 상태 검사, 실행·보고·파일·기억 보존 |
-| 포트·어댑터 | 실제 제품의 대상·입출력·읽기 의미를 공통 기능에 연결 |
-| 관리 도구 | setup YAML·profile·인증·모델 준비와 연결 진단 |
-| 사용자 저장 영역 | 편집 설정, profile 개정, 업무·기억 정본과 색인·등록 파일 |
-| 임베딩 제공자 | 선택한 로컬 모델·회사 API로 기억·질의를 벡터로 변환; 키워드 전용은 FTS5 사용 |
+| 접속부 | Claude Code·Codex에서 요청·실제 사용자 승인·피드백 전달과 진행·결과 표시 |
+| AgentCore managed harness | 생성 모델·도구 호출 반복, 문맥 관리와 총괄 에이전트(orchestrator)의 수행 |
+| AgentCore Runtime | 에이전트 실행의 격리·확장·호스팅 |
+| Gateway·Policy·Identity | 리소스 MCP·API 연결, 인증과 접근 정책 집행 |
+| AgentCore Memory | 업무별 대화·도구 이력의 저장·복구 |
+| DAERI 서비스 | 업무·승인·실행 근거, 자동 회상과 공유 지식 정리·저장·정정 |
+| PostgreSQL·pgvector | 프로젝트의 공유 지식·출처·벡터와 업무·승인·처리 상태 |
+| S3 | 근거 자료·분석 파일·산출물 |
+| Observability·Evaluations | 실행 추적과 업무·회상 품질 평가 |
+
+프로젝트는 구성원과 공유 기억의 경계, 서비스는 업무 대상, profile은 서비스·환경별 연결 묶음이다.
+기억은 현재 프로젝트·서비스·출처 접근 조건으로 제공하고, 목표·계획·승인·작업 사본은 개별 업무에 연결한다.
+하위 에이전트(subagent)는 총괄 에이전트가 배정한 목표를 수행하며 생성·위임·취소·결과 수집의 연결은 구현·검증 범위다.
+
+## 사용자 요청에서 결과까지
+
+```mermaid
+flowchart LR
+    request["사용자 요청"] --> recall["관련 경험 회상"]
+    recall --> plan["계획 제시"]
+    plan --> approval{"사용자 확인"}
+    approval -->|"승인"| work["자율 수행·검증"]
+    approval -->|"조정"| plan
+    work --> result["보고·파일 전달"]
+    result --> remember["경험 자동 저장"]
+    result -->|"피드백"| work
+```
+
+가상 사례: “국가별 EV 충전소 개수를 확인하고 CSV로 정리해 줘”라고 요청하면 이전 집계 기준·자료 구조·실패 경험을 참고해 계획한다.
+승인 후 현재 자료를 조회·검증해 CSV를 제공하고, 확인한 절차와 피드백을 다음 구성원이 활용할 지식으로 남긴다.
 
 ## 오케스트레이션과 자율 수행
 
-총괄 에이전트는 계획을 저장하고 대화에서 실제 사용자 승인을 받는다.
-이후 승인한 연결·대상·명시 범위 안에서 도구·질의·필터·페이지·분석 방법·읽기 재시도를 선택한다.
-독립 조사·검증의 이득이 있으면 하위 에이전트를 배정하고 순차 판단은 직접 이어간다.
+생성 모델이 다음 행동을 판단하고 harness가 도구 호출·결과 전달·반복을 담당한다.
+승인 범위에서 도구·분석 방법·순서·하위 작업·결과 형식은 총괄 에이전트가 선택한다.
+목표·대상·효과가 승인 범위를 바꾸면 변경 계획을 실제 사용자에게 확인한다.
 
-runtime은 현재 연결의 읽기 도구·스키마·명시 범위와 실제 근거를 검사한다.
-인증과 서비스의 실제 계정 권한은 연결 시 적용한다.
-요청 ID·업무 개정·호출 ID·기능 지문과 승인 연결은 runtime의 기록 책임이다.
-기본 업무는 누적 호출·시간 상한 없이 수행하며 명시한 한도를 공유 적용한다.
+```mermaid
+sequenceDiagram
+    participant Client as 사용자 접속부
+    participant DAERI as DAERI 서비스
+    participant Harness as 관리형 harness
+    participant Model as 생성 모델
+    participant Gateway as Gateway와 리소스
+    Client->>DAERI: 요청 또는 실제 승인·피드백
+    DAERI->>Harness: 업무 문맥·관련 기억
+    Harness->>Model: 다음 행동 판단
+    Model-->>Harness: 도구와 입력 선택
+    Harness->>Gateway: 현재 권한·승인으로 호출
+    Gateway-->>Harness: 실행 결과·근거
+    Harness->>Model: 결과 해석·후속 판단
+    Harness-->>DAERI: 응답·실행 상태·파일 참조
+    DAERI->>DAERI: 응답 보존·지식 처리 등록
+    DAERI-->>Client: 결과와 처리 상태
+```
 
-호스트는 자료의 전체성·시점·누락을 판단하고 보고·파일 내용을 검증한다.
-runtime은 등록 출처·현재 제공 조건·파일 경로·무결성·기한을 확인한다.
-하위 에이전트의 생성·신원·도구 권한은 호스트가, 위임과 DAERI 접수 범위는 runtime이 관리한다.
-
-하위 에이전트 사용이 어려운 환경에서는 총괄 에이전트가 같은 승인으로 직접 수행한다.
-위임·동시 실행·중단·재개는 [업무 흐름](../spec/tasks/workflow.md#하위-에이전트-위임과-병렬-실행), 승인 범위 변경은 [계획 명세](../spec/tasks/approval.md#자율-실행과-재계획의-경계)를 따른다.
+서버 연결부는 AWS API인 `InvokeHarness`를 호출한다.
+현재 로컬 MCP 연결과 별도로 요청·스트리밍·사용자 응답을 전달하는 클라우드 접속부를 구현한다.
+계획 확인은 harness의 inline function 대기와 실제 사용자 응답을 연결하는 안이며 세부 경계는 [승인 명세](../spec/tasks/approval.md#클라우드-업무-승인)를 따른다.
 
 ## 공유 기억과 리소스 연결
 
-호스트는 관련 지식을 검색하고 현재 목표에 적용할지를 판단하는 Agentic RAG를 사용한다.
-총괄 에이전트는 계획 전 관련 기억을 확인하고 하위 에이전트는 배정 범위에서 필요한 후속 검색을 판단한다.
-검색 제한·0건과 선택한 기억의 유효성을 확인하고 필요한 현재 관찰로 보완한다.
+DAERI는 요청을 받으면 현재 접근 가능한 기억을 검색해 계획 문맥에 제공한다.
+결과·근거·피드백은 응답 처리에서 보존하고 지식 갱신 작업을 등록한다.
+지식 서비스가 재사용할 경험을 정리하고 임베딩·색인을 처리하므로 기록·처리 등록은 서버가 보장한다.
+저장·검색·색인 실패의 동작과 대화 기억의 구분은 [공유 기억](../spec/tasks/memory.md#클라우드-공유-기억)을 따른다.
 
-총괄 에이전트는 실제 관찰·하위 에이전트 근거·사용자 피드백에서 재사용할 지식을 선별해 보고와 함께 제출한다.
-runtime은 현재 출처·대상·보존 조건을 검사하고 정본 저장·선택한 임베딩 색인을 자동 처리한다.
-저장·색인 대기는 같은 보고 재전달이나 다음 profile 검색에서 재시도한다.
-후보와 상태의 의미는 [자동 기억](../spec/tasks/memory.md#업무-후-갱신과-정정)이 정의한다.
+Gateway에 직접 연결할 수 있는 리소스 MCP·API는 관리형 연결을 사용한다.
+stdio·특수 네트워크 연결은 필요한 호스팅·변환 어댑터를 둔다.
+DAERI 업무·지식 MCP는 프로젝트의 상태·기억 도구를 제공하며 리소스 호출의 중복 중계는 직접 연결 경로로 정리한다.
 
-SQLite는 업무·profile별 기억 정본과 벡터를 보관하고 FTS5·sqlite-vec가 검색을 담당한다.
-임베딩은 로컬 모델·회사 API·키워드 전용 중 setup에서 선택한다.
-회사 API는 OpenAI 호환 규격을 사용하며 설정 적용은 해당 API의 검색·색인 전송 선택을 포함한다.
-정본·벡터는 로컬에 유지하고 profile·실제 대상·현재 제공 조건·기한으로 기억을 구분한다.
-
-리소스 연결은 [기존 도구 재사용](../spec/resources/contract.md)을 기본으로 한다.
-DAERI는 호스트에는 MCP 서버, 외부 서비스의 하위 리소스에는 MCP 클라이언트로 동작한다.
-어댑터는 제품별 대상·입출력·읽기 의미를 해소한다.
-로컬 Source는 호스트가 등록 디렉터리를 기존 도구로 조사하고 `local_source` 어댑터가 그 관찰을 업무 근거로 연결한다.
-로컬 편집·실행·Git 작업의 권한과 인증은 호스트 환경을 따르며 [Source 지원 범위](../spec/resources/adapters.md#로컬-소스-코드)를 따른다.
-
-setup의 접속·인증 YAML 적용 → 업무 요청 → 계획 승인 → 자율 수행 → 보고·자동 기억으로 이어진다.
-상세 동작은 [업무 흐름](../spec/tasks/workflow.md), 계약별 읽기 경로는 [정본 지도](../development/documentation-architecture.md#정본-지도)를 따른다.
+생성 모델과 임베딩 제공자는 독립적으로 선택한다.
+생성 모델은 harness의 지원 제공자 설정, 임베딩은 DAERI의 연결 어댑터를 통해 사내 API 또는 Amazon Bedrock을 사용한다.
+실제 API 호환성·모델 접근·인증·네트워크와 모델 변경의 재색인은 [구성 명세](../spec/configuration/profiles.md#클라우드-구성)를 따른다.
 
 ## 권한과 데이터의 경계
 
-DAERI 도구의 실행은 실제 사용자 승인·읽기 전용 경계·연결 계정의 권한을 적용한다.
-호스트 shell·다른 MCP·하위 에이전트의 실제 도구 권한은 해당 호스트와 리소스가 관리한다.
-위임 토큰은 배정의 호출 자격이며 실제 하위 에이전트 신원과 전달 경로는 호스트의 책임이다.
+검증한 사용자 신원·프로젝트 구성원·현재 출처 권한을 기억·파일·도구 호출에 적용한다.
+Gateway Policy·Identity는 리소스 접근을, DAERI는 업무와 실제 승인 응답의 연결을 담당한다.
+기본 shell·파일 도구는 해당 실행 경계에서 검사하며 승인·자료·실행 문맥의 전달을 검증한다.
 
-사용자 결정은 [현재 계획에 대한 실제 대화 응답](../spec/hosts/approval.md)에서 해소한다.
-호스트는 응답의 출처·의미를, runtime은 저장 계획·현재 상태·연결을 검사한다.
-자료의 코드·로그·문서·기억은 분석 입력으로 사용한다.
+회사 SSO·Cognito·IAM, 외부 자격의 Identity, 별도 비밀의 Secrets Manager를 우선 활용하는 안이다.
+구체 회사 설정과 계정·리전·보존 조건은 배포 환경을 연결할 때 확정한다.
 
-비밀값은 로컬 인증 저장소에서 해소하고 필요한 전송에 주입한다.
-자료에는 현재 연결의 제공·보관 조건, profile 분리, 실제 대상·만료·삭제 상태를 적용한다.
-설정·인증·연결 변경 때 업무를 유지하거나 새로 접수하는 조건은 [승인 범위](../spec/tasks/approval.md#자율-실행과-재계획의-경계)를 따른다.
+## 동시 업무와 소스 수정
+
+여러 사용자의 업무는 같은 서비스 지식을 회상하고 각자의 계획·승인·실행 상태를 사용한다.
+코드 수정은 저장소별 기준 commit과 업무별 worktree·사본·브랜치에서 진행한다.
+통합 시 최신 대상 브랜치와 충돌·테스트를 확인하고 미병합 변경·병합 commit·실제 배포 버전을 구별해 기억한다.
+
+실제 코드 작업 위치는 PC 또는 AWS 중 사내망·도구·Git 자격·기존 작업 상태를 대조해 결정한다.
+초기 개발은 공용 기억의 요청·저장 흐름을 먼저 완성하고 소스 실행 연결은 별도 단계로 진행한다.
 
 ## 제공 범위와 검증
 
-현재 실행은 등록된 읽기·검증 기능을 사용한다.
-보고·파일의 형식과 내용은 호스트 도구가 작성하고 runtime은 실행·출처·저장을 맡는다.
-판단·실행 루프는 호스트·PC의 활성 상태를 따르며 중단 뒤 저장 기록에서 재개한다.
+기존 코드의 로컬 호스트 실행·MCP·SQLite 명세는 해당 문서의 로컬 구현 절에 유지한다.
+클라우드의 현재 개발 단위·남은 결정·실제 연동 검증은 [개발 상태](../development/dependencies.md#클라우드-개발-상태)에서 관리한다.
 
-로컬 계약·모의 리소스·패키징·임베딩의 확인 범위는 [구현과 검증](../development/dependencies.md#구현과-대표-검증)을 따른다.
-실제 회사 인증·API·리소스, 호스트 설치·하위 에이전트 실행과 Windows 환경은 별도 검증 대상이다.
+AWS 기능의 근거: [Harness와 Runtime](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-vs-runtime.html), [모델](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-models.html), [도구](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-tools.html), [대화 기억](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-memory.html), [Gateway 정책](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/use-gateway-with-policy.html), [관리형 평가](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/evaluations.html).
