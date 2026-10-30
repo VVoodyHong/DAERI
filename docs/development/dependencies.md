@@ -13,14 +13,43 @@
 
 | 단계 | 구현할 동작 | 현재 상태·완료 기준 |
 |---|---|---|
-| 핵심 요청·저장 | 서버의 관련 기억 제공 → `InvokeHarness` → 응답·지식 처리 보존 | 착수; 모델이 기억 도구를 생략해도 회상·기록 처리 등록을 모의 연동으로 확인 |
-| 공용 지식 | 경험 정리 → 임베딩 → PG·pgvector 저장·공유 회상 | 착수; 다른 사용자의 회상, 프로젝트 격리, 색인 실패·재처리·중복을 모의 연동으로 확인 |
+| 핵심 요청·저장 | 관련 기억 제공 → `InvokeHarness` → 응답·지식 처리 보존 | 애플리케이션·SDK 경계 구현; 모의 검증과 실제 AWS 검증을 구분 |
+| 공용 지식 | 경험 정리 → 임베딩 → PG·pgvector 저장·공유 회상 | 처리 서비스·Aurora Data API 어댑터 구현; 실제 PG 트랜잭션·검색은 별도 검증 |
 | 사용자 접속·승인 | 클라우드 플러그인, 로그인·현재 계획과 실제 승인 왕복 | 후속 구현; 요청·응답·대기·호스트 전환과 오래된 응답 검사 |
 | 관리형 연결 | Memory·Gateway·Policy·Identity·S3·관측·평가·배포 | 후속 구현·실제 연동; 저장·복구, 현재 사용자 문맥·접근·실제 승인 집행 확인 |
 | 동시 업무·소스 | 업무별 사본·브랜치, Git 자격·검증·통합·복구 | 실행 위치 확정 뒤 구현; 병렬 변경·충돌·상태 보존 확인 |
 
-핵심 흐름은 SDK·저장소·모델·임베딩을 교체 가능한 경계로 분리하고 서비스 정책은 외부 SDK 없이 검증한다.
-응답·지식 작업의 내구성과 실제 PG 트랜잭션, AWS·사내 API 호출은 모의 검증과 별도로 확인한다.
+클라우드 구현은 배포와 독립된 Python 서비스·설정 조립부다.
+HTTP·JWT 인증 경계, 공개 cloud CLI, 호스트 승인 화면, 작업 처리 프로세스의 상시 실행과 인프라 배포는 후속 구현 대상이다.
+`AccessContext`는 인증 경계가 전달할 사용자·프로젝트·서비스·출처의 내부 계약이며 현재 구현은 해당 값의 일치와 저장 범위를 검사한다.
+실제 회사 신원·구성원·권한 검증은 인증 경계를 연결할 때 구현한다.
+
+| 패키지·모듈 | 구현 책임 | 대표 검증 |
+|---|---|---|
+| [core/cloud.py](../../src/daeri/core/cloud.py) | 업무·대화 응답·공용 기억·처리 작업과 교체 포트 | 아래 애플리케이션·어댑터 검증 |
+| [application/cloud.py](../../src/daeri/application/cloud.py) | 시작·재개 전 회상, 응답 보존, 경험 정리·색인 처리 | [업무·기억](../../tests/test_cloud_workflow.py) |
+| [infrastructure/agentcore.py](../../src/daeri/infrastructure/agentcore.py) | SDK `InvokeHarness` 이벤트·도구 대기·오류 해석 | [SDK 전달](../../tests/test_agentcore_harness.py) |
+| [infrastructure/cloud_postgres.py](../../src/daeri/infrastructure/cloud_postgres.py) | Aurora Data API·트랜잭션·처리 대기·검색·작업 점유 | [저장 계약](../../tests/test_cloud_postgres.py) |
+| [infrastructure/cloud_models.py](../../src/daeri/infrastructure/cloud_models.py) | Bedrock Converse·OpenAI 호환 경험 정리, Titan V2 임베딩 | [모델 경계](../../tests/test_cloud_models.py) |
+| [config/cloud.py](../../src/daeri/config/cloud.py) | YAML 검증·AWS 클라이언트·선택 제공자 조립과 자원 종료 | [설정·조립](../../tests/test_cloud_config.py) |
+
+`core`·`application`은 저장·harness·모델·임베딩 포트에 의존하고 외부 SDK는 infrastructure·config에서 구성한다.
+`CloudSettings.from_yaml()`은 설정만 읽고 AWS 클라이언트·자격 조회는 `build_cloud()`에서 시작한다.
+설정 필드·가상 YAML·호출 책임은 [클라우드 구성](../spec/configuration/profiles.md#클라우드-설정-입력과-조립)을 따른다.
+
+Aurora 저장 어댑터는 응답·처리 대기를 같은 트랜잭션으로 보존하고 여러 처리기의 작업 점유를 DB에서 조정한다.
+Data API의 반환 행 크기를 고려해 응답·도구 대기 입력·기억·지식 작업 본문을 8,192자씩 읽는다.
+대형 산출물의 S3 분리·인증된 다운로드·실제 저장소의 크기·성능 검증은 후속 범위다.
+
+클라우드 개발 의존성과 대표 검증은 다음 명령으로 준비·실행한다.
+
+```sh
+uv sync --frozen --extra cloud
+uv run --no-sync python -m pytest tests/test_cloud_workflow.py tests/test_agentcore_harness.py tests/test_cloud_postgres.py tests/test_cloud_models.py tests/test_cloud_config.py
+```
+
+검증은 모의 AWS·HTTP·저장소와 실제 SDK 요청 형식을 대상으로 한다.
+실제 AWS 요청, PG SQL 실행·검색 품질·트랜잭션·확장 설치, 회사 API·SSO·Memory·S3·Gateway·Policy는 별도 실제 연동 대상이다.
 배포 완료는 실제 계정·리전·인증·네트워크·PG·다중 사용자 동작의 근거로 판단한다.
 
 ### 배포와 확장 시 확인할 조건
@@ -34,7 +63,7 @@
 | 추가 채널·운영 | 기존 플러그인 검증 후 다른 직군의 접점·동시 업무·예산·연결 종료 처리 확정 |
 | 기존 자료 이관 | 공용 서비스가 준비된 뒤 필요한 자료·보존 조건과 검증 범위 결정 |
 
-Aurora Serverless·Data API·AWS Memory의 연결·대화 재개·현재 신원 전달은 구현 실험과 실제 환경에서 검증한다.
+Aurora Serverless·Data API의 실제 연결·SQL, AWS Memory의 대화 재개·현재 신원 전달은 실제 환경에서 검증한다.
 관리형 평가의 모델 추적·평가 입력 지원·처리 리전과 비용을 배포 조건에 포함한다.
 
 ## 기존 로컬 구현의 적용 범위

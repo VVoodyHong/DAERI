@@ -1,6 +1,6 @@
 # 프로젝트·서비스 profile과 저장
 
-상태: 클라우드 구성 설계와 기존 profile·인증·SQLite·YAML 구현 계약.
+상태: 클라우드 설정·조립 구현과 기존 profile·인증·SQLite·YAML 계약.
 클라우드 제공자·저장소 연결과 실제 운영 인증은 [개발 단계](../../development/dependencies.md#클라우드-개발-상태)에서 구분해 검증한다.
 
 profile에 리소스·운영 맥락·기억 정책을 묶고 연결 준비와 로컬 데이터 저장·조회·삭제를 정의한다.
@@ -26,8 +26,56 @@ profile에 리소스·운영 맥락·기억 정책을 묶고 연결 준비와 �
 Bedrock은 선택 모델·리전·실행 역할·모델 접근을 확인한다.
 두 호출 역할은 서로 다른 제공자를 사용할 수 있고 임베딩 모델 변경은 해당 모델·차원의 재색인으로 적용한다.
 
-Aurora Serverless·Data API를 우선 검증하고 계정·리전·실제 인증·보존기간·소스 작업 위치는 배포 정보를 받은 뒤 설정한다.
+Aurora Data API 연결 어댑터를 구현했으며 실제 계정·리전·인증·SQL·검색은 배포 정보를 받은 뒤 검증한다.
 회사·프로젝트 자격을 사용하는 범위와 개인 위임 범위는 해당 회사 정책에 맞춰 연결한다.
+
+### 클라우드 설정 입력과 조립
+
+`CloudSettings.from_yaml(path)`가 호출자가 지정한 YAML을 읽는다.
+설정 파싱은 AWS SDK·클라이언트·자격 조회를 실행하지 않으며 `build_cloud(settings)`가 AWS·선택 API 클라이언트와 업무·지식 서비스를 조립한다.
+설정 파일 자동 생성·사용자 setup·HTTP 진입 연결은 후속 구현 대상이다.
+
+| 필드 | 입력·기본값 |
+|---|---|
+| `region` | 선택 AWS 리전; 생략 시 AWS SDK의 리전 해소 사용 |
+| `harness_arn` | 필수 harness ARN |
+| `harness_model` | 선택 SDK `InvokeHarness.model` 설정; 생략 시 배포한 harness의 모델 설정 사용 |
+| `database.resource_arn`·`secret_arn`·`name` | 필수 Aurora cluster ARN·Secrets Manager 인증 참조·DB 이름 |
+| `knowledge_model` | 필수 경험 정리 모델; `provider: bedrock` 또는 `api` |
+| `embedding` | `bedrock`·`api`·`keyword_only`; 생략 시 키워드 전용 |
+
+Bedrock 경험 정리는 `model`의 Converse 지원 모델을 사용한다.
+API 경험 정리는 `endpoint`·`model`·`api_key_secret_arn`을 받아 OpenAI chat completions 규격으로 호출한다.
+API 임베딩도 같은 연결 필드와 선택 `dimensions`를 받고 OpenAI embeddings 규격을 사용한다.
+`endpoint`는 해당 요청의 완전한 HTTPS 주소이며 API 키는 Secrets Manager의 `SecretString` 참조로 해소한다.
+
+Bedrock 임베딩은 `amazon.titan-embed-text-v2:0`을 지원하고 `dimensions`는 256·512·1024 중 선택하며 기본은 1024다.
+생성·임베딩 제공자는 독립적이며 harness의 모델은 설치된 AWS SDK가 지원하는 기본 설정 구조로 검증한다.
+harness 외부 모델의 `harness_model` 안 `apiKeyArn`은 AgentCore Identity의 API key credential provider ARN을 사용한다.
+DAERI가 직접 호출하는 경험 정리·임베딩의 `api_key_secret_arn`은 Secrets Manager ARN을 사용하며 두 자격은 각 호출 경계에서 해소한다.
+
+아래는 입력 형식을 설명하는 가상 YAML이다.
+ARN·리전·경험 정리 모델은 실제 배포 값으로 바꾸고 필요한 임베딩 제공자를 선택한다.
+
+```yaml
+region: us-east-1
+harness_arn: arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/assistant-1234567890
+database:
+  resource_arn: arn:aws:rds:us-east-1:123456789012:cluster:daeri
+  secret_arn: arn:aws:secretsmanager:us-east-1:123456789012:secret:daeri-db-example
+  name: daeri
+knowledge_model:
+  provider: bedrock
+  model: summary-model-id
+embedding:
+  provider: bedrock
+  model: amazon.titan-embed-text-v2:0
+  dimensions: 1024
+```
+
+`build_cloud()`는 저장소·업무 처리·지식 처리와 종료 가능한 클라이언트 묶음을 반환한다.
+DB 초기화는 관리 호출인 `store.initialize()`로 분리하며 테이블·pgvector 확장을 준비한다.
+요청 처리·DB 초기화·지식 작업 반복 실행의 실제 서버 프로세스 연결은 배포 단계에서 구성한다.
 
 ## 기존 로컬 구현의 적용 범위
 
