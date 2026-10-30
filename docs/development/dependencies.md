@@ -266,7 +266,7 @@ runtime 선택은 설치한 플러그인의 전용 Python 절대 경로로 고�
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 runtime이 저장 상태·정책과 대조한다.
 실제 리소스 요청과 호스트의 Source 관찰 등록은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
-총괄 에이전트·하위 에이전트의 판단·조정과 실행 검사의 경계는 [멀티 오케스트레이션 에이전트 아키텍처](../architecture/overview.md#오케스트레이션과-자율-수행)가 설명한다.
+총괄·하위 에이전트의 판단과 runtime 검사의 경계는 [로컬 업무 흐름](../spec/tasks/workflow.md#기존-로컬-구현의-적용-범위)을 따른다.
 구현은 같은 로컬 배포 안에서 역할별 패키지로 나눈다.
 공개 실행 모듈은 `daeri.cli`와 `daeri.server`다.
 
@@ -284,7 +284,7 @@ src/daeri/
 | 위치 | 담당 구현 | 책임 |
 |---|---|---|
 | 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#도구-목록)를 받아 설정·업무 처리로 전달 |
-| `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 필드·기억·보존 정책, 공통 오류, 인증 문자열 보조 검사와 정규 JSON 표현 |
+| `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 기억·보존 정책, 공통 오류, 인증 문자열 보조 검사, 정규 JSON·float32 벡터 검증 |
 | `application/` | `runtime.py`·`planning.py`·`subagents.py`·`results.py`·`knowledge.py`·`automatic_memory.py` | 업무·계획·승인·위임·읽기 실행, 보고·파일의 근거 연결, 기억 후보 검증·갱신·재시도 |
 | `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP·인증·Source 경로와 관찰 등록, 기억 검색·색인과 임베딩 제공자 연결 |
 | `infrastructure/adapters/` | 공통 `base.py`와 제품별 모듈 | 제품별 설정 스키마·대상·인증·로그인·읽기 의미·요청과 결과 검사 |

@@ -5,6 +5,7 @@ import importlib
 import io
 import json
 from copy import deepcopy
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -225,6 +226,27 @@ def test_harness_override_is_validated_against_sdk_shape_before_creating_clients
     assert session.clients == {}
 
 
+@pytest.mark.parametrize('provider,fields', [
+    ('bedrockModelConfig', {'apiFormat': 'unsupported'}),
+    ('bedrockModelConfig', {'temperature': 3.0}),
+    ('bedrockModelConfig', {'temperature': float('nan')}),
+    ('bedrockModelConfig', {'topP': 2.0}),
+    ('bedrockModelConfig', {'maxTokens': True}),
+    ('bedrockModelConfig', {'additionalParams': {'value': float('inf')}}),
+    ('openAiModelConfig', {'apiFormat': 'converse_stream'}),
+    ('geminiModelConfig', {'topK': 501}),
+])
+def test_harness_model_rejects_invalid_protocol_values_not_checked_by_sdk(provider, fields):
+    require_sdk()
+    session = Session()
+    settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': {
+        provider: {'modelId': 'model', **fields,
+                   **({'apiKeyArn': IDENTITY_KEY} if provider != 'bedrockModelConfig' else {})}}})
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        cloud().build_cloud(settings, session=session)
+    assert session.clients == {}
+
+
 def test_native_harness_model_uses_identity_key_without_resolving_it_in_daeri():
     require_sdk()
     session = Session()
@@ -236,6 +258,14 @@ def test_native_harness_model_uses_identity_key_without_resolving_it_in_daeri():
         assert services.workflow.embedder is None
         assert services.knowledge.extractor.model_id == 'summary-model'
         assert 'secretsmanager' not in session.clients
+
+
+def test_native_harness_model_accepts_sdk_supported_decimal_parameters():
+    require_sdk()
+    model = {'bedrockModelConfig': {'modelId': 'model', 'temperature': Decimal('0.5')}}
+    settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': model})
+    with cloud().build_cloud(settings, session=Session()) as services:
+        assert services.workflow.harness.model == model
 
 
 @pytest.mark.parametrize('provider', ['openAiModelConfig', 'geminiModelConfig', 'liteLlmModelConfig'])

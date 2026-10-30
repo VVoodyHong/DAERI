@@ -1,9 +1,10 @@
 # MCP 도구 목록과 공통 규격
 
-상태: 16개 공개 도구 구현; 로컬 계약·stdio 통합 검증, 실제 회사 연결·호스트 대화는 별도
+상태: 기존 로컬 제품의 16개 공개 도구 계약; 로컬·stdio 통합 검증, 실제 회사 연결·호스트 대화는 별도.
 
 모델용 입력과 runtime의 응답을 정의한다.
 업무 동작은 [업무 흐름](../tasks/workflow.md), 입력 모델은 [contracts.py](../../../src/daeri/core/contracts.py)가 담당한다.
+클라우드 접속부·공개 API는 [후속 구현 범위](../../development/dependencies.md#클라우드-개발-상태)다.
 
 ## 도구 목록
 

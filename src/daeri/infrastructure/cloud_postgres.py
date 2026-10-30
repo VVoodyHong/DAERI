@@ -3,11 +3,11 @@
 from contextlib import contextmanager
 from dataclasses import asdict
 import json
-import math
 from uuid import uuid4
 
 from daeri.core.cloud import AccessContext, CloudTask, KnowledgeJob, SharedMemory
 from daeri.core.errors import StoreError
+from daeri.core.serialization import validated_float32_vector
 
 
 SCHEMA = (
@@ -50,11 +50,10 @@ def _scope(context):
 
 
 def _vector(value):
-    if (not isinstance(value, list) or not 1 <= len(value) <= 8192
-            or any(type(item) not in (int, float) or not math.isfinite(item) for item in value)
-            or not any(value)):
-        raise StoreError('INVALID_INPUT', 'Embedding must be a finite, nonzero numeric vector.')
-    return _json(value)
+    try:
+        return _json(validated_float32_vector(value))
+    except ValueError:
+        raise StoreError('INVALID_INPUT', 'Embedding must be a finite, nonzero numeric vector.') from None
 
 
 _TASK_SCOPE = '''actor_id = :actor AND project_id = :project AND service_id = :service
@@ -272,6 +271,7 @@ class AuroraCloudStore:
     def complete_job(self, job, vector, model_id):
         if vector is not None and (not isinstance(model_id, str) or not model_id):
             raise StoreError('INVALID_INPUT', 'An embedding model identity is required.')
+        embedding = _vector(vector) if vector is not None else None
         with self._transaction() as transaction:
             rows = self._execute(f'''UPDATE cloud_knowledge_jobs SET state = 'complete', error_code = NULL,
                                       lease_until = NULL, lease_token = NULL
@@ -283,7 +283,7 @@ class AuroraCloudStore:
                 updated = self._execute('''UPDATE cloud_knowledge SET embedding = CAST(:embedding AS vector),
                                             model_id = :model WHERE id = :id
                                           RETURNING jsonb_build_object('id', id)::text''',
-                                        {'id': job.id, 'embedding': _vector(vector), 'model': model_id}, transaction)
+                                        {'id': job.id, 'embedding': embedding, 'model': model_id}, transaction)
                 if not updated:
                     raise StoreError('KNOWLEDGE_MISSING', 'Persist knowledge text before indexing.')
 

@@ -2,11 +2,10 @@
 
 import hashlib
 import json
-import math
-import struct
 
 from daeri.core.errors import StoreError
-from daeri.infrastructure.embedding import OpenAICompatibleEmbedder
+from daeri.core.serialization import validated_float32_vector
+from daeri.infrastructure.embedding import validate_api_connection
 
 
 _EXTRACTION_SYSTEM = (
@@ -18,8 +17,7 @@ _EXTRACTION_SYSTEM = (
 
 
 def _task_data(prompt, response):
-    if any(not isinstance(value, str) or not value.strip() or len(value.encode('utf-8')) > 65536
-           for value in (prompt, response)):
+    if any(not isinstance(value, str) or not value.strip() for value in (prompt, response)):
         raise ValueError('Invalid extraction input')
     return json.dumps({'task': prompt, 'result': response}, ensure_ascii=False)
 
@@ -67,15 +65,7 @@ class BedrockEmbedder:
             data = body.read(1024 * 1024 + 1)
             if len(data) > 1024 * 1024:
                 raise ValueError('Oversized response')
-            vector = json.loads(data)['embedding']
-            if (not isinstance(vector, list) or len(vector) != self.dimensions
-                    or any(type(value) not in (int, float) or not math.isfinite(value) for value in vector)
-                    or not any(vector)):
-                raise ValueError('Invalid embedding vector')
-            stored = struct.unpack(f'<{self.dimensions}f', struct.pack(f'<{self.dimensions}f', *vector))
-            if not all(math.isfinite(value) for value in stored) or not any(stored):
-                raise ValueError('Unindexable vector')
-            return [float(value) for value in vector]
+            return validated_float32_vector(json.loads(data)['embedding'], self.dimensions)
         except Exception:
             raise StoreError('MEMORY_INDEX_INCOMPLETE', 'The configured Bedrock embedding model could not produce a valid vector.') from None
         finally:
@@ -112,9 +102,7 @@ class OpenAIExperienceExtractor:
     """Only the OpenAI chat-completions text protocol, at an explicit HTTPS endpoint."""
 
     def __init__(self, client, endpoint, model_id, credential_ref, credential_resolver, *, timeout_seconds=30):
-        self.config = OpenAICompatibleEmbedder.validate_config({
-            'endpoint': endpoint, 'model': model_id, 'credential_ref': credential_ref,
-            'timeout_seconds': timeout_seconds})
+        self.config = validate_api_connection(endpoint, model_id, credential_ref, timeout_seconds)
         self.client, self.resolve = client, credential_resolver
 
     def extract(self, prompt, response):

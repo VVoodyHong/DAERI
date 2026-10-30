@@ -118,7 +118,8 @@ class _HarnessStream:
                             raise ValueError('Tool input must be an object')
                         json.dumps(data, allow_nan=False)
                         pending.append({**tool, 'input': data})
-                    if not pending or self.role != 'assistant':
+                    if (not pending or self.role != 'assistant'
+                            or len({tool['toolUseId'] for tool in pending}) != len(pending)):
                         self.error = 'HARNESS_STREAM_INCOMPLETE'
                 except (ValueError, TypeError, RecursionError):
                     self.error = 'HARNESS_INVALID_TOOL_INPUT'

@@ -116,6 +116,19 @@ def test_keyword_fallback_omits_vector_distance_operation():
     assert '<=>' not in client.calls[0][1]['sql']
 
 
+@pytest.mark.parametrize('vector', [[1e100, 1.0], [1e-100, 0.0]])
+@pytest.mark.parametrize('operation', ['search', 'index'])
+def test_unrepresentable_vectors_are_rejected_before_opening_a_database_operation(vector, operation):
+    client = DataApi()
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        if operation == 'search':
+            store(client).search(CONTEXT, 'country', vector, 'model-a:2', 5)
+        else:
+            job = KnowledgeJob('turn-a', 'lease-a', CONTEXT, 'count', '45 countries', 'country_code')
+            store(client).complete_job(job, vector, 'model-a:2')
+    assert client.calls == []
+
+
 def test_expired_job_lease_cannot_replace_another_workers_memory():
     client = DataApi([])
     job = KnowledgeJob('turn-a', 'old-token', CONTEXT, 'count', '45 countries')

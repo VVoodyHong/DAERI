@@ -28,13 +28,12 @@ def _tool_results(task: CloudTask, results: tuple[dict[str, Any], ...]) -> list[
     if not isinstance(results, (tuple, list)):
         raise StoreError('INVALID_INPUT', 'Tool results must be a list of actual pending responses')
     expected = {tool['toolUseId'] for tool in task.pending_tools}
-    supplied = set()
     normalized = {}
     for result in results:
         if not isinstance(result, dict) or not set(result) <= {'toolUseId', 'status', 'content', 'type'}:
             raise StoreError('INVALID_INPUT', 'Tool result fields are invalid')
         tool_id = result.get('toolUseId')
-        if not isinstance(tool_id, str) or tool_id not in expected or tool_id in supplied:
+        if not isinstance(tool_id, str) or tool_id not in expected or tool_id in normalized:
             raise StoreError('INVALID_INPUT', 'Tool results must match each pending call exactly once')
         if result.get('status') not in ('success', 'error') or result.get('type', 'tool_use') != 'tool_use':
             raise StoreError('INVALID_INPUT', 'Tool result status or type is invalid')
@@ -50,9 +49,8 @@ def _tool_results(task: CloudTask, results: tuple[dict[str, Any], ...]) -> list[
             json.dumps(content, allow_nan=False)
         except (TypeError, ValueError):
             raise StoreError('INVALID_INPUT', 'Tool result content must be JSON serializable') from None
-        supplied.add(tool_id)
         normalized[tool_id] = {'toolResult': {**deepcopy(result), 'type': 'tool_use'}}
-    if supplied != expected:
+    if normalized.keys() != expected:
         raise StoreError('INVALID_INPUT', 'Actual responses for every pending tool call are required')
     return [normalized[tool['toolUseId']] for tool in task.pending_tools]
 

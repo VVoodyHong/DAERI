@@ -7,7 +7,7 @@
 
 ## 처음 읽기
 
-설치·첫 사용은 [사용자 안내](../../README.md)에서 시작한다.
+제품 소개·개발 상태·기존 로컬 설치 경로는 [사용자 안내](../../README.md)에서 시작한다.
 [제품 명세](../spec/product.md) → [구조 설명](../architecture/overview.md) → [업무 흐름](../spec/tasks/workflow.md) 순서로 읽는다.
 개발 에이전트는 [AGENTS.md](../../AGENTS.md)의 재개·작업 규칙도 적용한다.
 현재 제공 범위는 [제품 명세](../spec/product.md#현재-제공-범위), 의존성·관리 입력·구현·대표 검증은 [개발 의존성과 실행](dependencies.md)을 따른다.
@@ -16,16 +16,16 @@
 
 | 위치 | 소유하는 내용 |
 |---|---|
-| 루트 | [README](../../README.md): 사용자 설치·온보딩. [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
+| 루트 | [README](../../README.md): 제품 소개·설치 경로. [AGENTS](../../AGENTS.md): 공통 지침. [CLAUDE](../../CLAUDE.md): 공통 지침 가져오기 |
 | `docs/assets/` | 사용자 안내와 상세 문서에서 사용하는 이미지 |
 | `docs/rules/` | [문서 작성·변경·Git](../rules/documentation.md), [기획](../rules/planning.md), [개발](../rules/development.md), [검토](../rules/review.md) |
 | `docs/architecture/` | [AWS 공용 서비스 구조·책임·요청 흐름](../architecture/overview.md) |
 | `docs/spec/` | [제품 요구사항](../spec/product.md) |
 | `docs/spec/tasks/` | [흐름·실행·근거·보고](../spec/tasks/workflow.md), [계획·승인 범위](../spec/tasks/approval.md), [공유 기억·검색·보존](../spec/tasks/memory.md) |
-| `docs/spec/mcp/` | [도구 목록·공통](../spec/mcp/common.md), [업무·기억·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md)의 공개 DTO |
-| `docs/spec/resources/` | [도구 재사용·탐색·등록·호출·Source 관찰 계약](../spec/resources/contract.md), [리소스 범주와 연결 기준](../spec/resources/adapters.md) |
+| `docs/spec/mcp/` | 기존 로컬의 [도구 목록·공통](../spec/mcp/common.md), [업무·기억·결과](../spec/mcp/tasks.md), [계획·승인](../spec/mcp/plans.md), [리소스](../spec/mcp/resources.md) 공개 DTO |
+| `docs/spec/resources/` | [클라우드 연결과 기존 로컬의 탐색·등록·호출](../spec/resources/contract.md), [로컬 어댑터·Source 관찰 기준](../spec/resources/adapters.md) |
 | `docs/spec/configuration/` | [프로젝트·서비스·profile·제공자](../spec/configuration/profiles.md), 기존 로컬의 [setup YAML](../spec/configuration/profiles.md#사용자용-setup-yaml)·[암호화 백업·복원](../spec/configuration/profiles.md#이관백업복원) |
-| `docs/spec/installation/` | [환경·의존성·전달·업데이트](../spec/installation/environment.md) |
+| `docs/spec/installation/` | [기존 로컬의 환경 준비·전달·업데이트](../spec/installation/environment.md) |
 | `docs/spec/hosts/` | [클라우드 접속부·기존 로컬 플러그인](../spec/hosts/plugins.md), [사용자 대화 승인·응답 확인](../spec/hosts/approval.md) |
 | `docs/development/` | 문서 구조와 읽기 경로, [클라우드 개발 상태](dependencies.md#클라우드-개발-상태)·기존 로컬 의존성·실행·대표 검증 |
 
@@ -41,13 +41,14 @@
 |---|---|
 | 요구·구현 범위 | 기획·개발 → 제품·구조 → 관련 명세·구현·대표 검증 |
 | 클라우드 개발 | 제품·구조 → 관련 업무·기억·구성 명세 → 개발 상태·구현·검증 |
-| 승인·실행 | 업무 승인·흐름 → 호스트 승인 → MCP 계획·리소스 |
-| 멀티 오케스트레이션·위임 | 구조 → 호스트 하위 에이전트 연결 → 업무의 병렬 실행·승인 범위 → MCP 하위 에이전트 → 구현 모듈·검증 |
-| 보고·파일 | 업무의 결과 제공 → MCP 결과 DTO·파일 등록 → profile의 보관·현재 권한 → 구현 모듈·대표 검증 |
-| 기억·검색·보존 | 기억 명세 → profile·업무 보존 → MCP 기억·계획 → 호스트 Skill |
+| 클라우드 승인·리소스 | 업무의 클라우드 승인·흐름 → 클라우드 접속부·리소스 연결 → 개발 상태 |
+| 로컬 승인·실행 | 업무 승인·흐름의 로컬 절 → 호스트 승인 → MCP 계획·리소스 |
+| 로컬 멀티 오케스트레이션·위임 | 호스트 하위 에이전트 연결 → 업무의 병렬 실행·승인 범위 → MCP 하위 에이전트 → 구현·검증 |
+| 로컬 보고·파일 | 업무의 결과 제공 → MCP 결과 DTO·파일 등록 → profile의 보관·현재 권한 → 구현·검증 |
+| 로컬 기억·검색·보존 | 기억 명세의 로컬 절 → profile·업무 보존 → MCP 기억·계획 → 호스트 Skill |
 | 로컬 저장·삭제·복구 | profile의 저장 구조 → 업무·기억 보존 → MCP 조회·멱등 규격 → 환경 이관·대표 검증 |
-| 리소스·MCP | 리소스 계약·범주별 연결 → 공통 MCP·해당 도구 |
-| profile·준비·배포 | 사용자 구성 → 환경 준비 → 호스트 실행 |
+| 로컬 리소스·MCP | 리소스 계약의 로컬 절·범주별 연결 → 공통 MCP·해당 도구 |
+| 로컬 profile·준비·배포 | 사용자 구성의 로컬 절 → 환경 준비 → 호스트 실행 |
 | 개발 환경·로컬 실행 | 개발 의존성과 실행 → 관련 명세·코드·대표 검증 |
 | 문서 변경·검토 | 문서·검토 규칙 → 변경 대상·영향받는 정본 |
 

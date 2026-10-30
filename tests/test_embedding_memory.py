@@ -143,6 +143,24 @@ def test_api_failure_with_eligible_memory_still_reports_partial_search(tmp_path,
         assert result["limitations"]
 
 
+@pytest.mark.parametrize('phase', ['document', 'query'])
+def test_missing_provider_vector_preserves_memory_and_keyword_search(tmp_path, api, monkeypatch, phase):
+    with closing(Store(tmp_path)) as store:
+        selected = profile(store, embedding=api_config())
+        service = MemoryService(store)
+        if phase == 'query':
+            item = save(service, selected)
+        monkeypatch.setattr(api, 'embed_' + phase, lambda self, text: None)
+        if phase == 'document':
+            item = save(service, selected)
+            assert item['index_state'] == 'pending'
+        result = service.search(selected['profile_id'], 'E_CONN_001')
+        assert [entry['memory_ref'] for entry in result['items']] == [item['memory_ref']]
+        if phase == 'query':
+            assert result['retrieval_state'] == 'keyword_only'
+        assert result['limitations']
+
+
 def test_keyword_only_never_calls_api(tmp_path, api):
     with closing(Store(tmp_path)) as store:
         selected = profile(store, embedding={"provider": "keyword_only"})

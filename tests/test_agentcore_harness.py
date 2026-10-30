@@ -204,6 +204,17 @@ def test_inline_handoff_stops_at_next_harness_executed_tool():
     assert [tool['toolUseId'] for tool in reply.pending_tools] == ['first', 'adjacent']
 
 
+def test_duplicate_inline_tool_id_cannot_be_handed_off_for_execution_twice():
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+
+    events = [{'messageStart': {'role': 'assistant'}},
+              *tool_events('duplicate', index=0), *tool_events('duplicate', index=1),
+              {'messageStop': {'stopReason': 'tool_use'}}]
+    client = Client(events)
+    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    assert reply.error and reply.pending_tools == () and client.stream.closed
+
+
 def test_incomplete_remote_result_is_not_a_completed_observation():
     from daeri.infrastructure.agentcore import AgentCoreHarness
 

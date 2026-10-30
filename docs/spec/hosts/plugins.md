@@ -23,7 +23,7 @@ Codex·Claude Code에 DAERI를 배포하고 사용자 요청을 실행 환경에
 ## 공통 구성
 
 플러그인은 네 Skill·하위 에이전트 지침·로컬 DAERI MCP runtime을 연결한다.
-호스트는 판단·협업·결과 작성을, runtime은 승인된 실행·기록·자동 기억을 맡으며 책임 경계는 [아키텍처](../../architecture/overview.md)를 따른다.
+호스트는 판단·협업·결과 작성을, runtime은 [로컬 업무 흐름](../tasks/workflow.md#기존-로컬-구현의-적용-범위)의 실행·기록·자동 기억을 맡는다.
 
 | 구성 | 역할 |
 |---|---|
@@ -92,10 +92,10 @@ DAERI runtime의 MCP 등록명과 초기화 응답의 `serverInfo.name`은 `runt
 Claude Code는 [서버 이름 규칙](https://code.claude.com/docs/en/plugins/components#server-names-tool-names-and-reloads)에 따라 `plugin:daeri:runtime`으로 표시한다.
 공개 도구 이름은 [MCP 규격](../mcp/common.md)의 `daeri_*` 형식을 따른다.
 
-첫 설치 명령과 사용자 호출은 [사용자 안내](../../../README.md#설치)가 정본이다.
+첫 설치 명령과 사용자 호출은 [local-agent 설치 안내](https://github.com/VVoodyHong/DAERI/tree/local-agent#설치)가 정본이다.
 호스트를 종료한 상태에서 OS 터미널로 설치하고 성공 뒤 호스트를 시작한다.
 사내 배포는 해당 clone URL·원격 브랜치를 사용한다.
-Codex의 브랜치는 [공식 CLI 규격](https://learn.chatgpt.com/docs/cli/reference)의 `--ref`, Claude Code는 [터미널 설치 규격](https://code.claude.com/docs/en/discover-plugins#manage-plugins-from-your-shell)의 URL `#ref`로 지정한다.
+기존 로컬 제품은 Codex의 [브랜치 인수](https://learn.chatgpt.com/docs/cli/reference)에 `--ref local-agent`, Claude Code의 [설치 URL](https://code.claude.com/docs/en/discover-plugins#manage-plugins-from-your-shell)에 `#local-agent`를 지정한다.
 
 Codex 플러그인의 Skill 이름은 [공식 구현](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/core-skills/src/loader/namespace.rs#L175-L180)의 `플러그인명:Skill명`이며 `$`는 호스트의 Skill 호출 표시다.
 `/skills`·`$` 선택기 또는 앱의 Skill 선택 화면에서도 DAERI의 같은 Skill을 선택할 수 있다.
@@ -123,7 +123,7 @@ DAERI profile 인증은 이후 등록 리소스의 연결에 사용한다.
 
 배포자는 새 코드가 캐시에 반영되도록 플러그인·실행 패키지 버전을 함께 올린다.
 사용자는 처음 등록한 Git 브랜치를 갱신하므로 다른 브랜치나 고정된 태그로 설치했으면 배포 대상을 먼저 확인한다.
-기본 배포 대상은 `main`이며 이전 릴리즈 브랜치로 등록한 마켓플레이스는 `main`을 보도록 다시 등록한다.
+기존 로컬 제품의 마켓플레이스는 `local-agent`를 배포 대상으로 사용한다.
 마켓플레이스 목록과 설치한 플러그인을 각각 갱신하며 아래 명령은 OS 터미널에서 실행한다.
 
 ```shell
@@ -281,13 +281,7 @@ Skill은 첫 입력·관리 호출·결과 분기를 수행하고 필요한 계�
 ### 총괄 에이전트와 하위 에이전트의 호스트 연결
 
 [work Skill](../../../skills/work/SKILL.md#총괄-에이전트와-하위-에이전트)은 총괄 에이전트의 작업 분해·위임 발급·하위 에이전트 생성·진행 확인·결과 통합을 연결한다.
-독립적인 조사·분석이나 별도 문맥의 검증으로 시간·문맥 이득이 있을 때 필요한 수만 생성하고 바로 앞 결과가 필요한 순차 판단은 총괄 에이전트가 이어간다.
-사용자는 하나의 업무 계획을 승인하며 분해·배정·병렬 수행도 같은 [승인 범위](../tasks/approval.md#하위-에이전트-위임과-승인-범위)에서 수행한다.
-
-총괄 에이전트는 `daeri_subagent`의 `create`로 승인된 단계·하위 목표·완료 조건·허용 출처를 배정하고 발급된 위임 토큰을 해당 호스트 하위 에이전트의 작업 지시에 전달한다.
-작업 지시에는 공통 지침의 설치된 절대 경로와 업무·위임·할당·계획 참조·필요한 근거 요약·기대 결과를 포함한다.
-로컬 Source를 배정하면 `daeri_resource_list`에서 확인한 연결별 `target.path`도 호스트 작업 지시에 전달한다.
-실제 하위 에이전트 생성·모델 추론·대기는 호스트가 수행하고 DAERI 도구는 위임과 실행을 관리한다.
+실제 생성·모델 추론·대기는 호스트가, 배정 범위·호출 자격·근거 기록은 DAERI의 [위임 계약](../tasks/workflow.md#하위-에이전트-위임과-병렬-실행)이 담당한다.
 
 | 호스트 | 현재 패키지의 연결 방식 |
 |---|---|
@@ -298,14 +292,11 @@ Claude Code의 기본 탐색 위치는 [플러그인 규격](https://code.claude
 현재 `agents/subagent.md`는 `Read`·`Grep`·`Glob`·`Bash`와 `ToolSearch`·`mcp__plugin_daeri_runtime__daeri_subagent`를 제공한다.
 하위 에이전트는 호스트 도구로 로컬 Source를 조사하고 조회·분석 근거를 반환하며 파일 작성은 총괄 에이전트가 담당한다.
 `Read`는 `${CLAUDE_PLUGIN_ROOT}/skills/work/references/subagent.md`와 필요한 제품 계약을 읽고, DAERI 업무 자료·관찰·완료 기록은 단일 `daeri_subagent` 게이트웨이로 처리한다.
-Claude 플러그인 정의는 기본 `agents/` 디렉터리 탐색을 사용한다.
 
 Codex의 생성·후속 지시·대기·종료는 [호스트 하위 에이전트 도구](https://learn.chatgpt.com/docs/agent-configuration/subagents#orchestration-and-thread-controls)를 사용한다.
 Codex의 [공식 플러그인 규격](https://developers.openai.com/plugins/build/plugins)은 Skill·MCP 전달 경로의 근거다.
-현재 Codex 패키지는 기존 호스트의 기본 하위 에이전트와 DAERI의 공통 수행 지침을 연결한다.
-기본 하위 에이전트가 지시받은 절대 경로를 읽어 두 호스트의 같은 [하위 에이전트 수행 지침](../../../skills/work/references/subagent.md)을 적용한다.
-파일 작성·실행 도구가 제공되는 하위 에이전트에게는 해당 도구와 업무별 작업 경로로 파일 작성을 배정할 수 있다.
-총괄 에이전트는 하위 에이전트의 실제 도구·권한에 맞춰 작성·검증을 분담하고 최종 보고·파일 등록을 처리한다.
+기본 하위 에이전트는 지시받은 절대 경로의 [공통 수행 지침](../../../skills/work/references/subagent.md)을 읽는다.
+총괄 에이전트는 실제 제공된 파일·실행 도구와 업무별 작업 경로에 맞춰 작성·검증을 분담하고 최종 보고·파일 등록을 처리한다.
 
 할당 복구·수행·근거 반환은 [공통 하위 에이전트 지침](../../../skills/work/references/subagent.md), 위임 상태·호출 수명은 [실행 계약](../tasks/workflow.md#하위-에이전트-위임과-병렬-실행)을 따른다.
 
@@ -329,13 +320,8 @@ DAERI 위임의 강제 범위는 DAERI 도구 호출이며 호스트 전체의 �
 새 대화·문맥 압축·호스트 전환 뒤에는 Skill과 관련 계약을 다시 읽고 [현재 설치의 연결](#설치부터-업무-시작까지의-실제-경계)을 확인한다.
 새 업무의 대상 선택 증거가 불확실하면 [profile 선택 계약](../configuration/profiles.md#선택과-기본값)에 따라 정형 질문으로 다시 고른다.
 
-기존 업무는 [work의 재개 절차](../../../skills/work/SKILL.md#업무-재개)로 요청·계획·승인·보고·호출을 복구한다.
-사용자의 이어가기 의사가 확인되면 명시적 인계로 현재 호스트에 소유권을 연결한다.
-진행 중인 호출의 완료를 기다리고 같은 계획·유효 승인·사용량을 이어가며 필요한 하위 에이전트는 현재 호스트에서 다시 배정한다.
-일시중지·입력·승인 대기의 전이는 [업무 재개 계약](../tasks/workflow.md#중단재개와-외부-결과-확인)을 따른다.
-
-호스트 전환·재연결·업데이트·대화 기본 profile 변경 뒤에도 기존 업무의 대상·스냅샷·수행 근거를 보존한다.
-현재 실행 환경이나 연결 조건이 미준비이면 해당 준비를 안내한 뒤 저장한 업무의 재개 조건을 다시 검사한다.
+기존 업무는 [work의 재개 절차](../../../skills/work/SKILL.md#업무-재개)로 기록을 복구하고 [업무 재개 계약](../tasks/workflow.md#중단재개와-외부-결과-확인)에 따라 소유권·승인·진행 중 호출을 확인한다.
+현재 실행 환경·연결이 미준비이면 필요한 준비를 마친 뒤 같은 업무의 재개 조건을 다시 검사한다.
 
 ## 로컬 실행과 연결 수명
 
@@ -345,10 +331,6 @@ stdio MCP 서버는 호스트가 DAERI에 연결할 때 runtime·저장소를 �
 MCP 요청 취소는 해당 응답의 대기를 중단하고 서버 연결은 후속 요청에 계속 사용한다.
 이미 시작한 동기 처리는 완료·실패를 기록한 뒤 취소를 전달하며 저장한 결과는 원 요청·호출 키로 조회한다.
 업무의 일시중지·취소 상태는 [업무 중단 계약](../tasks/workflow.md#중단재개와-외부-결과-확인)의 도구로 전환한다.
-
-runtime은 해당 업무의 profile에서 필요한 연결만 사용한다.
-원격 접속·자료 조회는 승인된 업무에서 필요하다고 판단한 연결을 대상으로 수행한다.
-프로그램 준비·리소스 인증·업무 자료 조회는 각각 요청된 범위에서 수행한다.
 
 저장소 이동·삭제·교체를 발견한 runtime의 오류·중단은 [저장소 동일성 검사](../configuration/profiles.md#설정과-업무-기록의-저장)를 따른다.
 호스트는 재연결 안내와 해당 복구 조건을 전달하고 새 MCP 연결에서 현재 저장소의 업무 상태를 다시 읽는다.

@@ -124,6 +124,29 @@ def test_openai_experience_uses_explicit_chat_endpoint_and_late_credential_resol
     assert resolved == ['credential:company.model']
 
 
+@pytest.mark.parametrize('provider', ['bedrock', 'api'])
+def test_experience_extraction_passes_large_saved_turns_to_the_selected_model(provider):
+    from daeri.infrastructure.cloud_models import BedrockExperienceExtractor, OpenAIExperienceExtractor
+
+    prompt, response = 'request' * 10000, 'result' * 12000
+    requests = []
+    def handler(request):
+        requests.append(json.loads(request.content)['messages'][1]['content'])
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'Experience.'},
+                                                     'finish_reason': 'stop'}]})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        if provider == 'bedrock':
+            bedrock = Bedrock({'stopReason': 'end_turn', 'output': {'message': {
+                'role': 'assistant', 'content': [{'text': 'Experience.'}]}}})
+            model = BedrockExperienceExtractor(bedrock, 'model')
+        else:
+            model = OpenAIExperienceExtractor(client, 'https://company.test/v1/chat/completions',
+                                             'model', 'env:TEST_TOKEN', lambda ref: 'secret')
+        assert model.extract(prompt, response) == 'Experience.'
+        payload = bedrock.requests[0]['messages'][0]['content'][0]['text'] if provider == 'bedrock' else requests[0]
+        assert json.loads(payload) == {'task': prompt, 'result': response}
+
+
 @pytest.mark.parametrize('status,body', [
     (302, {'PRIVATE': 'redirect'}),
     (200, {'choices': [{'message': {'content': 'Partial'}, 'finish_reason': 'length'}]}),

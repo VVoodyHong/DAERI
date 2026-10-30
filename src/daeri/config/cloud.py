@@ -2,11 +2,12 @@
 
 from contextlib import ExitStack
 from dataclasses import dataclass, field
+import json
 import re
 from typing import Annotated, Any, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 from daeri.application.cloud import CloudWorkflow, SharedKnowledgeProcessor
 from daeri.config.setup_yaml import read_yaml
@@ -14,7 +15,7 @@ from daeri.core.errors import StoreError
 from daeri.infrastructure.agentcore import AgentCoreHarness
 from daeri.infrastructure.cloud_models import BedrockEmbedder, BedrockExperienceExtractor, OpenAIExperienceExtractor
 from daeri.infrastructure.cloud_postgres import AuroraCloudStore
-from daeri.infrastructure.embedding import OpenAICompatibleEmbedder
+from daeri.infrastructure.embedding import OpenAICompatibleEmbedder, validate_api_endpoint
 
 
 _SECRET_ARN = r'arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+'
@@ -47,15 +48,13 @@ class ApiModelSettings(_Settings):
     model: Text
     api_key_secret_arn: SecretArn
 
-    @model_validator(mode='after')
-    def validate_endpoint(self):
+    @field_validator('endpoint')
+    @classmethod
+    def validate_endpoint(cls, value):
         try:
-            OpenAICompatibleEmbedder.validate_config({
-                'endpoint': self.endpoint, 'model': self.model,
-                'credential_ref': 'credential:cloud.model'})
+            return validate_api_endpoint(value)
         except StoreError:
             raise ValueError('Supply the exact HTTPS API request URL without credentials.') from None
-        return self
 
 
 class KeywordEmbeddingSettings(_Settings):
@@ -162,7 +161,16 @@ def build_cloud(settings: CloudSettings, *, session=None, http_client=None) -> C
         try:
             shape = get_session().get_service_model('bedrock-agentcore').operation_model('InvokeHarness').input_shape.members['model']
             validate_parameters(settings.harness_model, shape)
-        except ParamValidationError:
+            json.dumps(settings.harness_model, allow_nan=False, default=float)
+            provider, model = next(iter(settings.harness_model.items()))
+            for name, value in model.items():
+                field = shape.members[provider].members[name]
+                metadata = field.metadata
+                if (('enum' in metadata and value not in metadata['enum'])
+                        or (field.type_name in ('integer', 'float') and
+                            (isinstance(value, bool) or not metadata.get('min', value) <= value <= metadata.get('max', value)))):
+                    raise ValueError('Invalid model field')
+        except (ParamValidationError, TypeError, ValueError):
             raise StoreError('INVALID_INPUT', 'harness_model must match the installed SDK InvokeHarness model union.') from None
 
     session = session if session is not None else boto3.Session()

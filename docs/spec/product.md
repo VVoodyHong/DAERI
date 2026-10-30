@@ -28,7 +28,7 @@ AWS 관리형 기능이 실행·문맥·연결·보안·관측·평가를 맡고
 | P-09 | 모델과 임베딩은 각각 사내 API 또는 Amazon Bedrock으로 구성한다. | [구성](configuration/profiles.md#클라우드-구성) |
 | P-10 | Gateway·Policy·Identity·Memory·Observability·Evaluations 등 AWS 관리형 기능을 우선 사용한다. | [구조](../architecture/overview.md) |
 | P-11 | 현재 사용자·프로젝트·출처 권한과 실제 승인을 실행·기억·파일에 적용한다. | [승인](tasks/approval.md#클라우드-업무-승인) |
-| P-12 | 연결된 MCP·API를 재사용하고 필요한 프로젝트·업무·지식 연결만 구현한다. | [리소스 계약](resources/contract.md) |
+| P-12 | 연결된 MCP·API를 재사용하고 필요한 프로젝트·업무·지식 연결만 구현한다. | [리소스 계약](resources/contract.md#클라우드-리소스-연결) |
 
 사용자의 목표·권한·완료 조건을 기준으로 업무를 구성한다.
 현재 수치·상태는 최신 자료로 확인하고 기억의 적용 조건·출처·관찰 시점을 함께 사용한다.

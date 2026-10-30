@@ -37,6 +37,7 @@ AWS managed harness가 모델·도구 호출을 반복하고 DAERI는 업무와 
 현재 개발 단위와 실행·검증 방법은 [개발 안내](docs/development/dependencies.md#클라우드-개발-상태)에서 확인할 수 있습니다.
 
 기존 PC용 플러그인의 설치·setup·업무 안내는 [local-agent 브랜치](https://github.com/VVoodyHong/DAERI/tree/local-agent)에 있습니다.
+로컬 제품을 설치할 때는 안내의 Git 브랜치를 `local-agent`로 지정합니다(Codex `--ref local-agent`, Claude Code URL의 `#local-agent`).
 
 - [제품 목적과 제공 범위](docs/spec/product.md)
 - [업무 흐름](docs/spec/tasks/workflow.md#클라우드-업무-흐름)
