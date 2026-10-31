@@ -106,8 +106,3 @@ DAERI가 관련 기억을 찾고 계획을 제시하면 **“승인할게”**�
 
 삭제는 대상·범위를 확인한 뒤 해당 profile의 설정·업무·기억·관리 파일을 정리합니다.
 자세한 범위와 PC 이동 절차는 [profile 삭제](docs/spec/configuration/profiles.md#profile-삭제)·[백업과 복원](docs/spec/configuration/profiles.md#이관백업복원)을 참고하세요.
-
-## 도움말
-
-- [플러그인 업데이트](docs/spec/hosts/plugins.md#설치한-플러그인-업데이트)
-- [환경 준비와 문제 해결](docs/spec/installation/environment.md)
