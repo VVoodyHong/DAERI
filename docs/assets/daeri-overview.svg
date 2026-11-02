@@ -79,7 +79,6 @@
 
   <path d="M400 330H800" class="line"/>
   <text x="600" y="311" text-anchor="middle" class="label">목표·원하는 결과</text>
-  <circle cx="800" cy="330" r="5" fill="#16776f"/>
 
   <rect x="640" y="390" width="320" height="94" rx="10" fill="#fff" stroke="#cbded9" stroke-width="1.5"/>
   <text x="800" y="430" text-anchor="middle" class="heading daeri" style="font-size:28px">프로젝트 공유 기억</text>
@@ -91,13 +90,11 @@
   <path d="M800 620H400" class="line"/>
   <text x="1000" y="601" text-anchor="middle" class="label">계획·수행 범위</text>
   <text x="600" y="601" text-anchor="middle" class="label">계획 확인</text>
-  <circle cx="800" cy="620" r="5" fill="#16776f"/>
 
   <path d="M400 740H800" class="line"/>
   <path d="M800 740H1200" class="line"/>
   <text x="600" y="721" text-anchor="middle" class="label">승인·수정 요청</text>
   <text x="1000" y="721" text-anchor="middle" class="label">승인 시 실행 재개</text>
-  <circle cx="800" cy="740" r="5" fill="#16776f"/>
 
   <rect x="1035" y="804" width="330" height="104" rx="10" fill="#fff" stroke="#d8dced" stroke-width="1.5"/>
   <text x="1200" y="845" text-anchor="middle" class="heading aws" style="font-size:27px">총괄 ↔ 하위 에이전트</text>
