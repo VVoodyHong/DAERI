@@ -182,7 +182,7 @@ class AuroraCloudStore:
 
     def search(self, context, query, vector, model_id, limit):
         if type(limit) is not int or not 1 <= limit <= 50:
-            raise StoreError('INVALID_INPUT', 'Recall limit must be between 1 and 50.')
+            raise StoreError('INVALID_INPUT', 'Search limit must be between 1 and 50.')
         parameters = {key: value for key, value in _scope(context).items() if key != 'actor'}
         parameters.update(query=query, limit=limit)
         # Materialization keeps scope and vector space filtering ahead of distance calculation.
@@ -197,7 +197,7 @@ class AuroraCloudStore:
                     ORDER BY rank LIMIT 50)'''
         if vector is not None:
             if not isinstance(model_id, str) or not model_id:
-                raise StoreError('INVALID_INPUT', 'Vector recall requires its embedding model identity.')
+                raise StoreError('INVALID_INPUT', 'Vector search requires its embedding model identity.')
             parameters.update(embedding=_vector(vector), dimensions=len(vector), model=model_id)
             sql += ''', compatible AS MATERIALIZED (
                         SELECT * FROM allowed WHERE model_id = :model AND embedding IS NOT NULL

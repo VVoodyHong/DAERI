@@ -39,7 +39,7 @@
   <text x="455" y="305" class="heading">DAERI 서버 연결부</text>
   <text x="455" y="347" class="body">사용자·업무·세션 연결</text>
   <text x="455" y="380" class="body">실제 승인 전달 · 응답 기록</text>
-  <text x="455" y="413" class="small">시작 회상 · 지식 갱신 등록</text>
+  <text x="455" y="413" class="small">기억 검색 · 지식 갱신 등록</text>
 
   <rect x="800" y="240" width="530" height="225" rx="19" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
   <text x="826" y="276" class="group" style="fill:#925313">AgentCore Runtime</text>
@@ -55,7 +55,7 @@
   <rect x="430" y="700" width="390" height="175" rx="18" fill="#edf3ff" stroke="#adc6e7" stroke-width="2"/>
   <text x="456" y="744" class="heading">DAERI 업무·지식 MCP</text>
   <text x="456" y="785" class="body">업무·승인 근거 · 자동 기억 처리</text>
-  <text x="456" y="819" class="body">회상 · 경험 정리 · 색인 · 정정</text>
+  <text x="456" y="819" class="body">기억 검색 · 경험 정리 · 색인 · 정정</text>
   <text x="456" y="852" class="small">저장·임베딩 상태 추적과 재처리</text>
 
   <rect x="950" y="700" width="380" height="175" rx="18" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>

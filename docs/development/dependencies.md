@@ -35,8 +35,8 @@ uv build
 
 | 단계 | 현재 상태 | 완료를 확인할 대상 |
 |---|---|---|
-| 핵심 요청·저장 | 회상 → harness 호출 → 응답·처리 작업 보존 구현 | 모의 어댑터와 실제 SDK 요청 형식 |
-| 공용 지식 | 경험 정리·임베딩·Aurora 저장·혼합 회상 구현 | 실제 PG 트랜잭션·검색·접근 격리·규모별 성능 |
+| 핵심 요청·저장 | 기억 검색 → harness 호출 → 응답·처리 작업 보존 구현 | 모의 어댑터와 실제 SDK 요청 형식 |
+| 공용 지식 | 경험 정리·임베딩·Aurora 저장·혼합 검색 구현 | 실제 PG 트랜잭션·검색·접근 격리·규모별 성능 |
 | 사용자 접속·승인 | 후속 구현 | HTTP·회사 로그인·플러그인·현재 계획·실제 응답·오래된 응답·호스트 전환 |
 | 관리형 연결·배포 | 후속 구현·실제 연동 | Memory·Gateway·Policy·Identity·S3·관측·평가·인프라 |
 | 상시 경험 처리 | 처리 서비스 구현, 프로세스 연결은 후속 | 작업 반복 실행·중단·다중 처리기·배포 운영 |
@@ -77,7 +77,7 @@ Harness의 [VPC·OAuth 연결](https://docs.aws.amazon.com/bedrock-agentcore/lat
 |---|---|
 | [core/cloud.py](../../src/daeri/core/cloud.py) | 접근 문맥·업무·응답·공용 지식·처리 작업과 교체 포트 |
 | [core/errors.py](../../src/daeri/core/errors.py)·[security.py](../../src/daeri/core/security.py)·[serialization.py](../../src/daeri/core/serialization.py) | 경계 오류·비밀 패턴·유효한 float32 벡터 검사 |
-| [application/cloud.py](../../src/daeri/application/cloud.py) | 시작·재개 전 회상, 응답 보존, 경험 정리·색인 처리 |
+| [application/cloud.py](../../src/daeri/application/cloud.py) | 시작·재개 전 기억 검색, 응답 보존, 경험 정리·색인 처리 |
 | [infrastructure/agentcore.py](../../src/daeri/infrastructure/agentcore.py) | `InvokeHarness` 이벤트·도구 대기·오류 해석 |
 | [infrastructure/cloud_postgres.py](../../src/daeri/infrastructure/cloud_postgres.py) | Aurora Data API·트랜잭션·지식 처리 점유·검색 |
 | [infrastructure/cloud_models.py](../../src/daeri/infrastructure/cloud_models.py) | Bedrock Converse·OpenAI 호환 경험 정리, Titan V2 임베딩 |
@@ -99,7 +99,7 @@ Aurora 저장 어댑터는 응답과 지식 처리 대기를 같은 트랜잭션
 
 | 대상 | 대표 검증 |
 |---|---|
-| 시작·재개·회상·응답 보존·경험 처리 | [업무·기억 테스트](../../tests/test_cloud_workflow.py) |
+| 시작·재개·기억 검색·응답 보존·경험 처리 | [업무·기억 테스트](../../tests/test_cloud_workflow.py) |
 | SDK 전달·스트림·도구 대기·오류 | [harness 테스트](../../tests/test_agentcore_harness.py) |
 | 트랜잭션·작업 점유·출처 범위·혼합 검색 | [저장 계약 테스트](../../tests/test_cloud_postgres.py) |
 | Bedrock·OpenAI 경험 정리·Titan 임베딩 | [모델 경계 테스트](../../tests/test_cloud_models.py) |

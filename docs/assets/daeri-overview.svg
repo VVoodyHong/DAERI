@@ -1,157 +1,136 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1600" viewBox="0 0 1800 1600" role="img" aria-labelledby="title desc">
-  <title id="title">DAERI 아키텍처</title>
-  <desc id="desc">업무 요청, 기억 회상, 계획 제시, 사용자 승인, 작업 위임, 도구 실행, 결과 보고, 경험 저장의 흐름. Claude Code와 Codex의 접속부가 DAERI 서비스로 요청을 전달한다. DAERI는 프로젝트 공유 지식을 자동 회상해 AgentCore의 총괄 harness에 제공한다. 하위 에이전트는 개별 harness를 MCP 도구로 연결하는 구성안이다. 에이전트들이 승인 범위에서 협업하고 Gateway를 통해 프로젝트 도구를 실행한다. DAERI는 응답과 업무 기록을 보존하고 경험 정리와 임베딩을 거쳐 공유 지식을 갱신한다. AgentCore Memory는 업무별 대화를 저장하고 복구한다.</desc>
+  <title id="title">DAERI 서비스 흐름</title>
+  <desc id="desc">위에서 아래로 읽는 클라우드 서비스의 목표 흐름. 사용자, AWS에 배포하는 DAERI 서비스, AWS AgentCore, 연결 도구의 네 열로 구분한다. 1 업무 요청은 Claude Code·Codex 플러그인에서 DAERI로 전달된다. 2 기억 검색은 현재 프로젝트·서비스·출처 접근 범위의 PostgreSQL·pgvector 공유 지식을 조회하고 관련 기억을 요청과 함께 managed harness에 제공한다. 3 계획 제시와 4 실제 사용자 승인은 DAERI를 경유한다. 5 총괄 에이전트는 별도 harness를 MCP 도구로 연결한 하위 에이전트에 필요한 작업을 위임한다. 6 연결된 MCP·API는 Gateway·Policy·Identity를 거쳐 호출하고 결과·근거를 반환한다. 기본 shell·파일 도구는 harness의 실행 경계를 따른다. 7 harness 응답은 DAERI가 업무 기록과 함께 보존하고 사용자에게 전달한다. 8 기억 저장은 응답 보존에서 등록한 작업을 별도 처리하여 경험 정리·원문 저장, 선택한 임베딩·색인, 프로젝트 공유 지식 저장으로 이어진다. 저장한 지식은 같은 프로젝트·서비스의 다음 업무와 현재 접근 가능한 구성원에게 제공한다. AgentCore Memory의 업무별 대화 복구와 PostgreSQL의 공유 지식 검색을 구별한다. 핵심 기억 검색·harness 호출·응답 보존·경험 처리 코드는 구현되어 있으며 사용자 플러그인·실제 승인·멀티 에이전트·관리형 연결·상시 처리·배포는 후속 연결 범위다.</desc>
   <defs>
-    <marker id="blueArrow" markerWidth="11" markerHeight="11" refX="8.5" refY="5.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 10 5.5 1 10Z" fill="#577fd1"/></marker>
-    <marker id="greenArrow" markerWidth="11" markerHeight="11" refX="8.5" refY="5.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 10 5.5 1 10Z" fill="#11958b"/></marker>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M2 2 10 6 2 10Z" fill="#79879d"/></marker>
+    <marker id="tealArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto" markerUnits="userSpaceOnUse"><path d="M2 2 10 6 2 10Z" fill="#32877f"/></marker>
     <style>
-      text{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",Arial,sans-serif;fill:#243b61}
-      .title{font-size:42px;font-weight:750;letter-spacing:-1px}
-      .heading{font-size:30px;font-weight:700;letter-spacing:-.6px}
-      .node{font-size:28px;font-weight:650;letter-spacing:-.5px}
-      .body{font-size:24px;fill:#647b9b}
-      .step{font-size:25px;fill:#346bfc}
-      .step text{font-size:25px;fill:#346bfc}
-      .stepNumbers text{font-size:26px;font-weight:700;fill:#fff}
-      .label{font-size:24px;fill:#346bfc}
-      .green{fill:#0c827a}
-      .line{fill:none;stroke:#577fd1;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#blueArrow)}
-      .both{marker-start:url(#blueArrow)}
-      .memoryLine{fill:none;stroke:#11958b;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#greenArrow)}
-      .memoryBoth{marker-start:url(#greenArrow)}
+      text{font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",Arial,sans-serif;fill:#27354a}
+      .title{font-size:42px;font-weight:750;letter-spacing:-1.2px}
+      .heading{font-size:32px;font-weight:700;letter-spacing:-.6px}
+      .body{font-size:26px;fill:#596a7d}
+      .small{font-size:24px;fill:#596a7d}
+      .label{font-size:25px;fill:#51627a}
+      .stage{font-size:28px;font-weight:650;letter-spacing:-.5px}
+      .number{font-size:24px;font-weight:700;fill:#596a7d}
+      .aws{fill:#414779}
+      .daeri{fill:#16776f}
+      .line{fill:none;stroke:#79879d;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+      .async{fill:none;stroke:#32877f;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:7 7;marker-end:url(#tealArrow)}
+      .guide{stroke:#dce3eb;stroke-width:2;stroke-dasharray:5 10}
     </style>
   </defs>
   <rect width="1800" height="1600" fill="#fff"/>
-  <text x="60" y="72" class="title">DAERI 아키텍처</text>
-
-  <rect x="60" y="112" width="1680" height="134" rx="22" fill="#f2f6ff"/>
-  <g class="line">
-    <path d="M190 161H323"/>
-    <path d="M400 161H533"/>
-    <path d="M610 161H743"/>
-    <path d="M820 161H953"/>
-    <path d="M1030 161H1163"/>
-    <path d="M1240 161H1373"/>
-    <path d="M1450 161H1583"/>
-  </g>
-  <g fill="#346bfc" stroke="#fff" stroke-width="5">
-    <circle cx="150" cy="161" r="26"/><circle cx="360" cy="161" r="26"/>
-    <circle cx="570" cy="161" r="26"/><circle cx="780" cy="161" r="26"/>
-    <circle cx="990" cy="161" r="26"/><circle cx="1200" cy="161" r="26"/>
-    <circle cx="1410" cy="161" r="26"/><circle cx="1620" cy="161" r="26"/>
-  </g>
-  <g text-anchor="middle" class="stepNumbers">
-    <text x="150" y="170">1</text><text x="360" y="170">2</text>
-    <text x="570" y="170">3</text><text x="780" y="170">4</text>
-    <text x="990" y="170">5</text><text x="1200" y="170">6</text>
-    <text x="1410" y="170">7</text><text x="1620" y="170">8</text>
-  </g>
-  <g text-anchor="middle" class="step">
-    <text x="150" y="218">업무 요청</text><text x="360" y="218">기억 회상</text>
-    <text x="570" y="218">계획 제시</text><text x="780" y="218">사용자 승인</text>
-    <text x="990" y="218">작업 위임</text><text x="1200" y="218">도구 실행</text>
-    <text x="1410" y="218">결과 보고</text><text x="1620" y="218">경험 저장</text>
+  <text x="55" y="68" class="title">DAERI 서비스 흐름</text>
+  <text x="55" y="112" class="body">요청과 응답은 DAERI를 거치고, AgentCore가 업무를 수행합니다.</text>
+  <g aria-label="구현 책임 범례">
+    <rect x="1290" y="35" width="205" height="44" rx="8" fill="#eef0f8"/>
+    <circle cx="1314" cy="57" r="6" fill="#414779"/>
+    <text x="1332" y="66" class="small aws">AWS 관리형</text>
+    <rect x="1515" y="35" width="230" height="44" rx="8" fill="#ebf6f2"/>
+    <circle cx="1539" cy="57" r="6" fill="#16776f"/>
+    <text x="1557" y="66" class="small daeri">DAERI 구현</text>
   </g>
 
-  <path d="M380 325H790Q815 325 815 350V655Q815 680 840 680H1225Q1250 680 1250 705V1080Q1250 1105 1225 1105H380Q355 1105 355 1080V350Q355 325 380 325Z" fill="#f7faff" stroke="#d6e2ff" stroke-width="1.6"/>
-  <text x="390" y="378" class="node" style="fill:#346bfc">멀티 에이전트 오케스트레이션</text>
-
-  <rect x="60" y="420" width="230" height="220" rx="20" fill="#fff" stroke="#d6e2f7" stroke-width="1.6"/>
-  <text x="175" y="477" text-anchor="middle" class="heading">사용자</text>
-  <text x="175" y="524" text-anchor="middle" class="body">Claude Code</text>
-  <text x="175" y="560" text-anchor="middle" class="body">Codex</text>
-  <text x="175" y="608" text-anchor="middle" class="body">요청 · 검토 · 승인</text>
-
-  <path d="M175 420V294H1060V420" class="line"/>
-  <rect x="538" y="267" width="170" height="41" rx="8" fill="#fff"/>
-  <text x="623" y="296" text-anchor="middle" class="label">1. 업무 요청</text>
-
-  <rect x="450" y="420" width="315" height="220" rx="20" fill="#346bfc"/>
-  <text x="607" y="486" text-anchor="middle" class="heading" style="font-size:35px;fill:#fff">총괄 에이전트</text>
-  <text x="607" y="541" text-anchor="middle" class="body" style="fill:#e2ebff">계획 · 업무 분해</text>
-  <text x="607" y="583" text-anchor="middle" class="body" style="fill:#e2ebff">결과 통합</text>
-
-  <path d="M450 488H290" class="line"/>
-  <text x="299" y="471" class="label">3. 계획 제시</text>
-  <path d="M290 550H450" class="line"/>
-  <text x="299" y="533" class="label">4. 사용자 승인</text>
-  <path d="M450 614H290" class="line"/>
-  <text x="299" y="597" class="label">7. 결과 보고</text>
-
-  <rect x="870" y="420" width="380" height="220" rx="20" fill="#fff" stroke="#cbdcff" stroke-width="1.8"/>
-  <path d="M890 420H1230Q1250 420 1250 440V500H870V440Q870 420 890 420Z" fill="#eaf1ff"/>
-  <text x="1060" y="470" text-anchor="middle" class="heading" style="fill:#346bfc">DAERI 서비스</text>
-  <text x="1060" y="542" text-anchor="middle" class="body">요청·응답·업무 기록</text>
-  <text x="1060" y="581" text-anchor="middle" class="body">자동 회상 · 지식 처리</text>
-  <text x="1060" y="618" text-anchor="middle" class="body">관련 기억을 먼저 제공</text>
-  <path d="M870 520H765" class="memoryLine memoryBoth"/>
-  <text x="817" y="503" text-anchor="middle" class="body green">문맥·응답</text>
-
-  <rect x="1420" y="420" width="320" height="220" rx="20" fill="#effbf5" stroke="#b5e5d3" stroke-width="1.8"/>
-  <text x="1580" y="473" text-anchor="middle" class="node green">프로젝트 공유 지식</text>
-  <text x="1580" y="521" text-anchor="middle" class="body">키워드 + 벡터 검색</text>
-  <text x="1580" y="563" text-anchor="middle" class="body">PostgreSQL · pgvector</text>
-  <text x="1580" y="605" text-anchor="middle" class="body">업무 경험 · 출처 · 피드백</text>
-  <path d="M1250 485H1420" class="memoryLine memoryBoth"/>
-  <text x="1335" y="462" text-anchor="middle" class="label green">2. 기억 회상</text>
-  <path d="M1250 594H1420" class="memoryLine"/>
-  <text x="1335" y="571" text-anchor="middle" class="label green">8. 경험 저장</text>
-  <text x="1335" y="630" text-anchor="middle" class="body">응답 후</text>
-  <text x="1335" y="662" text-anchor="middle" class="body">비동기 처리</text>
-
-  <path d="M765 605H825V752H995" class="line both"/>
-  <text x="1009" y="691" class="body">대화 저장·복구</text>
-  <rect x="995" y="710" width="255" height="100" rx="17" fill="#fff" stroke="#cbdcff" stroke-width="1.6"/>
-  <text x="1122" y="751" text-anchor="middle" class="node" style="font-size:26px;fill:#346bfc">AgentCore Memory</text>
-  <text x="1122" y="789" text-anchor="middle" class="body" style="font-size:22px">업무별 대화·도구 이력</text>
-
-  <path d="M1250 624H1280V812H1420" class="memoryLine memoryBoth"/>
-  <text x="1350" y="785" text-anchor="middle" class="body green">벡터 생성</text>
-  <rect x="1420" y="750" width="320" height="125" rx="17" fill="#fff" stroke="#b5e5d3" stroke-width="1.8"/>
-  <text x="1580" y="800" text-anchor="middle" class="node green">임베딩</text>
-  <text x="1580" y="846" text-anchor="middle" class="body">사내 API / Bedrock</text>
-
-  <path d="M607 640V825H515V880" class="line both"/>
-  <path d="M607 825H805V880" class="line"/>
-  <path d="M805 825H1095V880" class="line"/>
-  <text x="620" y="800" class="label">5. MCP로 위임 · 결과 통합</text>
-  <g fill="#fff" stroke="#cbdcff" stroke-width="1.8">
-    <rect x="405" y="880" width="220" height="135" rx="18"/>
-    <rect x="695" y="880" width="220" height="135" rx="18"/>
-    <rect x="985" y="880" width="220" height="135" rx="18"/>
+  <rect x="625" y="150" width="350" height="1140" rx="18" fill="#f6fbf9"/>
+  <rect x="1025" y="150" width="350" height="1140" rx="18" fill="#f8f9fd"/>
+  <g aria-label="처리 주체">
+    <rect x="250" y="150" width="300" height="112" rx="12" fill="#f4f6f9"/>
+    <rect x="650" y="150" width="300" height="112" rx="12" fill="#eaf5f0"/>
+    <rect x="1050" y="150" width="300" height="112" rx="12" fill="#414779"/>
+    <rect x="1450" y="150" width="300" height="112" rx="12" fill="#f4f6f9"/>
+    <g text-anchor="middle">
+      <text x="400" y="196" class="heading">사용자</text>
+      <text x="400" y="237" class="small">Claude Code · Codex</text>
+      <text x="800" y="196" class="heading daeri">DAERI 서비스</text>
+      <text x="800" y="237" class="small">업무·승인·기억 연결</text>
+      <text x="1200" y="196" class="heading" style="fill:#fff">AWS AgentCore</text>
+      <text x="1200" y="237" class="small" style="fill:#e9ecf6">계획·판단·자율 수행</text>
+      <text x="1600" y="196" class="heading">연결 도구</text>
+      <text x="1600" y="237" class="small">MCP · API · 리소스</text>
+    </g>
   </g>
-  <g text-anchor="middle">
-    <text x="515" y="933" class="node" style="fill:#346bfc">하위 에이전트 1</text>
-    <text x="805" y="933" class="node" style="fill:#346bfc">하위 에이전트 2</text>
-    <text x="1095" y="933" class="node" style="fill:#346bfc">하위 에이전트 N</text>
-    <text x="515" y="980" class="body">개별 harness</text>
-    <text x="805" y="980" class="body">개별 harness</text>
-    <text x="1095" y="980" class="body">개별 harness</text>
+  <g class="guide">
+    <path d="M400 282V1288"/><path d="M800 282V1288"/>
+    <path d="M1200 282V1288"/><path d="M1600 282V1288"/>
   </g>
-  <path d="M515 1015V1062H1300V1190H325V1330" class="line both"/>
-  <path d="M805 1062V1015" class="line"/>
-  <path d="M1095 1062V1015" class="line"/>
-  <text x="610" y="1093" class="label">도구 호출 · 결과 반환</text>
-  <text x="390" y="407" class="body" style="font-size:22px">AgentCore harness · MCP 연결</text>
-  <text x="1337" y="1110" class="label">6. 도구 실행</text>
-  <text x="1337" y="1151" class="body">승인 범위에서 자율 수행</text>
 
-  <rect x="60" y="1240" width="1680" height="310" rx="24" fill="#f5f8ff"/>
-  <text x="100" y="1295" class="heading" style="fill:#346bfc">리소스 연결</text>
-  <g stroke="#cbdcff" stroke-width="1.8">
-    <rect x="110" y="1330" width="430" height="155" rx="20" fill="#eaf1ff"/>
-    <rect x="680" y="1330" width="430" height="155" rx="20" fill="#fff"/>
-    <rect x="1250" y="1330" width="430" height="155" rx="20" fill="#fff"/>
+  <g aria-label="단계">
+    <g fill="#f0f3f7">
+      <circle cx="64" cy="330" r="22"/><circle cx="64" cy="435" r="22"/>
+      <circle cx="64" cy="620" r="22"/><circle cx="64" cy="740" r="22"/>
+      <circle cx="64" cy="855" r="22"/><circle cx="64" cy="995" r="22"/>
+      <circle cx="64" cy="1177" r="22"/>
+    </g>
+    <circle cx="64" cy="1450" r="22" fill="#eaf5f0"/>
+    <g class="number" text-anchor="middle">
+      <text x="64" y="338">1</text><text x="64" y="443">2</text>
+      <text x="64" y="628">3</text><text x="64" y="748">4</text>
+      <text x="64" y="863">5</text><text x="64" y="1003">6</text>
+      <text x="64" y="1185">7</text><text x="64" y="1458" class="daeri">8</text>
+    </g>
+    <g class="stage">
+      <text x="103" y="340">업무 요청</text><text x="103" y="445" class="daeri">기억 검색</text>
+      <text x="103" y="630">계획 제시</text><text x="103" y="750">사용자 승인</text>
+      <text x="103" y="865">작업 위임</text><text x="103" y="1005">도구 실행</text>
+      <text x="103" y="1187">결과 보고</text><text x="103" y="1460" class="daeri">기억 저장</text>
+    </g>
+  </g>
+
+  <path d="M400 330H800" class="line"/>
+  <text x="600" y="311" text-anchor="middle" class="label">목표·원하는 결과</text>
+  <circle cx="800" cy="330" r="5" fill="#16776f"/>
+
+  <rect x="640" y="390" width="320" height="94" rx="10" fill="#fff" stroke="#cbded9" stroke-width="1.5"/>
+  <text x="800" y="430" text-anchor="middle" class="heading daeri" style="font-size:28px">프로젝트 공유 기억</text>
+  <text x="800" y="466" text-anchor="middle" class="small">현재 접근 가능한 경험·지식</text>
+  <path d="M800 520H1200" class="line"/>
+  <text x="1000" y="501" text-anchor="middle" class="label">요청 + 관련 기억</text>
+
+  <path d="M1200 620H800" class="line"/>
+  <path d="M800 620H400" class="line"/>
+  <text x="1000" y="601" text-anchor="middle" class="label">계획·수행 범위</text>
+  <text x="600" y="601" text-anchor="middle" class="label">계획 확인</text>
+  <circle cx="800" cy="620" r="5" fill="#16776f"/>
+
+  <path d="M400 740H800" class="line"/>
+  <path d="M800 740H1200" class="line"/>
+  <text x="600" y="721" text-anchor="middle" class="label">승인·수정 요청</text>
+  <text x="1000" y="721" text-anchor="middle" class="label">승인 시 실행 재개</text>
+  <circle cx="800" cy="740" r="5" fill="#16776f"/>
+
+  <rect x="1035" y="804" width="330" height="104" rx="10" fill="#fff" stroke="#d8dced" stroke-width="1.5"/>
+  <text x="1200" y="845" text-anchor="middle" class="heading aws" style="font-size:27px">총괄 ↔ 하위 에이전트</text>
+  <text x="1200" y="882" text-anchor="middle" class="small">MCP로 위임·결과 통합</text>
+
+  <path d="M1200 966H1600" class="line"/>
+  <text x="1400" y="947" text-anchor="middle" class="label">Gateway로 도구 호출</text>
+  <path d="M1600 1040H1200" class="line"/>
+  <text x="1400" y="1021" text-anchor="middle" class="label">결과·근거</text>
+
+  <path d="M1200 1130H800" class="line"/>
+  <text x="1000" y="1111" text-anchor="middle" class="label">결과·근거·파일 참조</text>
+  <rect x="640" y="1150" width="320" height="65" rx="10" fill="#fff" stroke="#cbded9" stroke-width="1.5"/>
+  <text x="800" y="1190" text-anchor="middle" class="small daeri">응답·업무 기록 보존</text>
+  <path d="M800 1250H400" class="line"/>
+  <text x="600" y="1231" text-anchor="middle" class="label">결과 보고</text>
+
+  <rect x="260" y="1345" width="1490" height="205" rx="18" fill="#eff8f5" stroke="#d0e6df" stroke-width="1.5"/>
+  <text x="1710" y="1381" text-anchor="end" class="small daeri">DAERI · 응답과 별도 처리</text>
+  <path d="M800 1215V1315H475V1400" class="async"/>
+  <g fill="#fff" stroke="#cbded9" stroke-width="1.5">
+    <rect x="300" y="1400" width="350" height="108" rx="10"/>
+    <rect x="800" y="1400" width="350" height="108" rx="10"/>
+    <rect x="1300" y="1400" width="410" height="108" rx="10"/>
   </g>
   <g text-anchor="middle">
-    <text x="325" y="1390" class="node" style="fill:#346bfc">Gateway · Policy · Identity</text>
-    <text x="325" y="1444" class="body">도구 연결 · 인증 · 접근 정책</text>
-    <text x="895" y="1390" class="node" style="fill:#346bfc">연결된 MCP · API</text>
-    <text x="895" y="1444" class="body">기존 도구와 서비스 활용</text>
-    <text x="1465" y="1390" class="node" style="fill:#346bfc">프로젝트 리소스</text>
-    <text x="1465" y="1444" class="body">데이터 · 문서 · 이슈 · 소스</text>
+    <text x="475" y="1445" class="heading daeri" style="font-size:29px">경험 정리·원문 저장</text>
+    <text x="475" y="1484" class="small">응답·피드백에서 지식 추출</text>
+    <text x="975" y="1445" class="heading daeri" style="font-size:29px">임베딩·색인</text>
+    <text x="975" y="1484" class="small">선택한 검색 방식으로 처리</text>
+    <text x="1505" y="1445" class="heading daeri" style="font-size:29px">프로젝트 공유 기억</text>
+    <text x="1505" y="1484" class="small">다음 업무·구성원이 활용</text>
   </g>
-  <path d="M540 1407H680" class="line both"/>
-  <path d="M1110 1407H1250" class="line both"/>
-  <path d="M325 1190V1330" class="line"/>
+  <path d="M650 1454H800" class="async"/>
+  <path d="M1150 1454H1300" class="async"/>
 </svg>

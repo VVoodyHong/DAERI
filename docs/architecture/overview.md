@@ -20,10 +20,10 @@ DAERI는 같은 서비스를 담당하는 사람들이 업무 경험을 공유�
 | AgentCore Runtime | 에이전트 실행의 격리·확장·호스팅 |
 | Gateway·Policy·Identity | MCP·API 연결·인증·접근 정책 집행 |
 | AgentCore Memory | 업무별 대화·도구 이력 저장·복구 |
-| DAERI 서비스 | 업무·승인·실행 근거, 자동 회상과 경험 정리·저장·정정 |
+| DAERI 서비스 | 업무·승인·실행 근거, 자동 기억 검색과 경험 정리·저장·정정 |
 | PostgreSQL·pgvector | 공유 지식·출처·벡터와 업무·처리 상태 |
 | S3 | 근거 자료·분석 파일·산출물 보관안 |
-| Observability·Evaluations | 실행 추적과 업무·회상 품질 평가 |
+| Observability·Evaluations | 실행 추적과 업무·기억 검색 품질 평가 |
 
 ## 요청과 응답의 연결
 
@@ -35,7 +35,7 @@ sequenceDiagram
     participant Model as 생성 모델
     participant Gateway as Gateway와 리소스
     Client->>DAERI: 요청 또는 실제 승인·피드백
-    DAERI->>DAERI: 현재 접근 가능한 공유 지식 회상
+    DAERI->>DAERI: 현재 접근 가능한 공유 지식 검색
     DAERI->>Harness: 업무 문맥·관련 기억
     Harness->>Model: 다음 행동 판단
     Model-->>Harness: 도구와 입력 선택
