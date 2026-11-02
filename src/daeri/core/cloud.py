@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from daeri.core.errors import StoreError
+
 
 @dataclass(frozen=True)
 class AccessContext:
@@ -14,6 +16,9 @@ class AccessContext:
     source_ids: frozenset[str]
 
     def __post_init__(self) -> None:
+        if (not isinstance(self.source_ids, (set, frozenset, list, tuple))
+                or any(not isinstance(source, str) or not source.strip() for source in self.source_ids)):
+            raise StoreError('INVALID_INPUT', 'Source IDs must be a collection of nonempty strings')
         object.__setattr__(self, 'source_ids', frozenset(self.source_ids))
 
 

@@ -104,7 +104,7 @@ def test_hybrid_query_filters_scope_and_embedding_space_before_ranking_and_binds
     assert args['project'] == 'ev' and args['service'] == 'charging'
     assert args['sources'] == '["db","docs"]'
     assert args['model'] == 'model-a:2' and args['dimensions'] == 2
-    assert args['embedding'] == '[0.5,0.25]'
+    assert json.loads(args['embedding']) == pytest.approx([0.8944271909999159, 0.4472135954999579])
     assert result[0].source_ids == frozenset({'db'})
     assert 'source_ids <@' in request['sql']
     assert 'vector_dims(embedding)' in request['sql']
@@ -116,7 +116,27 @@ def test_keyword_fallback_omits_vector_distance_operation():
     assert '<=>' not in client.calls[0][1]['sql']
 
 
-@pytest.mark.parametrize('vector', [[1e100, 1.0], [1e-100, 0.0]])
+@pytest.mark.parametrize('vector,expected', [
+    ([1e30, 0.0], [1.0, 0.0]),
+    ([1e-30, 0.0], [1.0, 0.0]),
+    ([3.0, -4.0], [0.6, -0.8]),
+])
+@pytest.mark.parametrize('operation', ['search', 'index'])
+def test_postgres_vectors_use_unit_length_without_changing_provider_values(vector, expected, operation):
+    client = DataApi([{'id': 'turn-a'}], [{'id': 'turn-a'}]) if operation == 'index' else DataApi([])
+    original = vector.copy()
+    if operation == 'search':
+        store(client).search(CONTEXT, 'country', vector, 'model-a:2', 5)
+    else:
+        job = KnowledgeJob('turn-a', 'lease-a', CONTEXT, 'count', '45 countries', 'country_code')
+        store(client).complete_job(job, vector, 'model-a:2')
+    request = next(request for name, request in client.calls
+                   if name == 'execute' and 'embedding' in parameters(request))
+    assert json.loads(parameters(request)['embedding']) == pytest.approx(expected)
+    assert vector == original
+
+
+@pytest.mark.parametrize('vector', [[1e100, 1.0], [1e-100, 0.0], [0.0, 0.0]])
 @pytest.mark.parametrize('operation', ['search', 'index'])
 def test_unrepresentable_vectors_are_rejected_before_opening_a_database_operation(vector, operation):
     client = DataApi()

@@ -99,9 +99,9 @@ Aurora 저장 어댑터는 응답과 지식 처리 대기를 같은 트랜잭션
 
 | 대상 | 대표 검증 |
 |---|---|
-| 시작·재개·기억 검색·응답 보존·경험 처리 | [업무·기억 테스트](../../tests/test_cloud_workflow.py) |
+| 출처 입력·시작·재개·기억 검색·응답 보존·경험 처리 | [업무·기억 테스트](../../tests/test_cloud_workflow.py) |
 | SDK 전달·스트림·도구 대기·오류 | [harness 테스트](../../tests/test_agentcore_harness.py) |
-| 트랜잭션·작업 점유·출처 범위·혼합 검색 | [저장 계약 테스트](../../tests/test_cloud_postgres.py) |
+| 트랜잭션·작업 점유·출처 범위·혼합 검색·벡터 정규화 | [저장 계약 테스트](../../tests/test_cloud_postgres.py) |
 | Bedrock·OpenAI 경험 정리·Titan 임베딩 | [모델 경계 테스트](../../tests/test_cloud_models.py) |
 | 설정·조립·자격 참조·종료 | [설정 테스트](../../tests/test_cloud_config.py) |
 | 문서 링크·계층 경계 | [문서 테스트](../../tests/test_documentation_links.py)·[패키지 테스트](../../tests/test_package_boundaries.py) |

@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from dataclasses import asdict
 import json
+import math
 from uuid import uuid4
 
 from daeri.core.cloud import AccessContext, CloudTask, KnowledgeJob, SharedMemory
@@ -51,7 +52,10 @@ def _scope(context):
 
 def _vector(value):
     try:
-        return _json(validated_float32_vector(value))
+        vector = validated_float32_vector(value)
+        # Unit length keeps pgvector's float32 cosine products finite and nonzero.
+        norm = math.hypot(*vector)
+        return _json([item / norm for item in vector])
     except ValueError:
         raise StoreError('INVALID_INPUT', 'Embedding must be a finite, nonzero numeric vector.') from None
 

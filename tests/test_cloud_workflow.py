@@ -273,6 +273,39 @@ def test_invalid_access_context_cannot_create_a_task(changed):
     assert harness.calls == []
 
 
+@pytest.mark.parametrize('sources', [
+    'db', '', b'db', b'', {'d': True}, None, 7,
+    [['d']], [1], [''], ['  '],
+])
+def test_malformed_source_collection_cannot_recall_character_scopes(sources):
+    store = MemoryStore()
+    store.memories['source-d'] = (
+        SharedMemory('source-d', 'Knowledge restricted to source d', frozenset({'d'})), CONTEXT)
+    harness = HarnessBoundary(store, HarnessReply('A response', 'end_turn'))
+
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        context = AccessContext('alice', 'project', 'cache', sources)
+        CloudWorkflow(store, harness).start(context, 'cache')
+
+    assert store.tasks == {}
+    assert store.searches == []
+    assert harness.calls == []
+
+
+@pytest.mark.parametrize('collection', [set, frozenset, list, tuple])
+@pytest.mark.parametrize('sources', [(), ('repository',)])
+def test_supported_source_collections_preserve_workflow_access(collection, sources):
+    context = AccessContext('alice', 'project', 'cache', collection(sources))
+    store = MemoryStore()
+    store.memories['repository'] = (
+        SharedMemory('repository', 'Repository procedure', frozenset({'repository'})), CONTEXT)
+    harness = HarnessBoundary(store, HarnessReply('A response', 'end_turn'))
+
+    turn = CloudWorkflow(store, harness).start(context, 'cache')
+
+    assert turn.recalled_ids == (('repository',) if sources else ())
+
+
 def test_mutating_original_grants_cannot_add_sources_to_an_existing_task():
     original = {'repository'}
     context = AccessContext('alice', 'project', 'cache', original)
