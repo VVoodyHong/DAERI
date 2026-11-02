@@ -78,30 +78,30 @@
   </g>
 
   <path d="M400 330H800" class="line"/>
-  <text x="600" y="311" text-anchor="middle" class="label">목표·원하는 결과</text>
+  <text x="776" y="311" text-anchor="end" class="label">목표·원하는 결과</text>
 
   <rect x="640" y="390" width="320" height="94" rx="10" fill="#fff" stroke="#cbded9" stroke-width="1.5"/>
   <text x="800" y="430" text-anchor="middle" class="heading daeri" style="font-size:28px">프로젝트 공유 기억</text>
   <text x="800" y="466" text-anchor="middle" class="small">현재 접근 가능한 경험·지식</text>
   <path d="M800 520H1200" class="line"/>
-  <text x="1000" y="501" text-anchor="middle" class="label">요청 + 관련 기억</text>
+  <text x="1176" y="501" text-anchor="end" class="label">요청 + 관련 기억</text>
 
   <path d="M1200 620H800" class="line"/>
   <path d="M800 620H400" class="line"/>
-  <text x="1000" y="601" text-anchor="middle" class="label">계획·수행 범위</text>
-  <text x="600" y="601" text-anchor="middle" class="label">계획 확인</text>
+  <text x="824" y="601" class="label">계획·수행 범위</text>
+  <text x="424" y="601" class="label">계획 확인</text>
 
   <path d="M400 740H800" class="line"/>
   <path d="M800 740H1200" class="line"/>
-  <text x="600" y="721" text-anchor="middle" class="label">승인·수정 요청</text>
-  <text x="1000" y="721" text-anchor="middle" class="label">승인 시 실행 재개</text>
+  <text x="776" y="721" text-anchor="end" class="label">승인·수정 요청</text>
+  <text x="1176" y="721" text-anchor="end" class="label">승인 시 실행 재개</text>
 
   <g aria-label="총괄 에이전트의 하위 작업 분해와 위임">
     <rect x="1050" y="804" width="300" height="66" rx="10" fill="#414779"/>
     <text x="1200" y="846" text-anchor="middle" class="heading" style="font-size:29px;fill:#fff">총괄 에이전트</text>
     <path d="M1200 870V936M1085 936H1315" fill="none" stroke="#79879d" stroke-width="2.6" stroke-linejoin="round"/>
     <rect x="1045" y="884" width="310" height="35" rx="6" fill="#f8f9fd"/>
-    <text x="1200" y="911" text-anchor="middle" class="small aws">MCP로 작업 위임</text>
+    <text x="1200" y="911" text-anchor="middle" class="small aws">작업 위임</text>
     <path d="M1085 936V952" class="line"/>
     <path d="M1200 936V952" class="line"/>
     <path d="M1315 936V952" class="line"/>
@@ -120,19 +120,19 @@
   </g>
 
   <path d="M1200 1126H1600" class="line"/>
-  <text x="1400" y="1107" text-anchor="middle" class="label">Gateway로 도구 호출</text>
+  <text x="1576" y="1107" text-anchor="end" class="label">Gateway로 도구 호출</text>
   <path d="M1600 1200H1200" class="line"/>
-  <text x="1400" y="1181" text-anchor="middle" class="label">결과·근거</text>
+  <text x="1224" y="1181" class="label">결과·근거</text>
   <path d="M1200 1200V1234" class="line"/>
   <rect x="1050" y="1234" width="300" height="64" rx="10" fill="#fff" stroke="#d8dced" stroke-width="1.5"/>
   <text x="1200" y="1276" text-anchor="middle" class="heading aws" style="font-size:28px">총괄 · 결과 통합</text>
 
   <path d="M1200 1330H800" class="line"/>
-  <text x="1000" y="1311" text-anchor="middle" class="label">결과·근거·파일 참조</text>
+  <text x="824" y="1311" class="label">결과·근거·파일 참조</text>
   <rect x="640" y="1350" width="320" height="65" rx="10" fill="#fff" stroke="#cbded9" stroke-width="1.5"/>
   <text x="800" y="1390" text-anchor="middle" class="small daeri">응답·업무 기록 보존</text>
   <path d="M800 1450H400" class="line"/>
-  <text x="600" y="1431" text-anchor="middle" class="label">결과 보고</text>
+  <text x="424" y="1431" class="label">결과 보고</text>
 
   <rect x="260" y="1545" width="1490" height="205" rx="18" fill="#eff8f5" stroke="#d0e6df" stroke-width="1.5"/>
   <text x="1710" y="1581" text-anchor="end" class="small daeri">DAERI · 응답과 별도 처리</text>

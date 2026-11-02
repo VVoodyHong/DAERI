@@ -51,7 +51,7 @@ sequenceDiagram
 DAERI는 호출 전 관련 지식을 제공하고 응답에서 경험 처리 작업을 보존한다.
 재사용할 경험의 정리·임베딩·색인은 [지식 처리 서비스](../spec/product.md#공유-기억)가 수행한다.
 
-하위 에이전트는 총괄 harness가 MCP 도구로 호출하는 agent-as-tool 구성안이다.
+현재 하위 에이전트 연결안은 총괄 managed harness가 별도 agent/harness를 MCP 도구로 호출하는 agent-as-tool 방식이다.
 개별 harness의 생성·대상 연결·결과 수집은 후속 구현이며 고급 라우팅·병렬 조정은 별도 코드가 필요한 범위다.
 이는 AWS의 [멀티 에이전트 지원 범위](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-classic-maintenance-mode.html#comparing-capabilities)에 맞춘 분담이다.
 
