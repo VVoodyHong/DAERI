@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import math
 import re
 import sqlite3
 import struct
@@ -19,6 +18,7 @@ from daeri.core.policy import (
     within_selectors,
 )
 from daeri.core.errors import StoreError
+from daeri.core.serialization import validated_float32_vector
 from daeri.core.policy import retention_deadline
 from daeri.infrastructure.embedding import create_api_embedder, validate_embedding_config
 
@@ -534,14 +534,11 @@ class MemoryService:
 
     def _vector(self, values, embedder=None):
         embedder = embedder or self.embedder
-        _require(embedder is not None and len(values) == embedder.dimensions and all(
-            type(value) in (int, float) and math.isfinite(value) for value in values)
-            and any(value != 0 for value in values), "MEMORY_INDEX_INCOMPLETE", "유효한 임베딩 벡터가 필요합니다.")
+        _require(embedder is not None, "MEMORY_INDEX_INCOMPLETE", "유효한 임베딩 제공자가 필요합니다.")
         try:
-            packed = struct.pack(f"<{len(values)}f", *values)
-            _require(any(struct.unpack(f"<{len(values)}f", packed)), "MEMORY_INDEX_INCOMPLETE", "유효한 임베딩 벡터가 필요합니다.")
-            return packed
-        except (OverflowError, struct.error):
+            vector = validated_float32_vector(values, embedder.dimensions)
+            return struct.pack(f"<{len(vector)}f", *vector)
+        except ValueError:
             raise StoreError("MEMORY_INDEX_INCOMPLETE", "저장 가능한 임베딩 벡터가 필요합니다.") from None
 
     def _index(self, profile_id, memory_ref, *, vectors=True):

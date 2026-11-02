@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "daeri-agent"
 version = "0.1.33"
-description = "Local MCP runtime for DAERI multi-agent orchestration, approvals and profile memory"
+description = "DAERI orchestration runtime with shared project knowledge and AgentCore integration"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "mcp>=1.30,<2",
@@ -20,6 +20,9 @@ dependencies = [
 
 [project.optional-dependencies]
 local-embedding = ["fastembed>=0.9,<1"]
+cloud = [
+    "boto3>=1.43.122,<2",
+]
 
 [project.scripts]
 daeri = "daeri.cli:main"

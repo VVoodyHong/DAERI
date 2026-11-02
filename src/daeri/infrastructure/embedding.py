@@ -3,9 +3,7 @@
 from contextlib import nullcontext
 import hashlib
 import json
-import math
 import re
-import struct
 from threading import Lock
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -14,6 +12,7 @@ import httpx
 from daeri.infrastructure.credentials import Credentials
 from daeri.core.security import redact
 from daeri.core.errors import StoreError
+from daeri.core.serialization import validated_float32_vector
 
 
 _REFERENCE = re.compile(r"(?:credential:[A-Za-z0-9._-]{1,128}|env:[A-Za-z_][A-Za-z0-9_]*)")
@@ -62,9 +61,8 @@ def validate_embedding_config(value):
     return {**selected, 'provider': 'api', 'adapter': adapter}
 
 
-def _validate_openai_config(value):
-    _valid(set(value) <= _OPENAI_FIELDS and {"endpoint", "model", "credential_ref"} <= value.keys())
-    endpoint = value["endpoint"]
+def validate_api_endpoint(endpoint):
+    """Require an explicit HTTPS request URL without inline credentials."""
     _valid(_safe_text(endpoint, 2048) and _safe_text(unquote(endpoint), 2048))
     try:
         url = urlsplit(endpoint)
@@ -76,12 +74,24 @@ def _validate_openai_config(value):
         httpx.URL(endpoint)
     except (ValueError, httpx.InvalidURL):
         raise StoreError("INVALID_INPUT", "HTTPS 임베딩 요청 주소가 올바르지 않습니다.") from None
-    _valid(_safe_text(value["model"], 256))
-    _valid(isinstance(value["credential_ref"], str) and bool(_REFERENCE.fullmatch(value["credential_ref"])))
-    _valid(type(value.get("timeout_seconds", 15)) is int and 1 <= value.get("timeout_seconds", 15) <= 60)
+    return endpoint
+
+
+def validate_api_connection(endpoint, model, credential_ref, timeout_seconds=15):
+    validate_api_endpoint(endpoint)
+    _valid(_safe_text(model, 256))
+    _valid(isinstance(credential_ref, str) and bool(_REFERENCE.fullmatch(credential_ref)))
+    _valid(type(timeout_seconds) is int and 1 <= timeout_seconds <= 60)
+    return {'endpoint': endpoint, 'model': model, 'credential_ref': credential_ref, 'timeout_seconds': timeout_seconds}
+
+
+def _validate_openai_config(value):
+    _valid(set(value) <= _OPENAI_FIELDS and {"endpoint", "model", "credential_ref"} <= value.keys())
+    connection = validate_api_connection(value['endpoint'], value['model'], value['credential_ref'],
+                                         value.get('timeout_seconds', 15))
     if "dimensions" in value:
         _valid(type(value["dimensions"]) is int and 1 <= value["dimensions"] <= 8192)
-    return {**value, "timeout_seconds": value.get("timeout_seconds", 15)}
+    return {**value, **connection}
 
 
 class OpenAICompatibleEmbedder:
@@ -161,15 +171,7 @@ class OpenAICompatibleEmbedder:
             item = result["data"][0]
             if not isinstance(item, dict) or type(item.get("index")) is not int or item["index"] != 0:
                 raise ValueError
-            vector = item.get("embedding")
-            if (not isinstance(vector, list) or not 1 <= len(vector) <= 8192
-                    or any(type(number) not in (int, float) or not math.isfinite(number) for number in vector)
-                    or not any(vector)):
-                raise ValueError
-            # The local vector index stores float32; finite float64 can overflow or become all zero there.
-            stored = struct.unpack(f"<{len(vector)}f", struct.pack(f"<{len(vector)}f", *vector))
-            if not all(math.isfinite(number) for number in stored) or not any(stored):
-                raise ValueError
+            vector = validated_float32_vector(item.get("embedding"))
             actual_model = result.get("model")
             if actual_model is not None and not _safe_text(actual_model, 256):
                 raise ValueError
@@ -179,7 +181,7 @@ class OpenAICompatibleEmbedder:
                     raise ValueError
                 self.dimensions = len(vector)
                 self._response_model, self._initialized = actual_model, True
-            return [float(number) for number in vector]
+            return vector
         except Exception:
             # Provider bodies and transport exceptions can contain credentials or source text.
             raise StoreError("MEMORY_INDEX_INCOMPLETE", "회사 임베딩 API의 인증·연결·응답을 확인할 수 없어 벡터 처리를 완료하지 못했습니다.") from None

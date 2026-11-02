@@ -1,9 +1,75 @@
-# 개발 의존성과 로컬 실행
+# 개발 의존성과 실행
 
-상태: 준비·실행·구현 책임과 자동 검증 기준; 실제 회사·호스트·Windows 검증은 별도
+상태: 클라우드 개발 단계와 기존 로컬의 의존성·실행·검증 기준.
 
 어떤 프로그램이 설치되고 구성 요소가 어떤 자료를 주고받는지 설명한다.
 업무·설정·보존 계약은 [제품 명세 지도](documentation-architecture.md#정본-지도), 현재 제공 범위는 [제품 명세](../spec/product.md#현재-제공-범위)를 따른다.
+
+## 클라우드 개발 상태
+
+`main` 브랜치에서 [AWS 공용 구조](../architecture/overview.md)를 구현한다.
+기존 PC 제품은 `local-agent`에 보존하고, 이 브랜치의 기존 로컬 코드는 검증한 동작과 필요한 로직을 이관하는 기준으로 사용한다.
+클라우드 요구·책임은 각 정본에서 관리하고 아래 표는 구현 순서·현재 상태·완료 근거를 소유한다.
+
+| 단계 | 구현할 동작 | 현재 상태·완료 기준 |
+|---|---|---|
+| 핵심 요청·저장 | 관련 기억 제공 → `InvokeHarness` → 응답·지식 처리 보존 | 애플리케이션·SDK 경계 구현; 모의 검증과 실제 AWS 검증을 구분 |
+| 공용 지식 | 경험 정리 → 임베딩 → PG·pgvector 저장·공유 회상 | 처리 서비스·Aurora Data API 어댑터 구현; 실제 PG 트랜잭션·검색은 별도 검증 |
+| 사용자 접속·승인 | 클라우드 플러그인, 로그인·현재 계획과 실제 승인 왕복 | 후속 구현; 요청·응답·대기·호스트 전환과 오래된 응답 검사 |
+| 관리형 연결 | Memory·Gateway·Policy·Identity·S3·관측·평가·배포 | 후속 구현·실제 연동; 저장·복구, 현재 사용자 문맥·접근·실제 승인 집행 확인 |
+| 동시 업무·소스 | 업무별 사본·브랜치, Git 자격·검증·통합·복구 | 실행 위치 확정 뒤 구현; 병렬 변경·충돌·상태 보존 확인 |
+
+클라우드 구현은 배포와 독립된 Python 서비스·설정 조립부다.
+HTTP·JWT 인증 경계, 공개 cloud CLI, 호스트 승인 화면, 작업 처리 프로세스의 상시 실행과 인프라 배포는 후속 구현 대상이다.
+`AccessContext`는 인증 경계가 전달할 사용자·프로젝트·서비스·출처의 내부 계약이며 현재 구현은 해당 값의 일치와 저장 범위를 검사한다.
+실제 회사 신원·구성원·권한 검증은 인증 경계를 연결할 때 구현한다.
+
+| 패키지·모듈 | 구현 책임 | 대표 검증 |
+|---|---|---|
+| [core/cloud.py](../../src/daeri/core/cloud.py) | 업무·대화 응답·공용 기억·처리 작업과 교체 포트 | 아래 애플리케이션·어댑터 검증 |
+| [application/cloud.py](../../src/daeri/application/cloud.py) | 시작·재개 전 회상, 응답 보존, 경험 정리·색인 처리 | [업무·기억](../../tests/test_cloud_workflow.py) |
+| [infrastructure/agentcore.py](../../src/daeri/infrastructure/agentcore.py) | SDK `InvokeHarness` 이벤트·도구 대기·오류 해석 | [SDK 전달](../../tests/test_agentcore_harness.py) |
+| [infrastructure/cloud_postgres.py](../../src/daeri/infrastructure/cloud_postgres.py) | Aurora Data API·트랜잭션·처리 대기·검색·작업 점유 | [저장 계약](../../tests/test_cloud_postgres.py) |
+| [infrastructure/cloud_models.py](../../src/daeri/infrastructure/cloud_models.py) | Bedrock Converse·OpenAI 호환 경험 정리, Titan V2 임베딩 | [모델 경계](../../tests/test_cloud_models.py) |
+| [config/cloud.py](../../src/daeri/config/cloud.py) | YAML 검증·AWS 클라이언트·선택 제공자 조립과 자원 종료 | [설정·조립](../../tests/test_cloud_config.py) |
+
+`core`·`application`은 저장·harness·모델·임베딩 포트에 의존하고 외부 SDK는 infrastructure·config에서 구성한다.
+`CloudSettings.from_yaml()`은 설정만 읽고 AWS 클라이언트·자격 조회는 `build_cloud()`에서 시작한다.
+설정 필드·가상 YAML·호출 책임은 [클라우드 구성](../spec/configuration/profiles.md#클라우드-설정-입력과-조립)을 따른다.
+
+Aurora 저장 어댑터는 응답·처리 대기를 같은 트랜잭션으로 보존하고 여러 처리기의 작업 점유를 DB에서 조정한다.
+Data API의 반환 행 크기를 고려해 응답·도구 대기 입력·기억·지식 작업 본문을 8,192자씩 읽는다.
+대형 산출물의 S3 분리·인증된 다운로드·실제 저장소의 크기·성능 검증은 후속 범위다.
+
+클라우드 개발 의존성과 대표 검증은 다음 명령으로 준비·실행한다.
+
+```sh
+uv sync --frozen --extra cloud
+uv run --no-sync python -m pytest tests/test_cloud_workflow.py tests/test_agentcore_harness.py tests/test_cloud_postgres.py tests/test_cloud_models.py tests/test_cloud_config.py
+```
+
+검증은 모의 AWS·HTTP·저장소와 실제 SDK 요청 형식을 대상으로 한다.
+실제 AWS 요청, PG SQL 실행·검색 품질·트랜잭션·확장 설치, 회사 API·SSO·Memory·S3·Gateway·Policy는 별도 실제 연동 대상이다.
+배포 완료는 실제 계정·리전·인증·네트워크·PG·다중 사용자 동작의 근거로 판단한다.
+
+### 배포와 확장 시 확인할 조건
+
+| 조건 | 결정·확인 시점 |
+|---|---|
+| AWS 계정·리전·SSO·프로젝트 구성원 | 배포 정보를 받은 뒤 회사 정책·관리형 기능 지원과 대조 |
+| 모델·임베딩·리소스 자격 | 사내 API 또는 Bedrock 선택과 개인 위임·프로젝트 자격 범위 확인 |
+| 네트워크·CA·데이터·로그 보존 | 실제 회사 연결·자료 분류·저장·평가 입력까지 대조 |
+| 소스 실행 위치·Git 반영 | PC 또는 AWS의 도구·사내망·기존 변경·인증을 대조해 결정 |
+| 추가 채널·운영 | 기존 플러그인 검증 후 다른 직군의 접점·동시 업무·예산·연결 종료 처리 확정 |
+| 기존 자료 이관 | 공용 서비스가 준비된 뒤 필요한 자료·보존 조건과 검증 범위 결정 |
+
+Aurora Serverless·Data API의 실제 연결·SQL, AWS Memory의 대화 재개·현재 신원 전달은 실제 환경에서 검증한다.
+관리형 평가의 모델 추적·평가 입력 지원·처리 리전과 비용을 배포 조건에 포함한다.
+
+## 기존 로컬 구현의 적용 범위
+
+아래 절은 현재 저장소의 로컬 패키지·CLI·MCP·SQLite 구현과 대표 검증을 설명한다.
+클라우드의 새 구현은 위 개발 상태에 연결하고 로컬 공개 DTO와 설치 절차는 해당 적용 범위로 유지한다.
 
 ## 의존성의 정본
 
@@ -200,7 +266,7 @@ runtime 선택은 설치한 플러그인의 전용 Python 절대 경로로 고�
 
 호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 runtime이 저장 상태·정책과 대조한다.
 실제 리소스 요청과 호스트의 Source 관찰 등록은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
-총괄 에이전트·하위 에이전트의 판단·조정과 실행 검사의 경계는 [멀티 오케스트레이션 에이전트 아키텍처](../architecture/overview.md#오케스트레이션과-자율-수행)가 설명한다.
+총괄·하위 에이전트의 판단과 runtime 검사의 경계는 [로컬 업무 흐름](../spec/tasks/workflow.md#기존-로컬-구현의-적용-범위)을 따른다.
 구현은 같은 로컬 배포 안에서 역할별 패키지로 나눈다.
 공개 실행 모듈은 `daeri.cli`와 `daeri.server`다.
 
@@ -218,7 +284,7 @@ src/daeri/
 | 위치 | 담당 구현 | 책임 |
 |---|---|---|
 | 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#도구-목록)를 받아 설정·업무 처리로 전달 |
-| `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 필드·기억·보존 정책, 공통 오류, 인증 문자열 보조 검사와 정규 JSON 표현 |
+| `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 기억·보존 정책, 공통 오류, 인증 문자열 보조 검사, 정규 JSON·float32 벡터 검증 |
 | `application/` | `runtime.py`·`planning.py`·`subagents.py`·`results.py`·`knowledge.py`·`automatic_memory.py` | 업무·계획·승인·위임·읽기 실행, 보고·파일의 근거 연결, 기억 후보 검증·갱신·재시도 |
 | `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP·인증·Source 경로와 관찰 등록, 기억 검색·색인과 임베딩 제공자 연결 |
 | `infrastructure/adapters/` | 공통 `base.py`와 제품별 모듈 | 제품별 설정 스키마·대상·인증·로그인·읽기 의미·요청과 결과 검사 |
