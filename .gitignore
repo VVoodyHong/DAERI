@@ -2,15 +2,9 @@
 Thumbs.db
 Desktop.ini
 .venv/
-.runtime/
 __pycache__/
 .pytest_cache/
 *.egg-info/
 dist/
 build/
 .coverage
-.venv.prepare.*
-.venv.previous/
-.daeri-setup.lock/
-.mcp.json
-.mcp.prepare.*

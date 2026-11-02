@@ -1,375 +1,111 @@
 # 개발 의존성과 실행
 
-상태: 클라우드 개발 단계와 기존 로컬의 의존성·실행·검증 기준.
+상태: AWS 공용 서비스의 개발 환경·구현 단계·검증 기준.
+요구·입출력·상태·실패 동작은 [제품 명세](../spec/product.md), 구조와 책임은 [아키텍처](../architecture/overview.md)가 소유한다.
 
-어떤 프로그램이 설치되고 구성 요소가 어떤 자료를 주고받는지 설명한다.
-업무·설정·보존 계약은 [제품 명세 지도](documentation-architecture.md#정본-지도), 현재 제공 범위는 [제품 명세](../spec/product.md#현재-제공-범위)를 따른다.
+## 개발 환경
+
+지원 Python·의존성의 정본은 [pyproject.toml](../../pyproject.toml)과 [uv.lock](../../uv.lock)이다.
+저장소 루트에서 잠긴 환경을 준비하고 검증한다.
+
+```sh
+uv sync --frozen
+uv lock --check
+uv run --no-sync python -m pytest
+uv build
+```
+
+| 의존성 | 역할 |
+|---|---|
+| boto3 | AgentCore·Bedrock·Aurora Data API·Secrets Manager 클라이언트 |
+| httpx | 선택한 OpenAI 호환 API의 요청·응답 처리 |
+| pydantic | 설정의 필드·타입·기본값 검증 |
+| PyYAML | YAML 읽기와 별도 크기·중복 키·별칭·깊이 검증 |
+| pytest | 배포와 독립된 동작·어댑터·문서·패키지 검증 |
+| Hatchling·uv | 빌드·의존성 잠금·재현 가능한 개발 환경 |
+
+현재 제공 단위는 Python 라이브러리다.
+설정 읽기는 파일·스키마만 검사하고 AWS 클라이언트·자격 조회·연결은 명시적인 `build_cloud()` 호출에서 시작한다.
+실제 리소스 변경은 요청된 작업 범위와 배포 환경을 확인해 수행한다.
 
 ## 클라우드 개발 상태
 
-`main` 브랜치에서 [AWS 공용 구조](../architecture/overview.md)를 구현한다.
-기존 PC 제품은 `local-agent`에 보존하고, 이 브랜치의 기존 로컬 코드는 검증한 동작과 필요한 로직을 이관하는 기준으로 사용한다.
-클라우드 요구·책임은 각 정본에서 관리하고 아래 표는 구현 순서·현재 상태·완료 근거를 소유한다.
+`main`은 AWS 공용 서비스의 개발 기준이다.
+기존 PC 제품의 코드·문서·설치는 [local-agent 브랜치](https://github.com/VVoodyHong/DAERI/tree/local-agent)에 보존한다.
 
-| 단계 | 구현할 동작 | 현재 상태·완료 기준 |
+| 단계 | 현재 상태 | 완료를 확인할 대상 |
 |---|---|---|
-| 핵심 요청·저장 | 관련 기억 제공 → `InvokeHarness` → 응답·지식 처리 보존 | 애플리케이션·SDK 경계 구현; 모의 검증과 실제 AWS 검증을 구분 |
-| 공용 지식 | 경험 정리 → 임베딩 → PG·pgvector 저장·공유 회상 | 처리 서비스·Aurora Data API 어댑터 구현; 실제 PG 트랜잭션·검색은 별도 검증 |
-| 사용자 접속·승인 | 클라우드 플러그인, 로그인·현재 계획과 실제 승인 왕복 | 후속 구현; 요청·응답·대기·호스트 전환과 오래된 응답 검사 |
-| 관리형 연결 | Memory·Gateway·Policy·Identity·S3·관측·평가·배포 | 후속 구현·실제 연동; 저장·복구, 현재 사용자 문맥·접근·실제 승인 집행 확인 |
-| 동시 업무·소스 | 업무별 사본·브랜치, Git 자격·검증·통합·복구 | 실행 위치 확정 뒤 구현; 병렬 변경·충돌·상태 보존 확인 |
+| 핵심 요청·저장 | 회상 → harness 호출 → 응답·처리 작업 보존 구현 | 모의 어댑터와 실제 SDK 요청 형식 |
+| 공용 지식 | 경험 정리·임베딩·Aurora 저장·혼합 회상 구현 | 실제 PG 트랜잭션·검색·접근 격리·규모별 성능 |
+| 사용자 접속·승인 | 후속 구현 | HTTP·회사 로그인·플러그인·현재 계획·실제 응답·오래된 응답·호스트 전환 |
+| 관리형 연결·배포 | 후속 구현·실제 연동 | Memory·Gateway·Policy·Identity·S3·관측·평가·인프라 |
+| 상시 경험 처리 | 처리 서비스 구현, 프로세스 연결은 후속 | 작업 반복 실행·중단·다중 처리기·배포 운영 |
+| 동시 소스 작업 | 실행 위치 확정 뒤 구현 | 업무별 사본·브랜치·Git 자격·충돌·검증·통합·복구 |
 
-클라우드 구현은 배포와 독립된 Python 서비스·설정 조립부다.
-HTTP·JWT 인증 경계, 공개 cloud CLI, 호스트 승인 화면, 작업 처리 프로세스의 상시 실행과 인프라 배포는 후속 구현 대상이다.
-`AccessContext`는 인증 경계가 전달할 사용자·프로젝트·서비스·출처의 내부 계약이며 현재 구현은 해당 값의 일치와 저장 범위를 검사한다.
-실제 회사 신원·구성원·권한 검증은 인증 경계를 연결할 때 구현한다.
-
-| 패키지·모듈 | 구현 책임 | 대표 검증 |
-|---|---|---|
-| [core/cloud.py](../../src/daeri/core/cloud.py) | 업무·대화 응답·공용 기억·처리 작업과 교체 포트 | 아래 애플리케이션·어댑터 검증 |
-| [application/cloud.py](../../src/daeri/application/cloud.py) | 시작·재개 전 회상, 응답 보존, 경험 정리·색인 처리 | [업무·기억](../../tests/test_cloud_workflow.py) |
-| [infrastructure/agentcore.py](../../src/daeri/infrastructure/agentcore.py) | SDK `InvokeHarness` 이벤트·도구 대기·오류 해석 | [SDK 전달](../../tests/test_agentcore_harness.py) |
-| [infrastructure/cloud_postgres.py](../../src/daeri/infrastructure/cloud_postgres.py) | Aurora Data API·트랜잭션·처리 대기·검색·작업 점유 | [저장 계약](../../tests/test_cloud_postgres.py) |
-| [infrastructure/cloud_models.py](../../src/daeri/infrastructure/cloud_models.py) | Bedrock Converse·OpenAI 호환 경험 정리, Titan V2 임베딩 | [모델 경계](../../tests/test_cloud_models.py) |
-| [config/cloud.py](../../src/daeri/config/cloud.py) | YAML 검증·AWS 클라이언트·선택 제공자 조립과 자원 종료 | [설정·조립](../../tests/test_cloud_config.py) |
-
-`core`·`application`은 저장·harness·모델·임베딩 포트에 의존하고 외부 SDK는 infrastructure·config에서 구성한다.
-`CloudSettings.from_yaml()`은 설정만 읽고 AWS 클라이언트·자격 조회는 `build_cloud()`에서 시작한다.
-설정 필드·가상 YAML·호출 책임은 [클라우드 구성](../spec/configuration/profiles.md#클라우드-설정-입력과-조립)을 따른다.
-
-Aurora 저장 어댑터는 응답·처리 대기를 같은 트랜잭션으로 보존하고 여러 처리기의 작업 점유를 DB에서 조정한다.
-Data API의 반환 행 크기를 고려해 응답·도구 대기 입력·기억·지식 작업 본문을 8,192자씩 읽는다.
-대형 산출물의 S3 분리·인증된 다운로드·실제 저장소의 크기·성능 검증은 후속 범위다.
-
-클라우드 개발 의존성과 대표 검증은 다음 명령으로 준비·실행한다.
-
-```sh
-uv sync --frozen --extra cloud
-uv run --no-sync python -m pytest tests/test_cloud_workflow.py tests/test_agentcore_harness.py tests/test_cloud_postgres.py tests/test_cloud_models.py tests/test_cloud_config.py
-```
-
-검증은 모의 AWS·HTTP·저장소와 실제 SDK 요청 형식을 대상으로 한다.
-실제 AWS 요청, PG SQL 실행·검색 품질·트랜잭션·확장 설치, 회사 API·SSO·Memory·S3·Gateway·Policy는 별도 실제 연동 대상이다.
-배포 완료는 실제 계정·리전·인증·네트워크·PG·다중 사용자 동작의 근거로 판단한다.
+`AccessContext`는 인증 경계가 전달할 사용자·프로젝트·서비스·출처의 내부 계약이다.
+현재 구현은 해당 값과 저장 범위를 검사하고 실제 회사 신원·구성원·권한은 HTTP·로그인 경계에서 연결한다.
+업무 전체의 완료 판정·계획 승인 집행과 한 harness 응답의 종료 조건을 구별한다.
 
 ### 배포와 확장 시 확인할 조건
 
 | 조건 | 결정·확인 시점 |
 |---|---|
-| AWS 계정·리전·SSO·프로젝트 구성원 | 배포 정보를 받은 뒤 회사 정책·관리형 기능 지원과 대조 |
-| 모델·임베딩·리소스 자격 | 사내 API 또는 Bedrock 선택과 개인 위임·프로젝트 자격 범위 확인 |
-| 네트워크·CA·데이터·로그 보존 | 실제 회사 연결·자료 분류·저장·평가 입력까지 대조 |
-| 소스 실행 위치·Git 반영 | PC 또는 AWS의 도구·사내망·기존 변경·인증을 대조해 결정 |
-| 추가 채널·운영 | 기존 플러그인 검증 후 다른 직군의 접점·동시 업무·예산·연결 종료 처리 확정 |
-| 기존 자료 이관 | 공용 서비스가 준비된 뒤 필요한 자료·보존 조건과 검증 범위 결정 |
+| AWS 계정·리전·SSO·프로젝트 구성원 | 실제 배포 정보를 받은 뒤 회사 정책·관리형 지원과 대조 |
+| 모델·임베딩·리소스 자격 | 사내 API 또는 Bedrock 접근, 개인 위임·프로젝트 자격 범위 확인 |
+| 네트워크·CA·자료·로그 보존 | 회사 연결·자료 분류·저장·평가 입력과 대조 |
+| 소스 실행 위치·Git 반영 | PC/AWS 도구·사내망·기존 변경·인증을 대조해 결정 |
+| 추가 채널·운영 | 플러그인 사용 검증 뒤 다른 직군의 접점·동시 업무·예산·종료 처리 확인 |
+| 기존 자료 이관 | 공용 서비스 준비 뒤 필요한 자료·보존 조건·검증 범위 결정 |
 
-Aurora Serverless·Data API의 실제 연결·SQL, AWS Memory의 대화 재개·현재 신원 전달은 실제 환경에서 검증한다.
-관리형 평가의 모델 추적·평가 입력 지원·처리 리전과 비용을 배포 조건에 포함한다.
+Aurora Serverless·Data API의 실제 SQL·pgvector 설치, Memory의 대화 재개·현재 신원 전달을 실제 환경에서 검증한다.
+Data API는 엔진 버전·리전·활성화 조건을 [공식 지원표](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/Concepts.Aurora_Fea_Regions_DB-eng.Feature.Data_API.html)와 대조한다.
+관리형 평가·Memory의 모델·처리 리전·비용도 배포 조건으로 확인한다.
+특히 [서울의 Evaluations는 글로벌 교차 리전 추론](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/cross-region-inference.html)을 사용하므로 자료 처리 위치를 회사 정책과 대조한다.
+[Lambda 코드 평가기](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-based-evaluators.html)는 지역·외부 API 사용 조건에 맞는 평가 경로의 후보이며 실제 기능별 지원을 확인한다.
 
-## 기존 로컬 구현의 적용 범위
-
-아래 절은 현재 저장소의 로컬 패키지·CLI·MCP·SQLite 구현과 대표 검증을 설명한다.
-클라우드의 새 구현은 위 개발 상태에 연결하고 로컬 공개 DTO와 설치 절차는 해당 적용 범위로 유지한다.
-
-## 의존성의 정본
-
-| 정본 | 관리하는 내용 |
-|---|---|
-| [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock) | runtime Python 지원 범위·직접 의존성·잠긴 전체 조합·개발 의존성·실행 명령 |
-| [준비 도구 정책](../../scripts/dependencies.env) | 최초 준비 도구의 고정 버전·공식 출처·SHA256 |
-| [연결 카탈로그](../../src/daeri/config/catalog.json) | 연결 제품·입력·준비 방식과 외부 프로그램의 패키지·실행 이름·고정 안전 설정 |
-| `infrastructure/adapters/`의 setup 계약 | 어댑터별 공개·인증 입력 스키마, 저장 표현·목적지와 선택한 인증 방식의 최종 구성 |
-| `infrastructure/embedding.py`의 `API_ADAPTERS` | 구현한 임베딩 API 연결 방식·표시·생성 필드·검증·호출 |
-| `recipes/<recipe-id>/pyproject.toml`·`uv.lock` | 각 하위 MCP의 별도 Python 범위·정확한 패키지 조합·명시적 호환 조건 |
-| [기억 명세](../spec/tasks/memory.md) | 선택형 임베딩·검색·모델 호환·전송·보존 기준 |
-
-버전·출처·잠금 조합은 위 정본에서 관리하고 문서·호스트·Skill은 이를 참조한다.
-외부 프로그램은 카탈로그의 패키지와 recipe의 직접 의존성이 다르면 준비를 거부한다.
-각 recipe의 격리 환경에서 해당 SDK 주 버전을 설치하고 앱은 자체 잠금 조합을 유지한다.
-
-| 구성 | 사용하는 이유 |
-|---|---|
-| Python·공식 MCP SDK | 사용자 PC의 CLI·MCP 서버와 하위 MCP 클라이언트 실행 |
-| Pydantic·JSON Schema 검사 | 공개 DTO와 등록 기능의 타입·필드·계약 확인 |
-| [PyYAML](https://pyyaml.org/wiki/PyYAMLDocumentation) | 안전 로더 기반 YAML 생성·읽기; 중복 키·태그·별칭 등은 별도 검증으로 거부 |
-| SQLite·FTS5·벡터 확장 | 업무·기억 정본과 로컬 키워드·벡터 검색 |
-| 선택 임베딩 어댑터 | 준비한 로컬 모델 또는 허용된 회사 API로 지식·질의를 벡터화; 키워드 전용도 선택 가능 |
-| OS 인증 저장소 연결 | 모델·profile JSON 대신 사용자 비밀 참조 해소 |
-| [cryptography](https://cryptography.io/en/latest/hazmat/primitives/symmetric-encryption/) | profile 이동 파일의 인증 암호화와 비밀번호 기반 키 생성 |
-| uv·Hatchling·pytest | 잠긴 환경 준비·패키지 빌드·독립적인 동작 검증 |
-
-## 개발 환경과 검사
-
-개발자는 uv가 있는 저장소 루트에서 다음 명령으로 환경과 테스트 의존성을 준비한다.
-`uv sync`는 지원 Python과 잠긴 패키지를 다운로드할 수 있다.
-
-```sh
-uv python install 3.12
-uv sync --frozen
-uv run --no-sync python -m pytest
-```
-
-일반 테스트는 사내 인증·운영 리소스·호스트 전역 설정 없이 로컬 계약을 확인한다.
-기본 개발 환경과 API·키워드 전용 사용자 환경은 공통 의존성으로 동작한다.
-실제 로컬 모델 추론을 검사할 때는 `uv sync --frozen --extra local-embedding`으로 선택 의존성을 추가한다.
-recipe의 잠금 검사에는 해당 Python 범위에 맞는 3.12 실행 파일을 사용한다.
-
-준비한 실제 모델을 쓰는 검사는 `DAERI_TEST_MODEL_CACHE`가 지정된 경우만 수행한다.
-이 검사는 검색 중 DNS를 차단해 모델 로딩·임베딩·한국어 질의와 영어 지식의 검색이 로컬에서 이루어지는지 확인한다.
-
-플러그인 사용자는 명시적인 setup으로 실행 환경을 준비한다.
-macOS는 `sh scripts/setup.sh --prepare`, Windows는 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File scripts/setup.ps1 -Prepare`를 사용한다.
-기본 `--check`·`-Check`는 기존 실행 환경을 읽고 로컬 검사 결과를 반환한다.
-
-준비·환경 격리·실패 복구는 [자동 준비 사양](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계)을 따른다.
-
-`check`는 설치된 실행 패키지의 `version`과 Python 지원 범위·MCP·SQLite·실제 FTS5 검색 결과를 반환한다.
-`ready`는 기본 실행 환경의 검사 결과다.
-리소스 인증·진단·기억 모델은 해당 관리 경로의 결과로 확인한다.
-저장소 개설 전의 runtime 검사와 저장된 profile의 연결 진단은 별도 결과로 제공한다.
-
-### 로컬 개발 검사
-
-개발 환경을 준비한 뒤 저장소 루트에서 [공통 검사 명령](../../scripts/check.py)을 실행한다.
-이 명령은 아래 검사를 차례로 수행하고 실패가 있어도 나머지 독립 검사의 결과를 기록한다.
-
-```sh
-uv run --no-sync python -m scripts.check
-```
-
-| 검사 | 성공 조건 |
-|---|---|
-| 버전·카탈로그 | 프로젝트·루트 잠금·두 호스트 플러그인·Claude marketplace의 버전과 recipe의 고정 직접 의존성이 정본과 일치 |
-| 잠금 | 루트와 모든 recipe의 `uv lock --check` 통과; 검사 시 Python은 준비된 실행 파일에서 선택 |
-| 문서 | 루트 안내·`docs`·`skills`·`agents`의 내부 파일·이미지·Markdown 제목 앵커 연결이 유효 |
-| 회귀·공개 계약 | 전체 pytest 통과; 조건부 생략·실패 근거는 JUnit XML에 기록 |
-| 회상 평가 | 고정 합성 자료의 키워드 평가 완료·접근 불가 결과 0건; 회수율·순위는 평가 보고서로 보존 |
-| 배포물 | 빈 임시 디렉터리에서 sdist·wheel 생성, 필수 파일·원본 바이트 일치와 설치별 구성·runtime·캐시의 혼입 검사 통과 |
-
-결과는 기본 `build/checks/`에 검사별 로그·`summary.json`·`summary.md`·`pytest.xml`·`memory-recall.json`·검증한 `dist/`로 기록한다.
-`--output-dir PATH`로 결과 디렉터리를 지정할 수 있다.
-결과 디렉터리는 실행마다 이전 검사 자료를 정리하며 관련 없는 파일이 있으면 해당 자료를 보존하고 다른 경로를 요청한다.
-전체 통과는 종료 코드 0, 검사 실패는 1, 명령 인수 파싱 실패는 2다.
-검사 환경은 사용자 `DAERI_DATA_DIR`와 실제 모델 경로의 상속을 해제하고 시험 저장소·수치 벡터·모의 API로 구성한다.
-
-[문서 검사](../../scripts/check_docs.py)는 현재 문서에서 쓰는 인라인 링크·이미지와 ATX 제목 앵커를 검사한다.
-외부 URL의 접속 상태, 참조형 링크와 Setext 제목의 추가는 해당 형식 도입 시 검사 계약에 반영한다.
-배포 검사·로그 보존의 회귀는 [저장소 검사 테스트](../../tests/test_repository_checks.py), 링크 경계는 [문서 링크 테스트](../../tests/test_documentation_links.py)로 확인한다.
-
-### 실제 환경 확인
-
-macOS·Windows의 전체 준비와 회사 API·운영 리소스·SSO·호스트 UI·재연결은 해당 환경에서 확인한다.
-로컬 개발 검사 결과와 실제 환경의 확인 범위는 아래 [검증 경계](#검증-경계)로 구분한다.
-
-### 기억 회상 평가
-
-개발 저장소 루트에서 고정 합성 기억·질의를 임시 저장소로 평가한다.
-평가용 리소스 연결은 시험 메타데이터이며 실제 MCP를 기동하는 작업은 없다.
-기본 명령은 키워드 검색을 실행하고 JSON을 표준 출력과 지정한 결과 파일에 기록한다.
-
-```sh
-uv run --no-sync python -m evaluations.memory_recall --output /tmp/daeri-recall.json
-```
-
-로컬 평가는 기존에 준비한 모델 경로를 명시해 해당 파일을 읽는다.
-모델이 준비되지 않은 경로는 `unavailable`과 종료 코드 1로 반환한다.
-
-```sh
-uv run --no-sync python -m evaluations.memory_recall --provider local --model-cache "$DAERI_TEST_MODEL_CACHE"
-```
-
-회사 API 평가는 명시한 YAML의 `embedding` 절 또는 같은 필드로 구성한 최상위 매핑을 읽는다.
-필드는 [임베딩 API 계약](../spec/tasks/memory.md#임베딩-api-계약)의 `provider: api`, `adapter: openai_compatible`, 요청 주소·모델·인증 참조를 사용한다.
-이 명령은 합성 기억 본문·질의를 선택한 API로 전송하고 인증값은 기존 인증 저장소·환경 참조에서 읽는다.
-
-```sh
-uv run --no-sync python -m evaluations.memory_recall --provider api --embedding-config /path/to/embedding.yaml
-```
-
-실제 사용자 profile·업무·기억 저장소는 평가의 입력·갱신 대상과 분리된다.
-보고서에는 선택한 모델 지문과 합성 자료·검색 결과를 기록하고 연결 주소·인증 참조·비밀값은 내부 연결 입력으로 처리한다.
-평가 지표·상태·종료 코드와 한계는 [회상 평가 사양](../spec/tasks/memory.md#반복-가능한-회상-평가)을 따른다.
-
-## 관리 입력과 결과
-
-관리 호출은 macOS의 `sh "<플러그인 루트>/scripts/manage.sh"`, Windows의 `powershell -NoProfile -ExecutionPolicy RemoteSigned -File "<플러그인 루트>\scripts\manage.ps1"`에 아래 인수를 전달한다.
-실행 프로그램·스크립트 경로·각 인수는 별도 값으로 구성한다.
-경로를 재사용할 때 변수에는 스크립트 경로를 보관하고 macOS의 sh·zsh에서 다음과 같이 호출한다.
-
-```sh
-DAERI_MANAGE="<플러그인 루트>/scripts/manage.sh"
-sh "$DAERI_MANAGE" resource prepare PROFILE
-```
-
-스크립트가 전용 환경을 검사하고 준비된 `.venv/bin/python.exe`에 `-I -m daeri.cli`와 분리된 관리 인수를 전달한다.
-실행 위치는 플러그인 루트이며 부모의 Python·가상환경 관련 변수는 자식 실행에서 정리한다.
-
-기존 profile의 호스트 진입은 관리 인수 앞에 `--connect`를 붙여 `--connect profile list` 또는 `--connect profile show PROFILE`을 실행한다.
-이 경로는 [현재 설치의 연결 준비](../spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)를 마친 뒤 표준 출력에 일반 CLI와 같은 profile JSON·종료 코드를 반환한다.
-준비 안내와 `mcp_config_changed`·`data_dir`·`next_action`의 MCP 등록 보고는 표준 오류로 전달한다.
-
-일반 관리 호출의 정상 미준비는 `setup_required`·종료 코드 0, 손상·중단 상태는 `RUNTIME_UNAVAILABLE`·종료 코드 1로 구분한다.
-판정 대상·환경 검사·설치·복구는 [최초 진입 계약](../spec/installation/environment.md#아무-개발-도구가-없는-최초-진입)을 따른다.
-준비된 runtime의 CLI 결과·오류·종료 코드는 그대로 전달한다.
-
-Skill은 `setup_required` 메시지와 현재 호스트의 setup 호출을 안내하고 해당 요청을 종료한다.
-실제 실패는 사용자에게 필요한 영향·다음 조치로 요약하고 기술 정보는 [상세 진단 조건](../spec/hosts/plugins.md#사용자-안내)에 따라 제공한다.
-공통 진입·자식 환경·공개 인수는 [환경 격리](../spec/installation/environment.md#공통-실행-파일과-환경-격리), 비밀 입력은 [인증 경로](../spec/configuration/profiles.md#인증-저장과-전달)를 따른다.
-관리 명령의 기능과 상세 정본은 다음과 같다.
-필수 인수·현재 옵션은 관리 CLI의 `--help`와 해당 정본에서 확인한다.
-
-| 명령 | 기능과 상세 계약 |
-|---|---|
-| `setup catalog/status/draft/validate/apply` | [YAML 생성·검증·인증 분리·확인 후 적용](../spec/configuration/profiles.md#관리-명령과-재시도) |
-| `profile create/list/show/import/export` | [profile 생성·조회·개정·공개 설정 이관](../spec/configuration/profiles.md#구현한-profile-입력과-공개-설정) |
-| `profile delete` | [삭제 미리보기·확인·사용 차단·연관 자료 정리·최종 삭제](../spec/configuration/profiles.md#profile-삭제) |
-| `profile backup/restore` | [단일 profile의 암호화 이동·검증·확인 후 새 공간 복원](../spec/configuration/profiles.md#이관백업복원) |
-| `resource catalog/template/setup-schema/validate-setup/configure` | [제품·입력 스키마·접속 정보 검증·개정 검사·명시적 기능 계약 갱신](../spec/configuration/profiles.md#리소스-설정-입력과-검증) |
-| `resource prepare/diagnose` | [하위 MCP 준비 또는 로컬 Source 경로 확인·기능 등록](../spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치) |
-| `resource login`·`auth set/status/delete` | [제공자 로그인·인증 참조 입력·상태·삭제](../spec/configuration/profiles.md#인증-저장과-전달) |
-| `memory configure/status/diagnose/prepare/reindex` | [임베딩 선택·준비·시험 진단·재색인](../spec/installation/environment.md#임베딩-선택과-준비) |
-| `cleanup` | [기한이 지난 본문·기억·색인과 작업 파일 정리](../spec/configuration/profiles.md#삭제와-만료) |
-
-일반 관리 결과는 JSON으로 반환한다.
-CLI 오류는 `status: error`·`data: null`과 `error`의 `code`·`stage`·`message`·`next_action`을 반환한다.
-메시지는 등록된 명령·인수 이름과 오류 코드별 고정 설명으로 구성한다.
-호스트는 실패 단계와 다음 조치로 영향·복구 방법을 안내한다.
-
-| 실패 | `stage`와 다음 조치 | 종료 코드 |
-|---|---|---|
-| 명령 인수 누락·형식 오류 | `arguments`·`fix_input`; 누락한 인수 이름과 해당 명령의 `usage` 제공 | 2 |
-| 설정·선택 불일치 | `configuration`·`fix_input`; 대상 부재·개정 충돌은 `refresh` | 1 |
-| 프로그램 준비 미완료 | `preparation`·`inspect_preparation` | 1 |
-| 인증·연결 확인 필요 | `authentication`·`authenticate` 또는 `connection`·`inspect_connection` | 1 |
-| 그 밖의 실행 실패 | `operation`·`stop` | 1 |
-
-setup은 [저장한 profile의 연결](../spec/configuration/profiles.md#준비-카탈로그와-개별-프로그램-설치)을 `resource prepare PROFILE` 한 번으로 준비한다.
-일괄 결과는 전체 `ready`와 연결별 `resources`를 반환하며 일부 준비 실패의 종료 코드는 1이다.
-
-`setup validate`·`resource validate-setup`의 입력 오류는 각 검증 결과의 필드별 `issues`와 종료 코드 1로 구분한다.
-`auth set`과 백업 암호 입력에서 사용자 입력 경로가 필요하면 `input_required`와 종료 코드 0으로 안내한다.
-값 파일·기본값·확인값·동시 변경·재시도는 표의 해당 명령 정본에서 정의한다.
-호스트 모드별 질문·파일 읽기·실행 조건은 [setup 질문 계약](../spec/hosts/plugins.md#setup의-정형-질문)을 따른다.
-
-제공자 로그인만 공개 확인 URL·사용자 코드를 `pending` JSON으로 먼저 전달하고 완료 또는 실패를 반환한다.
-모델 준비·로그인·연결 진단의 결과를 확인한 뒤 실제 업무 조회는 해당 계획의 승인을 받아 수행한다.
+Harness의 [VPC·OAuth 연결](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-security.html)과 DAERI의 사내 API 경로·CA를 각각 확인한다.
+사용자 위임은 OAuth JWT 경로로 연결하고 현재 SDK 서비스 IAM 호출과 구별한다.
+기본 추적은 [CloudWatch Transaction Search](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-operations.html)의 계정 설정·실행 역할·보존 조건을 확인한다.
+승인 대기가 세션 수명을 넘는 경우는 대화 복구와 현재 승인 확인으로 연결하며 파일은 [세션 저장소·공유 파일시스템](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-environment.html)의 수명·격리 조건을 대조한다.
 
 ## 실행 진입점과 모듈
 
-`daeri`는 관리 CLI, `daeri-mcp`는 호스트가 연결할 MCP 서버다.
-명시적 준비가 전용 환경을 활성화한 뒤 `scripts/register_mcp.py`로 설치 사본의 루트 `.mcp.json`을 발행한다.
-두 호스트는 해당 파일을 기본 탐색해 전용 `.venv/bin/python.exe`의 절대 경로와 `-I -m daeri.server`를 사용한다.
-준비·발행·실패 복구는 [환경 준비](../spec/installation/environment.md#구현한-자동-준비의-입출력과-경계), 새 구성 읽기·실제 연결은 [호스트 계약](../spec/hosts/plugins.md#설치부터-업무-시작까지의-실제-경계)을 따른다.
-runtime 선택은 설치한 플러그인의 전용 Python 절대 경로로 고정한다.
-일반 MCP는 준비된 runtime을 시작하고 표준 출력은 MCP 전달에 사용한다.
-준비·로그인 요청은 관리 진입으로 연결한다.
+패키지는 핵심 계약의 `core`, 흐름의 `application`, 외부 연결의 `infrastructure`, 클라이언트 조립의 `config`로 구성한다.
+애플리케이션은 저장·harness·모델·임베딩 포트에 의존하며 외부 SDK 객체는 어댑터 경계에서 다룬다.
 
-호스트가 계획·사용자 응답·호출·보고를 전달하면 경계에서 입력을 검사하고 runtime이 저장 상태·정책과 대조한다.
-실제 리소스 요청과 호스트의 Source 관찰 등록은 등록부·어댑터를 통과하고 허용 자료만 보고·기억에 연결한다.
-총괄·하위 에이전트의 판단과 runtime 검사의 경계는 [로컬 업무 흐름](../spec/tasks/workflow.md#기존-로컬-구현의-적용-범위)을 따른다.
-구현은 같은 로컬 배포 안에서 역할별 패키지로 나눈다.
-공개 실행 모듈은 `daeri.cli`와 `daeri.server`다.
-
-```text
-src/daeri/
-├── cli.py
-├── server.py
-├── core/
-├── application/
-├── infrastructure/
-│   └── adapters/
-└── config/
-```
-
-| 위치 | 담당 구현 | 책임 |
-|---|---|---|
-| 루트 진입점 | `cli.py`·`server.py` | 관리 인수·[공개 MCP 도구](../spec/mcp/common.md#도구-목록)를 받아 설정·업무 처리로 전달 |
-| `core/` | `contracts.py`·`policy.py`·`errors.py`·`security.py`·`serialization.py` | 입력 계약, 기억·보존 정책, 공통 오류, 인증 문자열 보조 검사, 정규 JSON·float32 벡터 검증 |
-| `application/` | `runtime.py`·`planning.py`·`subagents.py`·`results.py`·`knowledge.py`·`automatic_memory.py` | 업무·계획·승인·위임·읽기 실행, 보고·파일의 근거 연결, 기억 후보 검증·갱신·재시도 |
-| `infrastructure/` | `storage.py`·`resources.py`·`memory.py`·`embedding.py`·`credentials.py`·`provider_login.py` | SQLite·불변 파일·기한·정리, 하위 MCP·인증·Source 경로와 관찰 등록, 기억 검색·색인과 임베딩 제공자 연결 |
-| `infrastructure/adapters/` | 공통 `base.py`와 제품별 모듈 | 제품별 설정 스키마·대상·인증·로그인·읽기 의미·요청과 결과 검사 |
-| `config/` | `setup.py`·`onboarding.py`·`setup_yaml.py`·`catalog.json`·`profile_*.py`·`portable_archive.py` | 접속·인증 YAML과 recipe 준비·진단, profile 개정·삭제·암호화 백업·검증·복원 |
-
-`core`는 다른 DAERI 패키지를 가져오지 않으며 정책과 공통 자료 처리를 소유한다.
-`application`은 `core`를 사용하고 `Runtime`에서 `infrastructure`의 저장소·인증·리소스 등록부·기억 구현을 직접 구성한다.
-업무의 일부 저장 조회는 SQLite 연결을 직접 사용하며 `config`와 `infrastructure`도 profile 검증·참조 추적·정리에서 협력한다.
-현재 의존 경계는 코어 정책의 독립성과 실행·외부 연결·설정의 책임 구분에 있다.
-
-`scripts/`와 호스트별 플러그인은 환경 격리·최초 준비·검사·MCP 구성 발행을 담당한다.
-`skills/`와 `agents/`는 사용자 진입과 총괄 에이전트·하위 에이전트의 업무 지침을 전달한다.
-
-개발용 `evaluations/memory_recall.py`·JSON은 [회상 품질 평가](#기억-회상-평가)의 명령·고정 자료를 소유한다.
-제품 runtime의 공개 도구와 별도로 실행하고 지표·격리·실패 처리는 [평가 회귀](../../tests/test_memory_recall_evaluation.py)로 확인한다.
-개발용 `scripts/check.py`·`check_docs.py`는 [로컬 개발 검사](#로컬-개발-검사)의 실행·결과 보관을 소유한다.
-
-리소스 범주, 구체 어댑터, 설치 recipe, profile의 실제 인스턴스는 서로 다른 역할이다.
-어댑터 추가 절차와 승인 경계는 [리소스 계약](../spec/resources/contract.md#결과와-제품-교체), 식별자·호환 이름·recipe는 [어댑터 사양](../spec/resources/adapters.md#어댑터별-실제-지원-경계)을 따른다.
-
-## 저장 위치와 데이터 역할
-
-CLI와 MCP는 같은 OS 사용자의 저장소를 공유한다.
-기본 위치는 macOS `~/Library/Application Support/DAERI`, Windows `%LOCALAPPDATA%/DAERI`다.
-`DAERI_DATA_DIR`로 위치를 지정할 수 있고 CLI의 `--data-dir PATH`는 이 값보다 우선한다.
-환경 변수는 절대 경로나 현재 사용자 홈 기준의 `~`·`~/...` 경로를 받으며 Windows는 `~\...`도 지원한다.
-일반 상대 경로는 검증 오류로 반환한다.
-명시적인 CLI `--data-dir` 인자는 현재 작업 디렉터리 기준의 상대 경로도 받는다.
-
-| 구분 | 위치·책임 |
+| 위치 | 책임 |
 |---|---|
-| 프로그램 | 플러그인 `.runtime/uv.exe`·`.venv`와 해당 사본의 생성 `.mcp.json`; 사용자 `tools/`의 잠긴 하위 MCP 환경 |
-| 관리 Python runtime | 사용자 `runtime/python`·`runtime/cache`; 플러그인 업데이트와 별개로 유지하는 Python과 준비 캐시 |
-| 설정·업무·기억·파일 | [데이터별 정본과 형식](../spec/configuration/profiles.md#데이터별-정본과-형식)에 따라 SQLite·JSON·YAML·작업 및 관리 파일로 분리 |
-| 비밀 | OS 인증 저장소·선택한 제공자 표준 캐시에서 해소하고 실행 자료에는 참조를 연결 |
+| [core/cloud.py](../../src/daeri/core/cloud.py) | 접근 문맥·업무·응답·공용 지식·처리 작업과 교체 포트 |
+| [core/errors.py](../../src/daeri/core/errors.py)·[security.py](../../src/daeri/core/security.py)·[serialization.py](../../src/daeri/core/serialization.py) | 경계 오류·비밀 패턴·유효한 float32 벡터 검사 |
+| [application/cloud.py](../../src/daeri/application/cloud.py) | 시작·재개 전 회상, 응답 보존, 경험 정리·색인 처리 |
+| [infrastructure/agentcore.py](../../src/daeri/infrastructure/agentcore.py) | `InvokeHarness` 이벤트·도구 대기·오류 해석 |
+| [infrastructure/cloud_postgres.py](../../src/daeri/infrastructure/cloud_postgres.py) | Aurora Data API·트랜잭션·지식 처리 점유·검색 |
+| [infrastructure/cloud_models.py](../../src/daeri/infrastructure/cloud_models.py) | Bedrock Converse·OpenAI 호환 경험 정리, Titan V2 임베딩 |
+| [infrastructure/embedding.py](../../src/daeri/infrastructure/embedding.py) | OpenAI 호환 API의 URL·인증·요청·벡터 응답 검사 |
+| [config/cloud.py](../../src/daeri/config/cloud.py)·[yaml.py](../../src/daeri/config/yaml.py) | YAML 검증·AWS 클라이언트·선택 제공자 조립과 종료 |
 
-업데이트·재설치 뒤에도 사용자 저장소의 설정·업무·기억·자료를 유지한다.
-만료·삭제·기억의 출처 승계·복원 조건과 현재 제공 범위 검사는 [로컬 저장 구조](../spec/configuration/profiles.md#로컬-저장-구조)가 정본이다.
-인증 문자열 제거는 알려진 패턴을 검사하는 보조 기능이며 자료 제공은 필드 허용·마스킹·현재 정책을 함께 검사한다.
-임의 비밀·개인정보의 탐지는 별도의 검증 대상이다.
+호출자는 `CloudSettings.from_yaml()`로 설정을 읽고 `build_cloud()`가 반환한 서비스 묶음의 수명을 관리한다.
+DB 준비 `store.initialize()`, 업무 `workflow.start()/resume()`, 지식 처리 `knowledge.process_next()`를 명시적으로 호출한다.
+필드·가상 YAML과 제공자별 조건은 [설정 명세](../spec/product.md#설정과-제공자)를 따른다.
+
+Aurora 저장 어댑터는 응답과 지식 처리 대기를 같은 트랜잭션에 보존한다.
+작업 점유는 DB에서 조정하고 Data API 반환 행 크기를 고려해 큰 본문을 8,192자씩 읽는다.
+대형 산출물의 S3 분리·인증된 다운로드는 실제 파일 연결 단계에서 구성한다.
 
 ## 구현과 대표 검증
 
-| 영역 | 구현한 동작 | 대표 자동 검증 |
-|---|---|---|
-| 호스트·준비 | 두 호스트 패키지·네 Skill·하위 에이전트 지침, 정상 미준비 판정·격리 환경·준비 후 MCP 등록·실패 복구 | [MCP 진입](../../tests/test_mcp_server.py)·[준비](../../tests/test_bootstrap.py)·[관리](../../tests/test_management_entry.py) |
-| 사용자 설정 | 접속·인증 YAML, 복수 연결·개정·설정 이관·읽기 계약 갱신 | [YAML](../../tests/test_onboarding.py)·[인증](../../tests/test_onboarding_credentials.py)·[설정](../../tests/test_setup_fields.py) |
-| 삭제·저장 | profile 귀속 자료 cascade·사용 차단·실패 재시도, SQLite·파일·기한·해시 | [삭제](../../tests/test_profile_delete.py)·[저장](../../tests/test_storage.py)·[파일](../../tests/test_artifact_storage.py) |
-| 전체 이관 | 단일 profile의 허용 이력·기억·파일 암호화, 검증·확인 후 새 공간 복원·새 실행 권한 확인 | [통합](../../tests/test_profile_portability.py)·[논리 검증](../../tests/test_profile_bundle_validation.py)·[암호화](../../tests/test_portable_archive.py)·[CLI](../../tests/test_profile_portability_cli.py) |
-| 업무·승인 | 접수·보완·복구·불변 계획·실제 대화 응답·재승인·자동 기록 | [업무](../../tests/test_runtime.py)·[계획](../../tests/test_planning.py) |
-| 자율 읽기 | 기존 MCP 도구 탐색·선택, 읽기 묶음·스키마·명시 범위 검사 | [등록](../../tests/test_resources.py)·[자율 조회](../../tests/test_resource_autonomy.py)·[경계](../../tests/test_resource_boundary_regressions.py) |
-| 로컬 소스 코드 | 복수 경로·제품 교체·무설치 준비, 호스트 관찰·경로 검사와 보고·기억 근거 연결 | [설정](../../tests/test_setup_local_source.py)·[관찰·근거](../../tests/test_local_source.py)·[소스 원본 보존·설정 이관](../../tests/test_local_source_portability.py) |
-| 하위 에이전트 | 하위 에이전트 게이트웨이의 위임·배정·병렬 기능 선택·실제 근거 반환·철회·복구 | [위임](../../tests/test_subagents.py)·[패키징](../../tests/test_subagent_packaging.py) |
-| 결과 | 자유형 본문·호스트의 완료 판단·별도 출처, 임의 형식 파일 등록·재전달·현재 권한 조회 | [자유형 결과](../../tests/test_free_results.py)·[호스트 결과](../../tests/test_host_results.py)·[실행](../../tests/test_execution_flow.py)·[현재 정책](../../tests/test_derived_visibility.py) |
-| 페이지 사용 | 호스트가 기존 MCP의 다음 페이지를 조회하고 파일·보고·기억 후보를 제출 | [페이지 stdio](../../tests/test_paged_execution.py) |
-| 기억 | 호스트 후보의 자동 검증·정본 저장·색인·재시도·검색·정정·무효화 | [자동 갱신](../../tests/test_automatic_memory.py)·[출처](../../tests/test_knowledge.py)·[검색](../../tests/test_embedding_memory.py)·[규모](../../tests/test_memory_search_scale.py) |
-| 회상 평가 | 고정 합성 기억·질의의 유형별 회수율·순위·시간·접근 불가 반환 검사 | [평가 명령](../../evaluations/memory_recall.py)·[자료](../../evaluations/memory_recall.json)·[평가 회귀](../../tests/test_memory_recall_evaluation.py) |
-| 임베딩 | 로컬·OpenAI 호환 회사 API·키워드 전용 선택과 전송·응답·모델 호환 검사 | [API](../../tests/test_embedding_provider.py)·[통합](../../tests/test_embedding_integration.py) |
-| 공개 MCP | 16개 도구·호스트 호환 입력·구조화 응답·실제 stdio·요청 취소 후 연결 유지 | [스키마](../../tests/test_contracts.py)·[stdio](../../tests/test_mcp_server.py) |
-| 개발 검사 | 코어 의존 경계·패키지 자원 경로·공통 검증·실패 결과 보존·문서 링크·배포 원본 대조 | [패키지 경계](../../tests/test_package_boundaries.py)·[저장소 검사](../../tests/test_repository_checks.py)·[문서 링크](../../tests/test_documentation_links.py) |
+검증은 관찰 가능한 결과·실패 경계·실제 SDK 요청 형식을 대상으로 한다.
+모의 AWS·HTTP·저장소의 검증과 실제 서비스 연결은 각각 결과를 구분해 기록한다.
 
-[첫 업무](../../tests/test_first_work_defaults.py)는 접속 전용 YAML → 승인 조회 → 호스트 보고·파일 → 선별 기억 → 다음 업무 회상을 확인한다.
-[피드백](../../tests/test_feedback_memory.py)은 정정 요청·새 승인·기존 지식 무효화·수정 경험의 회상을 확인한다.
-[호스트 전환](../../tests/test_cross_host.py)은 두 설치 사본의 MCP 간 계획·결과·기억 재사용을, [업무 인계](../../tests/test_task_handoff.py)는 유효 승인 보존·진행 중 호출 대기·이전 소유자와 위임의 실행 종료를 확인한다.
-자료 제공·출처·내보내기·보존 조건은 [profile](../spec/configuration/profiles.md#로컬-저장-구조)과 [기억](../spec/tasks/memory.md)이 소유한다.
-
-[단순 계획](../../tests/test_simple_plan.py)·[기본 수행](../../tests/test_simple_workflow.py)은 최소 입력의 업무 흐름을, [실행 복구](../../tests/test_execution_persistence.py)는 중단 뒤 새 관찰과 설정·인증 갱신 뒤 수행 유지를 확인한다.
-
-### 검증 경계
-
-대표 자동 검증은 로컬 계약·모의 리소스의 허용·거부·부분 결과·동시성·저장 실패·복구와 실제 MCP stdio 전달을 대상으로 한다.
-하위 프로그램의 잠긴 설치·import·도구 메타데이터, 모의 HTTP·제공자 SDK, 준비한 실제 로컬 모델의 DNS 차단 검색은 각각의 검사 범위다.
-실제 모델 검사는 지정한 모델 경로가 있는 경우만 실행하며 검사별 결과·조건부 생략·실패 근거는 [로컬 개발 검사 보고서](#로컬-개발-검사)에 기록한다.
-
-확보한 별도 실제 실행 근거는 다음과 같다.
-
-- macOS의 빈 설치·데이터 영역에서 공식 uv·관리 Python·잠긴 기본 패키지 준비, MCP 구성 발행과 `ready: true`를 확인했다.
-  설치 사본의 `.runtime`·`.venv`·`.mcp.json`과 사용자 영역의 `runtime` 생성, 준비 후보·잠금 정리를 확인했다.
-- Claude Code 2.1.284의 `claude plugin validate`로 agents·skills 정적 검사를 통과했다.
-  루트 `CLAUDE.md` 문맥 로딩 경고는 남아 있으며 실제 설치·하위 에이전트 실행은 아래 검증 대상이다.
-
-| 실제 환경 확인 대상 | 자동 검사와 구분할 범위 |
+| 대상 | 대표 검증 |
 |---|---|
-| Codex·Claude Code | 마켓플레이스 설치·Skill 진입·대화 승인 해석·도구 선택·파일 작성·하위 에이전트 생성·MCP 전달·완료 회수·UI |
-| 회사 리소스·임베딩 API | 실제 계정 권한·네트워크·SSO·회사 API 호환성과 의미 검색 품질 |
-| 사용자 PC·Windows | 캐시 없는 PC의 전체 준비, 실제 Windows 실행·정책·인증 UI; Windows 스크립트·구성과 가짜 API 회귀는 별도 근거 |
-| 호스트 생성 파일 | 등록 전후 시험 바이트·메타데이터 검사는 보존 무결성 확인; XLSX·PDF 등의 문서 구조·내용·레이아웃은 해당 작성 도구로 확인 |
-| 로컬 Source | 가상 디렉터리·관찰 등록·근거 연결 회귀와 실제 호스트의 파일·Git 조사 수행 |
+| 시작·재개·회상·응답 보존·경험 처리 | [업무·기억 테스트](../../tests/test_cloud_workflow.py) |
+| SDK 전달·스트림·도구 대기·오류 | [harness 테스트](../../tests/test_agentcore_harness.py) |
+| 트랜잭션·작업 점유·출처 범위·혼합 검색 | [저장 계약 테스트](../../tests/test_cloud_postgres.py) |
+| Bedrock·OpenAI 경험 정리·Titan 임베딩 | [모델 경계 테스트](../../tests/test_cloud_models.py) |
+| 설정·조립·자격 참조·종료 | [설정 테스트](../../tests/test_cloud_config.py) |
+| 문서 링크·계층 경계 | [문서 테스트](../../tests/test_documentation_links.py)·[패키지 테스트](../../tests/test_package_boundaries.py) |
+
+전체 pytest는 회사 인증·실제 AWS·운영 리소스 없이 실행한다.
+실제 PG SQL·트랜잭션·검색 품질·확장 설치, 회사 API·SSO·Memory·S3·Gateway·Policy는 실제 연동 대상이다.
+배포 완료는 실제 계정·리전·인증·네트워크·PG·다중 사용자 동작의 근거로 판단한다.

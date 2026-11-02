@@ -1,10 +1,7 @@
-"""Canonical JSON bytes and finite float32 vector representations for storage."""
+"""Finite float32 vector validation for embedding and storage boundaries."""
 
-import json
 import math
 import struct
-
-from daeri.core.errors import StoreError
 
 
 def validated_float32_vector(value, dimensions=None) -> list[float]:
@@ -20,11 +17,3 @@ def validated_float32_vector(value, dimensions=None) -> list[float]:
     if not all(math.isfinite(item) for item in stored) or not any(stored):
         raise ValueError('Unindexable embedding vector')
     return [float(item) for item in value]
-
-
-def _json(value) -> bytes:
-    try:
-        return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
-                          separators=(",", ":")).encode("utf-8")
-    except (TypeError, ValueError, UnicodeError):
-        raise StoreError("INVALID_INPUT", "A JSON-compatible value is required.") from None

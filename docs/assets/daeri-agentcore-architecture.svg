@@ -46,7 +46,7 @@
   <rect x="822" y="298" width="486" height="145" rx="13" fill="#fff0d9" stroke="#edce9f"/>
   <text x="845" y="339" class="heading">Managed harness</text>
   <text x="845" y="378" class="body">모델·도구 호출 루프 · 문맥 관리</text>
-  <text x="845" y="414" class="small">orchestrator · subagent 실행</text>
+  <text x="845" y="414" class="small">orchestrator 실행 · 하위 에이전트 도구 호출</text>
 
   <rect x="840" y="515" width="490" height="105" rx="16" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
   <text x="866" y="555" class="heading">AgentCore Memory</text>
@@ -83,10 +83,10 @@
   <text x="1475" y="555" class="small">Amazon Bedrock은 AWS 서비스</text>
 
   <rect x="1450" y="700" width="300" height="175" rx="18" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
-  <text x="1475" y="741" class="heading">리소스 MCP · API</text>
+  <text x="1475" y="741" class="heading" style="font-size:23px">리소스·에이전트 도구</text>
   <text x="1475" y="782" class="body">DB · 문서 · 이슈 · 소스 도구</text>
-  <text x="1475" y="819" class="small">직접 연결 또는 필요한 변환</text>
-  <text x="1475" y="851" class="small">사내·AWS 등 실제 대상 위치</text>
+  <text x="1475" y="819" class="small">하위 harness: MCP 도구 연결</text>
+  <text x="1475" y="851" class="small">직접 연결 · 필요한 변환</text>
 
   <path d="M320 347H430" class="line two"/>
   <rect x="332" y="296" width="86" height="36" rx="8" fill="#f7f9fc"/>

@@ -10,7 +10,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 from daeri.application.cloud import CloudWorkflow, SharedKnowledgeProcessor
-from daeri.config.setup_yaml import read_yaml
+from daeri.config.yaml import read_yaml
 from daeri.core.errors import StoreError
 from daeri.infrastructure.agentcore import AgentCoreHarness
 from daeri.infrastructure.cloud_models import BedrockEmbedder, BedrockExperienceExtractor, OpenAIExperienceExtractor
@@ -155,7 +155,7 @@ def build_cloud(settings: CloudSettings, *, session=None, http_client=None) -> C
         from botocore.session import get_session
         from botocore.validate import validate_parameters
     except ImportError:
-        raise StoreError('SETUP_REQUIRED', 'Install the cloud extra: uv sync --extra cloud (or pip install "daeri-agent[cloud]").') from None
+        raise StoreError('SETUP_REQUIRED', 'Install the project dependencies with uv sync or pip install daeri-agent.') from None
 
     if settings.harness_model is not None:
         try:

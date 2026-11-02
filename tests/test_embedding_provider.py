@@ -6,13 +6,12 @@ from threading import Barrier, BrokenBarrierError
 import httpx
 import pytest
 
-from daeri.infrastructure.credentials import Credentials
 from daeri.core.errors import StoreError
 
 
 def api_config(**changes):
     return {"provider": "api", "adapter": "openai_compatible", "endpoint": "https://embedding.example.test/v1/embeddings",
-            "model": "company-deployment", "credential_ref": "env:DAERI_TEST_EMBEDDING_TOKEN",
+            "model": "company-deployment", "credential_ref": "credential:cloud.embedding",
             **changes}
 
 
@@ -20,89 +19,29 @@ def provider():
     return importlib.import_module("daeri.infrastructure.embedding")
 
 
-def test_absent_embedding_config_preserves_local_mode_without_api_options():
-    assert provider().validate_embedding_config(None) == {"provider": "local"}
-    assert provider().validate_embedding_config({"provider": "keyword_only"}) == {"provider": "keyword_only"}
+class Secrets:
+    def __init__(self, token='test-private-token'):
+        self.token, self.references = token, []
+
+    def get(self, reference):
+        self.references.append(reference)
+        return self.token
 
 
-def test_selected_api_normalizes_defaults_without_an_additional_transmission_switch():
+def make_embedder(config=None, *, credentials=None, client=None):
+    return provider().OpenAICompatibleEmbedder(api_config() if config is None else config,
+        credentials=credentials if credentials is not None else Secrets(), client=client)
+
+
+def test_api_normalizes_defaults_without_resolving_credentials():
     config = api_config()
     assert provider().validate_embedding_config(config) == {**config, "timeout_seconds": 15}
 
 
-def test_legacy_transmission_permission_preserves_provider_choice_and_index_identity():
-    selected = provider().validate_embedding_config(api_config(allow_remote=True))
-    assert selected == {**api_config(), "timeout_seconds": 15}
-    assert provider().OpenAICompatibleEmbedder(api_config(allow_remote=True)).model_id == (
-        provider().OpenAICompatibleEmbedder(api_config()).model_id)
-
-
-def test_legacy_transmission_block_keeps_api_choice_without_resolving_credentials():
-    class UnusedCredentials:
-        def get(self, reference):
-            pytest.fail("Constructing an API configuration resolved credentials")
-
-    selected = provider().validate_embedding_config(api_config(allow_remote=False))
-    assert selected == {**api_config(), 'timeout_seconds': 15}
-    embedder = provider().create_api_embedder(api_config(allow_remote=False), credentials=UnusedCredentials())
-    assert embedder.config == selected
-
-
-@pytest.mark.parametrize("legacy_value", [None, 0, 1, "true", [], {}])
-def test_legacy_transmission_setting_requires_a_real_boolean(legacy_value):
-    with pytest.raises(StoreError, match="INVALID_INPUT"):
-        provider().validate_embedding_config(api_config(allow_remote=legacy_value))
-
-
-def test_legacy_provider_uses_the_same_adapter_and_index_identity():
-    modern = api_config()
-    legacy = {key: value for key, value in modern.items() if key != 'adapter'}
-    legacy['provider'] = 'openai_compatible'
-    assert provider().validate_embedding_config(legacy) == provider().validate_embedding_config(modern)
-    assert provider().OpenAICompatibleEmbedder(legacy).model_id == provider().OpenAICompatibleEmbedder(modern).model_id
-    with pytest.raises(StoreError):
-        provider().validate_embedding_config({**legacy, 'adapter': 'another-format'})
-
-
 @pytest.mark.parametrize('adapter', [None, '', 'unregistered', 1])
-def test_api_requires_a_registered_connection_adapter(adapter):
+def test_api_requires_the_supported_connection_adapter(adapter):
     with pytest.raises(StoreError):
         provider().validate_embedding_config(api_config(adapter=adapter))
-
-
-def test_registered_adapter_owns_its_format_without_openai_fields(monkeypatch):
-    module = provider()
-
-    class CompanyFormat:
-        label = '사내 전용 API'
-        description = '시험용 독자 규격'
-
-        @staticmethod
-        def validate_config(config):
-            assert set(config) <= {'provider', 'adapter', 'deployment'}
-            return {**config, 'deployment': config['deployment'], 'allow_remote': False}
-
-        @staticmethod
-        def draft_config(name):
-            return {'provider': 'api', 'adapter': 'company_format', 'deployment': None, 'allow_remote': False}
-
-        def __init__(self, config, **kwargs):
-            self.config = config
-
-    monkeypatch.setitem(module.API_ADAPTERS, 'company_format', CompanyFormat)
-    config = {'provider': 'api', 'adapter': 'company_format', 'deployment': 'internal'}
-    selected = module.validate_embedding_config(config)
-    assert selected == config
-    assert module.create_api_embedder(selected).config == selected
-    assert module.validate_embedding_config({**config, 'allow_remote': True}) == config
-    assert module.api_embedding_draft('production', 'company_format') == {
-        'provider': 'api', 'adapter': 'company_format', 'deployment': None}
-    assert module.api_embedding_draft('production', 'openai_compatible') == {
-        'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None, 'model': None,
-        'credential_ref': 'credential:production.embedding'}
-    assert module.api_adapter_catalog()[-1]['label'] == '사내 전용 API'
-    with pytest.raises(StoreError):
-        module.create_api_embedder({**config, 'allow_remote': 'yes'})
 
 
 @pytest.mark.parametrize("changes", [
@@ -125,8 +64,7 @@ def test_config_rejects_unsafe_or_ambiguous_values(changes):
     assert "private" not in str(error.value)
 
 
-def test_api_uses_exact_endpoint_reference_auth_and_plain_input(monkeypatch):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_api_uses_exact_endpoint_reference_auth_and_plain_input():
     requests = []
 
     def respond(request):
@@ -135,10 +73,9 @@ def test_api_uses_exact_endpoint_reference_auth_and_plain_input(monkeypatch):
 
     endpoint = "https://embedding.example.test/custom/embeddings?api-version=2025-01"
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(endpoint=endpoint, dimensions=2), client=client)
+        embedder = make_embedder(api_config(endpoint=endpoint, dimensions=2), client=client)
         assert embedder.embed_query("검색 질문") == [0.25, -0.5]
         assert embedder.embed_document("검증된 기억") == [0.25, -0.5]
-        assert embedder.remote is True
         assert embedder.dimensions == 2
         assert "test-private-token" not in embedder.model_id
         assert "embedding.example" not in embedder.model_id
@@ -152,7 +89,7 @@ def test_api_uses_exact_endpoint_reference_auth_and_plain_input(monkeypatch):
 @pytest.mark.parametrize("text", ["", "   ", None, "x" * (65536 + 1)], ids=["empty", "whitespace", "not-text", "oversized"])
 def test_invalid_or_oversized_input_is_never_sent(text):
     with httpx.Client(transport=httpx.MockTransport(lambda request: pytest.fail("Invalid input was sent"))) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(), client=client)
+        embedder = make_embedder(api_config(), client=client)
         with pytest.raises(StoreError, match="MEMORY_INDEX_INCOMPLETE"):
             embedder.embed_query(text)
 
@@ -169,17 +106,15 @@ def test_invalid_or_oversized_input_is_never_sent(text):
     {"data": [{"index": 0, "embedding": [1]}]},
     {"data": [{"index": 0, "embedding": [1, 2]}, {"index": 1, "embedding": [3, 4]}]},
 ])
-def test_malformed_vectors_cannot_enter_the_index(monkeypatch, body):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_malformed_vectors_cannot_enter_the_index(body):
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=json.dumps(body)))) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(dimensions=2), client=client)
+        embedder = make_embedder(api_config(dimensions=2), client=client)
         with pytest.raises(StoreError, match="MEMORY_INDEX_INCOMPLETE"):
             embedder.embed_document("private-source-text")
 
 
 @pytest.mark.parametrize("status", [301, 401, 403, 429, 500])
-def test_error_responses_are_sanitized_and_redirects_are_not_followed(monkeypatch, status):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_error_responses_are_sanitized_and_redirects_are_not_followed(status):
     requests = []
 
     def respond(request):
@@ -187,7 +122,7 @@ def test_error_responses_are_sanitized_and_redirects_are_not_followed(monkeypatc
         return httpx.Response(status, headers={"location": "https://other.example.test/steal"}, text="private-source-text test-private-token")
 
     with httpx.Client(transport=httpx.MockTransport(respond), follow_redirects=True) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(), client=client)
+        embedder = make_embedder(api_config(), client=client)
         with pytest.raises(StoreError) as error:
             embedder.embed_query("private-source-text")
     assert len(requests) == 1
@@ -196,36 +131,32 @@ def test_error_responses_are_sanitized_and_redirects_are_not_followed(monkeypatc
     assert "test-private-token" not in str(error.value)
 
 
-def test_missing_credentials_and_transport_errors_are_sanitized(monkeypatch):
-    monkeypatch.delenv("DAERI_TEST_EMBEDDING_TOKEN", raising=False)
-    embedder = provider().OpenAICompatibleEmbedder(api_config(), credentials=Credentials())
+def test_missing_credentials_and_transport_errors_are_sanitized():
+    embedder = make_embedder(api_config(), credentials=Secrets(None))
     with pytest.raises(StoreError, match="MEMORY_INDEX_INCOMPLETE"):
         embedder.embed_query("private-source-text")
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
 
     def timeout(request):
         raise httpx.ReadTimeout("private-source-text test-private-token")
 
     with httpx.Client(transport=httpx.MockTransport(timeout)) as client:
         with pytest.raises(StoreError) as error:
-            provider().OpenAICompatibleEmbedder(api_config(), client=client).embed_query("private-source-text")
+            make_embedder(api_config(), client=client).embed_query("private-source-text")
     assert "private" not in str(error.value)
     assert error.value.__suppress_context__ is True
 
 
-def test_response_body_limit_is_checked_before_parsing(monkeypatch):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_response_body_limit_is_checked_before_parsing():
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b" " * (1024 * 1024 + 1)))) as client:
         with pytest.raises(StoreError, match="MEMORY_INDEX_INCOMPLETE"):
-            provider().OpenAICompatibleEmbedder(api_config(), client=client).embed_query("bounded")
+            make_embedder(api_config(), client=client).embed_query("bounded")
 
 
-def test_model_and_dimensions_changes_do_not_mix_vectors(monkeypatch):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_model_and_dimensions_changes_do_not_mix_vectors():
     responses = iter([{"data": [{"index": 0, "embedding": [1, 2]}], "model": "revision-a"},
                       {"data": [{"index": 0, "embedding": [1, 2, 3]}], "model": "revision-b"}])
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=next(responses)))) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(), client=client)
+        embedder = make_embedder(api_config(), client=client)
         embedder.embed_query("first")
         assert embedder.dimensions == 2
         identity = embedder.model_id
@@ -235,26 +166,23 @@ def test_model_and_dimensions_changes_do_not_mix_vectors(monkeypatch):
 
 
 def test_connection_model_and_requested_dimensions_determine_index_identity():
-    base = provider().OpenAICompatibleEmbedder(api_config())
+    base = make_embedder(api_config())
     for change in ({"endpoint": "https://other.example.test/embeddings"}, {"model": "different"}, {"dimensions": 2}):
-        assert provider().OpenAICompatibleEmbedder(api_config(**change)).model_id != base.model_id
-    assert provider().OpenAICompatibleEmbedder(api_config(credential_ref="credential:rotated")).model_id == base.model_id
+        assert make_embedder(api_config(**change)).model_id != base.model_id
+    assert make_embedder(api_config(credential_ref="credential:rotated")).model_id == base.model_id
 
 
-def test_reported_model_change_is_rejected_even_at_the_same_dimensions(monkeypatch):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_reported_model_change_is_rejected_even_at_the_same_dimensions():
     models = iter(["revision-a", "revision-b"])
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(
             200, json={"data": [{"index": 0, "embedding": [1, 2]}], "model": next(models)}))) as client:
-        embedder = provider().OpenAICompatibleEmbedder(api_config(), client=client)
+        embedder = make_embedder(api_config(), client=client)
         embedder.embed_document("first")
         with pytest.raises(StoreError, match="MEMORY_INDEX_INCOMPLETE"):
             embedder.embed_query("second")
 
 
-def test_streaming_response_is_stopped_at_the_size_limit(monkeypatch):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
-
+def test_streaming_response_is_stopped_at_the_size_limit():
     class OversizedBody(httpx.SyncByteStream):
         blocks_read = 0
 
@@ -266,30 +194,11 @@ def test_streaming_response_is_stopped_at_the_size_limit(monkeypatch):
     stream = OversizedBody()
     with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, stream=stream))) as client:
         with pytest.raises(StoreError, match="MEMORY_INDEX_INCOMPLETE"):
-            provider().OpenAICompatibleEmbedder(api_config(), client=client).embed_query("bounded")
+            make_embedder(api_config(), client=client).embed_query("bounded")
     assert stream.blocks_read == 17
 
 
-def test_native_store_reference_can_authorize_without_environment_secrets(monkeypatch):
-    monkeypatch.delenv("DAERI_TEST_EMBEDDING_TOKEN", raising=False)
-
-    class Vault:
-        def get_password(self, service, name):
-            assert (service, name) == ("DAERI", "company-embedding")
-            return "registered-private-token"
-
-    def respond(request):
-        assert request.headers["authorization"] == "Bearer registered-private-token"
-        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 2]}]})
-
-    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        embedder = provider().OpenAICompatibleEmbedder(
-            api_config(credential_ref="credential:company-embedding"), credentials=Credentials(Vault()), client=client)
-        assert embedder.embed_document("approved memory") == [1.0, 2.0]
-
-
-def test_concurrent_first_responses_cannot_establish_conflicting_model_identities(monkeypatch):
-    monkeypatch.setenv("DAERI_TEST_EMBEDDING_TOKEN", "test-private-token")
+def test_concurrent_first_responses_cannot_establish_conflicting_model_identities():
     barrier = Barrier(2)
 
     class CoordinatedEmbedder(provider().OpenAICompatibleEmbedder):
@@ -314,8 +223,23 @@ def test_concurrent_first_responses_cannot_establish_conflicting_model_identitie
             return error.code
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        embedder = CoordinatedEmbedder(api_config(), client=client)
+        embedder = CoordinatedEmbedder(api_config(), credentials=Secrets(), client=client)
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda text: embed(embedder, text), ["revision-a", "revision-b"]))
     assert results.count("MEMORY_INDEX_INCOMPLETE") == 1
     assert results.count([1.0, 2.0]) == 1
+
+
+def test_injected_credential_resolution_is_lazy_and_uses_only_the_named_reference():
+    secrets = Secrets('registered-private-token')
+
+    def respond(request):
+        assert request.headers['authorization'] == 'Bearer registered-private-token'
+        return httpx.Response(200, json={'data': [{'index': 0, 'embedding': [1, 2]}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        embedder = make_embedder(api_config(credential_ref='credential:company-embedding'),
+                                 credentials=secrets, client=client)
+        assert secrets.references == []
+        assert embedder.embed_document('approved memory') == [1.0, 2.0]
+    assert secrets.references == ['credential:company-embedding']

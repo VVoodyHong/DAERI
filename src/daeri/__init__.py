@@ -1,1 +1,1 @@
-"""DAERI's local execution runtime."""
+"""DAERI's shared project knowledge and AgentCore integration."""

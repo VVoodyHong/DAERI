@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-boto3 = pytest.importorskip('boto3', reason='AWS contract tests require the cloud extra')
+import boto3
 from botocore.exceptions import ClientError
 from botocore.validate import validate_parameters
 
@@ -142,12 +142,14 @@ def test_malformed_inline_tool_input_cannot_be_executed(payload):
     assert reply.error == 'HARNESS_INVALID_TOOL_INPUT' and reply.pending_tools == ()
 
 
-@pytest.mark.parametrize('reason', ['interrupted', 'partial_turn', 'max_tokens', 'timeout_exceeded'])
-def test_explicit_incomplete_stop_is_failure_and_keeps_partial_text(reason):
+@pytest.mark.parametrize('reason', ['interrupted', 'partial_turn', 'max_tokens', 'timeout_exceeded',
+                                  'guardrail_intervened'])
+def test_explicit_stop_reason_is_preserved_as_failure_and_keeps_text(reason):
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
     reply = AgentCoreHarness(Client(text_events('Partial', reason)), ARN).invoke(task(), [])
-    assert reply.text == 'Partial' and reply.stop_reason == reason and reply.error
+    assert reply.text == 'Partial' and reply.stop_reason == reason
+    assert reply.error == 'HARNESS_' + reason.upper()
     assert reply.pending_tools == ()
 
 

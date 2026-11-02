@@ -153,9 +153,9 @@ def test_new_task_uses_distinct_server_generated_task_and_harness_session_ids():
 
 
 def test_data_api_parameters_match_installed_aws_sdk_contract():
-    botocore = pytest.importorskip('botocore.session')
+    from botocore import session
     from botocore.validate import validate_parameters
-    model = botocore.get_session().get_service_model('rds-data')
+    model = session.get_session().get_service_model('rds-data')
     client = DataApi([])
     store(client).search(CONTEXT, 'country', [0.5, 0.25], 'model-a:2', 5)
     validate_parameters(client.calls[0][1], model.operation_model('ExecuteStatement').input_shape)

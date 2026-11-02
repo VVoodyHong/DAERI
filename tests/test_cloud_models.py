@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-boto3 = pytest.importorskip('boto3', reason='AWS contract tests require the cloud extra')
+import boto3
 from botocore.validate import validate_parameters
 
 from daeri.core.errors import StoreError

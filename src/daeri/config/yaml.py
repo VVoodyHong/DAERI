@@ -1,4 +1,4 @@
-"""Bounded setup YAML with JSON-compatible values and safe error messages."""
+"""Bounded cloud YAML with JSON-compatible values and safe error messages."""
 
 import math
 from pathlib import Path
@@ -25,16 +25,16 @@ class _Loader(yaml.SafeLoader):
 
     def __init__(self, stream):
         super().__init__(stream)
-        self._setup_depth = -1
+        self._depth = -1
 
     def compose_node(self, parent, index):
-        self._setup_depth += 1
+        self._depth += 1
         try:
-            if self._setup_depth > MAX_DEPTH:
+            if self._depth > MAX_DEPTH:
                 _invalid('설정의 중첩은 32단계 이하여야 합니다.')
             return super().compose_node(parent, index)
         finally:
-            self._setup_depth -= 1
+            self._depth -= 1
 
     def construct_mapping(self, node, deep=False):
         result = {}
@@ -64,12 +64,6 @@ _Loader.add_implicit_resolver('tag:yaml.org,2002:float', re.compile(
     r'|[0-9]+[eE][-+]?[0-9]+|\.(?:inf|Inf|INF))|\.(?:nan|NaN|NAN))$'),
     list('-+0123456789.'))
 
-
-class _Dumper(yaml.SafeDumper):
-    yaml_implicit_resolvers = _Loader.yaml_implicit_resolvers
-
-    def ignore_aliases(self, data):
-        return True
 
 
 def _json_value(value, depth=0):
@@ -101,7 +95,7 @@ def read_yaml(path):
 
 
 def parse_yaml(content):
-    """Parse the same immutable bytes that a caller fingerprints for approval."""
+    """Parse one bounded UTF-8 mapping with JSON-compatible values."""
     if type(content) is not bytes:
         _invalid()
     try:
@@ -121,19 +115,4 @@ def parse_yaml(content):
     except yaml.YAMLError as error:
         _invalid(mark=getattr(error, 'problem_mark', None))
     except (ValueError, UnicodeError, RecursionError):
-        _invalid()
-
-
-def write_yaml(value):
-    """Render editable YAML without aliases or implementation-specific tags."""
-    if type(value) is not dict:
-        _invalid('설정의 최상위 값은 객체여야 합니다.')
-    _json_value(value)
-    try:
-        encoded = yaml.dump(value, Dumper=_Dumper, sort_keys=False,
-                            allow_unicode=True, default_flow_style=False)
-        if len(encoded.encode('utf-8')) > MAX_BYTES:
-            _invalid('설정 파일은 2 MiB 이하여야 합니다.')
-        return encoded
-    except (yaml.YAMLError, ValueError, UnicodeError, RecursionError):
         _invalid()

@@ -21,6 +21,7 @@ _INCOMPLETE_STOPS = {
     'max_tokens', 'content_filtered', 'malformed_model_output', 'malformed_tool_use',
     'interrupted', 'partial_turn', 'model_context_window_exceeded',
     'max_iterations_exceeded', 'max_output_tokens_exceeded', 'timeout_exceeded', 'hook_stopped',
+    'guardrail_intervened',
 }
 
 

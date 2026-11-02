@@ -9,7 +9,6 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 import httpx
 
-from daeri.infrastructure.credentials import Credentials
 from daeri.core.security import redact
 from daeri.core.errors import StoreError
 from daeri.core.serialization import validated_float32_vector
@@ -40,25 +39,14 @@ def _safe_text(value, limit):
 
 def validate_embedding_config(value):
     """Return a nonsecret canonical setting without connecting or resolving credentials."""
-    if value is None:
-        return {"provider": "local"}
-    _valid(isinstance(value, dict) and isinstance(value.get("provider"), str))
-    if value['provider'] == 'openai_compatible':
-        _valid(value.get('adapter', 'openai_compatible') == 'openai_compatible')
-        value = {**value, 'provider': 'api', 'adapter': 'openai_compatible'}
-    kind = value["provider"]
-    _valid(kind in {"local", "api", "keyword_only"})
-    if kind != "api":
-        _valid(set(value) == {"provider"})
-        return {"provider": kind}
-    adapter = value.get('adapter')
-    _valid(isinstance(adapter, str) and adapter in API_ADAPTERS)
-    if 'allow_remote' in value:
-        _valid(type(value['allow_remote']) is bool)
-        value = {key: item for key, item in value.items() if key != 'allow_remote'}
-    selected = API_ADAPTERS[adapter].validate_config(value)
-    selected = {key: item for key, item in selected.items() if key != 'allow_remote'}
-    return {**selected, 'provider': 'api', 'adapter': adapter}
+    _valid(isinstance(value, dict) and value.get('provider') == 'api'
+           and value.get('adapter') == 'openai_compatible')
+    _valid(set(value) <= _OPENAI_FIELDS and {"endpoint", "model", "credential_ref"} <= value.keys())
+    connection = validate_api_connection(value['endpoint'], value['model'], value['credential_ref'],
+                                         value.get('timeout_seconds', 15))
+    if "dimensions" in value:
+        _valid(type(value["dimensions"]) is int and 1 <= value["dimensions"] <= 8192)
+    return {**value, **connection}
 
 
 def validate_api_endpoint(endpoint):
@@ -85,44 +73,12 @@ def validate_api_connection(endpoint, model, credential_ref, timeout_seconds=15)
     return {'endpoint': endpoint, 'model': model, 'credential_ref': credential_ref, 'timeout_seconds': timeout_seconds}
 
 
-def _validate_openai_config(value):
-    _valid(set(value) <= _OPENAI_FIELDS and {"endpoint", "model", "credential_ref"} <= value.keys())
-    connection = validate_api_connection(value['endpoint'], value['model'], value['credential_ref'],
-                                         value.get('timeout_seconds', 15))
-    if "dimensions" in value:
-        _valid(type(value["dimensions"]) is int and 1 <= value["dimensions"] <= 8192)
-    return {**value, **connection}
-
-
 class OpenAICompatibleEmbedder:
-    """Send only caller-approved text to an explicitly configured embeddings endpoint."""
+    """Call the configured embeddings endpoint with explicitly supplied credential resolution."""
 
-    remote = True
-    label = 'OpenAI 호환 API'
-    description = 'OpenAI embeddings 요청·응답 형식과 Bearer 인증을 사용합니다.'
-    setup_credentials = {'credential_ref': {'field': 'api_key', 'description': '회사 임베딩 API의 인증 키입니다.'}}
-    field_comments = {
-        'adapter': '회사 API의 요청·응답·인증 규격입니다.\n'
-                   'openai_compatible은 OpenAI 호환 형식과 Bearer 인증을 사용합니다.',
-        'endpoint': '회사가 제공한 정확한 HTTPS 임베딩 요청 주소입니다.\n'
-                    '가상 예: https://embedding.example.test/v1/embeddings',
-        'model': '회사에서 지정한 모델 또는 배포 이름입니다. 가상 예: company-embedding',
-        'credential_ref': '인증 참조입니다. credential:등록이름 또는 env:환경변수명을 입력합니다.\n'
-                          '인증값은 credentials.api_key에 입력합니다. 적용하면 이 참조의 인증 저장소에 보관합니다.',
-        'dimensions': 'API가 지원하는 벡터 차원입니다(정수 1~8192). 생략하면 응답의 차원을 사용합니다.',
-        'timeout_seconds': '네트워크 단계별 대기 제한(초)입니다. 정수 1~60, 기본값은 15입니다.',
-    }
-    validate_config = staticmethod(_validate_openai_config)
-
-    @staticmethod
-    def draft_config(name):
-        return {'provider': 'api', 'adapter': 'openai_compatible', 'endpoint': None, 'model': None,
-                'credential_ref': 'credential:' + name + '.embedding'}
-
-    def __init__(self, config, credentials=None, client=None):
+    def __init__(self, config, *, credentials, client=None):
         self.config = validate_embedding_config(config)
-        _valid(self.config['provider'] == 'api' and self.config['adapter'] == 'openai_compatible')
-        self.credentials = credentials if credentials is not None else Credentials()
+        self.credentials = credentials
         self.client = client
         self.dimensions = self.config.get("dimensions")
         self._initialized = False
@@ -185,56 +141,3 @@ class OpenAICompatibleEmbedder:
         except Exception:
             # Provider bodies and transport exceptions can contain credentials or source text.
             raise StoreError("MEMORY_INDEX_INCOMPLETE", "회사 임베딩 API의 인증·연결·응답을 확인할 수 없어 벡터 처리를 완료하지 못했습니다.") from None
-
-
-API_ADAPTERS = {'openai_compatible': OpenAICompatibleEmbedder}
-
-
-def embedding_credential_fields(config):
-    """Describe credential inputs of the selected API adapter, including partial drafts."""
-    if not isinstance(config, dict) or config.get('provider') not in ('api', 'openai_compatible'):
-        return {}
-    name = config.get('adapter', 'openai_compatible' if config['provider'] == 'openai_compatible' else None)
-    if not isinstance(name, str) or name not in API_ADAPTERS:
-        return {}
-    fields = {}
-    for config_key, metadata in getattr(API_ADAPTERS[name], 'setup_credentials', {}).items():
-        field = metadata['field']
-        _valid(field not in fields)
-        fields[field] = {'reference': config.get(config_key), 'description': metadata['description'],
-                         'config_key': config_key}
-    return fields
-
-
-def embedding_field_comments(config):
-    """Describe common fields and the selected adapter's public YAML inputs."""
-    if not isinstance(config, dict):
-        return {}
-    comments = {'provider': '임베딩 방식입니다. local: 로컬 모델 / api: 회사 API / keyword_only: 키워드 검색.'}
-    if config.get('provider') in ('api', 'openai_compatible'):
-        adapter = config.get('adapter', 'openai_compatible' if config['provider'] == 'openai_compatible' else None)
-        if isinstance(adapter, str) and adapter in API_ADAPTERS:
-            comments.update(getattr(API_ADAPTERS[adapter], 'field_comments', {}))
-        comments['provider'] += '\n허용한 기억 본문과 검색 질의를 선택한 회사 API로 보내 벡터를 생성합니다.'
-        comments.setdefault('adapter', '회사 API의 연결 규격입니다. 지원 목록에서 확인한 연결 방식 ID를 입력합니다.')
-        comments.pop('allow_remote', None)
-    return comments
-
-
-def api_adapter_catalog():
-    return [{'adapter_id': name, 'label': adapter.label, 'description': adapter.description}
-            for name, adapter in API_ADAPTERS.items()]
-
-
-def api_embedding_draft(name, adapter):
-    if adapter is None:
-        return {'provider': 'api', 'adapter': None}
-    _valid(isinstance(adapter, str) and adapter in API_ADAPTERS)
-    return {key: item for key, item in API_ADAPTERS[adapter].draft_config(name).items()
-            if key != 'allow_remote'}
-
-
-def create_api_embedder(config, *, credentials=None, client=None):
-    selected = validate_embedding_config(config)
-    _valid(selected['provider'] == 'api')
-    return API_ADAPTERS[selected['adapter']](selected, credentials=credentials, client=client)

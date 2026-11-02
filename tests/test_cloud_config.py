@@ -11,7 +11,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from daeri.config.setup_yaml import write_yaml
+from yaml import safe_dump
 from daeri.core.errors import StoreError
 
 
@@ -45,7 +45,7 @@ def test_reading_yaml_does_not_import_aws_sdk_or_resolve_credentials(tmp_path, m
 
     monkeypatch.setattr(builtins, '__import__', without_sdk)
     path = tmp_path / 'cloud.yaml'
-    path.write_text(write_yaml(BASE))
+    path.write_text(safe_dump(BASE))
     settings = cloud().CloudSettings.from_yaml(path)
     assert settings.region is None
     assert settings.harness_model is None
@@ -68,7 +68,7 @@ def test_reading_yaml_does_not_import_aws_sdk_or_resolve_credentials(tmp_path, m
 ])
 def test_yaml_rejects_unknown_duplicate_unsafe_or_secret_values(tmp_path, addition):
     path = tmp_path / 'cloud.yaml'
-    path.write_text(write_yaml(BASE) + addition)
+    path.write_text(safe_dump(BASE) + addition)
     with pytest.raises(StoreError) as error:
         cloud().CloudSettings.from_yaml(path)
     assert error.value.code == 'INVALID_INPUT'
@@ -82,7 +82,7 @@ def test_yaml_rejects_unknown_duplicate_unsafe_or_secret_values(tmp_path, additi
 def test_cloud_api_endpoints_require_explicit_nonsecret_https_request_url(tmp_path, endpoint):
     settings = {**BASE, 'knowledge_model': api(endpoint)}
     path = tmp_path / 'cloud.yaml'
-    path.write_text(write_yaml(settings))
+    path.write_text(safe_dump(settings))
     with pytest.raises(StoreError, match='INVALID_INPUT'):
         cloud().CloudSettings.from_yaml(path)
 
@@ -90,7 +90,7 @@ def test_cloud_api_endpoints_require_explicit_nonsecret_https_request_url(tmp_pa
 @pytest.mark.parametrize('model', ['', ' summary', 'summary ', '\x00summary', '\x7f', 'summary\n'])
 def test_model_identifiers_reject_empty_whitespace_or_control_characters(tmp_path, model):
     path = tmp_path / 'cloud.yaml'
-    path.write_text(write_yaml({**BASE, 'knowledge_model': {'provider': 'bedrock', 'model': model}}))
+    path.write_text(safe_dump({**BASE, 'knowledge_model': {'provider': 'bedrock', 'model': model}}))
     with pytest.raises(StoreError, match='INVALID_INPUT'):
         cloud().CloudSettings.from_yaml(path)
 
@@ -129,12 +129,7 @@ class Session:
         return self.clients[service]
 
 
-def require_sdk():
-    pytest.importorskip('boto3')
-
-
 def test_composition_disables_aws_retries_and_leaves_initialization_explicit():
-    require_sdk()
     session = Session()
     settings = cloud().CloudSettings.model_validate({**BASE, 'region': 'us-east-1'})
     with cloud().build_cloud(settings, session=session) as services:
@@ -158,7 +153,6 @@ def test_composition_disables_aws_retries_and_leaves_initialization_explicit():
 
 @pytest.mark.parametrize('knowledge_api', [True, False])
 def test_knowledge_and_embedding_providers_are_independent_and_secrets_resolve_on_request(knowledge_api):
-    require_sdk()
     session, requests = Session(), []
 
     def respond(request):
@@ -192,7 +186,6 @@ def test_knowledge_and_embedding_providers_are_independent_and_secrets_resolve_o
 
 
 def test_factory_closes_owned_http_and_clients_after_use():
-    require_sdk()
     session = Session()
     config = {**BASE, 'knowledge_model': api('https://company.test/v1/chat/completions')}
     with cloud().build_cloud(cloud().CloudSettings.model_validate(config), session=session) as services:
@@ -203,7 +196,6 @@ def test_factory_closes_owned_http_and_clients_after_use():
 
 
 def test_partial_factory_failure_closes_previously_created_clients():
-    require_sdk()
     session = Session(fail_service='bedrock-runtime')
     with pytest.raises(RuntimeError, match='Client creation failed'):
         cloud().build_cloud(cloud().CloudSettings.model_validate(BASE), session=session)
@@ -218,7 +210,6 @@ def test_partial_factory_failure_closes_previously_created_clients():
                                   {'openAiModelConfig': {'modelId': 'chosen', 'apiKeyArn': IDENTITY_KEY,
                                    'endpoint': {'bedrockMantle': {}}}}])
 def test_harness_override_is_validated_against_sdk_shape_before_creating_clients(model):
-    require_sdk()
     session = Session()
     settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': model})
     with pytest.raises(StoreError, match='INVALID_INPUT'):
@@ -237,7 +228,6 @@ def test_harness_override_is_validated_against_sdk_shape_before_creating_clients
     ('geminiModelConfig', {'topK': 501}),
 ])
 def test_harness_model_rejects_invalid_protocol_values_not_checked_by_sdk(provider, fields):
-    require_sdk()
     session = Session()
     settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': {
         provider: {'modelId': 'model', **fields,
@@ -248,7 +238,6 @@ def test_harness_model_rejects_invalid_protocol_values_not_checked_by_sdk(provid
 
 
 def test_native_harness_model_uses_identity_key_without_resolving_it_in_daeri():
-    require_sdk()
     session = Session()
     model = {'openAiModelConfig': {'modelId': 'company-chat', 'apiKeyArn': IDENTITY_KEY,
                                  'apiBase': 'https://company.test/v1', 'apiFormat': 'chat_completions'}}
@@ -261,7 +250,6 @@ def test_native_harness_model_uses_identity_key_without_resolving_it_in_daeri():
 
 
 def test_native_harness_model_accepts_sdk_supported_decimal_parameters():
-    require_sdk()
     model = {'bedrockModelConfig': {'modelId': 'model', 'temperature': Decimal('0.5')}}
     settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': model})
     with cloud().build_cloud(settings, session=Session()) as services:
@@ -278,7 +266,7 @@ def test_harness_api_key_requires_identity_api_key_provider_reference(provider, 
             provider: {'modelId': 'company-chat', 'apiKeyArn': reference}}})
 
 
-def test_missing_optional_sdk_has_actionable_setup_error(monkeypatch):
+def test_missing_sdk_has_actionable_setup_error(monkeypatch):
     module = cloud()
     original = builtins.__import__
 
@@ -291,4 +279,4 @@ def test_missing_optional_sdk_has_actionable_setup_error(monkeypatch):
     with pytest.raises(StoreError) as error:
         module.build_cloud(module.CloudSettings.model_validate(BASE))
     assert error.value.code == 'SETUP_REQUIRED'
-    assert 'cloud' in error.value.message
+    assert 'uv sync' in error.value.message

@@ -1,4 +1,4 @@
-"""Shared structured errors used by policy, use cases and external boundaries."""
+"""Shared structured errors used by cloud use cases and external boundaries."""
 
 class StoreError(Exception):
     def __init__(self, code: str, message: str):

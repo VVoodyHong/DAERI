@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1600" viewBox="0 0 1800 1600" role="img" aria-labelledby="title desc">
   <title id="title">DAERI 아키텍처</title>
-  <desc id="desc">업무 요청, 기억 회상, 계획 제시, 사용자 승인, 작업 위임, 도구 실행, 결과 보고, 경험 저장의 흐름. Claude Code와 Codex의 접속부가 DAERI 서비스로 요청을 전달한다. DAERI는 프로젝트 공유 지식을 자동 회상해 AgentCore Runtime의 managed harness에 제공한다. 총괄 에이전트와 하위 에이전트가 승인 범위에서 협업하고 Gateway를 통해 프로젝트 도구를 실행한다. DAERI는 응답과 업무 기록을 보존하고 경험 정리와 임베딩을 거쳐 공유 지식을 갱신한다. AgentCore Memory는 업무별 대화를 저장하고 복구한다.</desc>
+  <desc id="desc">업무 요청, 기억 회상, 계획 제시, 사용자 승인, 작업 위임, 도구 실행, 결과 보고, 경험 저장의 흐름. Claude Code와 Codex의 접속부가 DAERI 서비스로 요청을 전달한다. DAERI는 프로젝트 공유 지식을 자동 회상해 AgentCore의 총괄 harness에 제공한다. 하위 에이전트는 개별 harness를 MCP 도구로 연결하는 구성안이다. 에이전트들이 승인 범위에서 협업하고 Gateway를 통해 프로젝트 도구를 실행한다. DAERI는 응답과 업무 기록을 보존하고 경험 정리와 임베딩을 거쳐 공유 지식을 갱신한다. AgentCore Memory는 업무별 대화를 저장하고 복구한다.</desc>
   <defs>
     <marker id="blueArrow" markerWidth="11" markerHeight="11" refX="8.5" refY="5.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 10 5.5 1 10Z" fill="#577fd1"/></marker>
     <marker id="greenArrow" markerWidth="11" markerHeight="11" refX="8.5" refY="5.5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 10 5.5 1 10Z" fill="#11958b"/></marker>
@@ -114,7 +114,7 @@
   <path d="M607 640V825H515V880" class="line both"/>
   <path d="M607 825H805V880" class="line"/>
   <path d="M805 825H1095V880" class="line"/>
-  <text x="620" y="800" class="label">5. 작업 위임 · 결과 통합</text>
+  <text x="620" y="800" class="label">5. MCP로 위임 · 결과 통합</text>
   <g fill="#fff" stroke="#cbdcff" stroke-width="1.8">
     <rect x="405" y="880" width="220" height="135" rx="18"/>
     <rect x="695" y="880" width="220" height="135" rx="18"/>
@@ -124,15 +124,15 @@
     <text x="515" y="933" class="node" style="fill:#346bfc">하위 에이전트 1</text>
     <text x="805" y="933" class="node" style="fill:#346bfc">하위 에이전트 2</text>
     <text x="1095" y="933" class="node" style="fill:#346bfc">하위 에이전트 N</text>
-    <text x="515" y="980" class="body">배정 목표 수행</text>
-    <text x="805" y="980" class="body">배정 목표 수행</text>
-    <text x="1095" y="980" class="body">배정 목표 수행</text>
+    <text x="515" y="980" class="body">개별 harness</text>
+    <text x="805" y="980" class="body">개별 harness</text>
+    <text x="1095" y="980" class="body">개별 harness</text>
   </g>
   <path d="M515 1015V1062H1300V1190H325V1330" class="line both"/>
   <path d="M805 1062V1015" class="line"/>
   <path d="M1095 1062V1015" class="line"/>
   <text x="610" y="1093" class="label">도구 호출 · 결과 반환</text>
-  <text x="390" y="407" class="body" style="font-size:22px">AgentCore Runtime · managed harness</text>
+  <text x="390" y="407" class="body" style="font-size:22px">AgentCore harness · MCP 연결</text>
   <text x="1337" y="1110" class="label">6. 도구 실행</text>
   <text x="1337" y="1151" class="body">승인 범위에서 자율 수행</text>
 

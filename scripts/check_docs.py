@@ -16,12 +16,11 @@ _LINK = re.compile(
 def _documents(root: Path) -> list[Path]:
     paths = [root / name for name in ('AGENTS.md', 'CLAUDE.md', 'README.md')
              if (root / name).is_file()]
-    for name in ('docs', 'skills', 'agents'):
-        for directory, folders, files in os.walk(root / name):
-            folders[:] = [folder for folder in folders
-                          if not folder.startswith('.')
-                          and folder not in ('__pycache__', 'node_modules')]
-            paths.extend(Path(directory) / file for file in files if file.endswith('.md'))
+    for directory, folders, files in os.walk(root / 'docs'):
+        folders[:] = [folder for folder in folders
+                      if not folder.startswith('.')
+                      and folder not in ('__pycache__', 'node_modules')]
+        paths.extend(Path(directory) / file for file in files if file.endswith('.md'))
     return sorted(paths)
 
 
@@ -74,7 +73,7 @@ def check_docs(root: Path) -> list[str]:
             url = urlsplit(destination)
             if url.scheme or url.netloc:
                 continue
-            path = unquote(url.path).replace('${CLAUDE_PLUGIN_ROOT}', root.as_posix())
+            path = unquote(url.path)
             target = (source.parent / path).resolve() if path else source
             error = None
             if not target.is_relative_to(root) or not target.exists():
