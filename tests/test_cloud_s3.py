@@ -1,0 +1,409 @@
+"""Offline S3 CAS and immutable receipt contracts; no AWS network requests."""
+
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from hashlib import sha256
+from io import BytesIO
+import json
+from threading import Lock
+
+import boto3
+from botocore.exceptions import ClientError
+from botocore.session import get_session
+from botocore.stub import ANY, Stubber
+from botocore.validate import validate_parameters
+import pytest
+
+from daeri.core.cloud import AccessContext, HarnessReply
+from daeri.core.errors import StoreError
+
+
+BUCKET = 'company-daeri'
+ARN = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/project-1234567890'
+MODEL = get_session().get_service_model('s3')
+
+
+def aws_error(code, status):
+    return ClientError({'Error': {'Code': code, 'Message': 'password=PRIVATE'},
+                        'ResponseMetadata': {'HTTPStatusCode': status}}, 'PutObject')
+
+
+class S3:
+    """Atomic object-map double; requests still use the installed SDK schemas."""
+
+    def __init__(self):
+        self.objects, self.calls, self.streams = {}, [], []
+        self.lock = Lock()
+        self.fail_manifest = None
+
+    def put_object(self, **request):
+        validate_parameters(request, MODEL.operation_model('PutObject').input_shape)
+        with self.lock:
+            self.calls.append(('put', request))
+            key, old = request['Key'], self.objects.get(request['Key'])
+            failure = self.fail_manifest if key.endswith('/manifest.json') else None
+            if failure == 'before':
+                self.fail_manifest = None
+                raise aws_error('InternalError', 500)
+            if failure == 'conflict':
+                self.fail_manifest = None
+                raise aws_error('PreconditionFailed', 412)
+            if request.get('IfNoneMatch') == '*' and old is not None:
+                raise aws_error('PreconditionFailed', 412)
+            if 'IfMatch' in request and (old is None or old[1] != request['IfMatch']):
+                raise aws_error('PreconditionFailed', 412)
+            body = request['Body']
+            etag = '"' + sha256(body).hexdigest() + '"'
+            self.objects[key] = (body, etag)
+            if failure == 'after':
+                self.fail_manifest = None
+                raise TimeoutError('password=PRIVATE')
+            return {'ETag': etag}
+
+    def get_object(self, **request):
+        validate_parameters(request, MODEL.operation_model('GetObject').input_shape)
+        with self.lock:
+            self.calls.append(('get', request))
+            if request['Key'] not in self.objects:
+                raise aws_error('NoSuchKey', 404)
+            body, etag = self.objects[request['Key']]
+            stream = BytesIO(body)
+            self.streams.append(stream)
+            return {'Body': stream, 'ETag': etag, 'ContentLength': len(body)}
+
+
+def make_store(client):
+    from daeri.infrastructure.cloud_s3 import S3CloudStore
+    return S3CloudStore(client, BUCKET)
+
+
+def context():
+    return AccessContext('alice', 'project')
+
+
+def begin(client):
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect')
+    turn = store.begin_turn(task, 'Inspect', ())
+    return store, task, turn
+
+
+def manifest(client):
+    key = next(key for key in client.objects if key.endswith('/manifest.json'))
+    return key, json.loads(client.objects[key][0])
+
+
+def test_manifest_creation_and_loading_preserve_binding_route_and_goal():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect\x00the source')
+    loaded = make_store(client).get_task(context(), task.id)
+    assert loaded == task and loaded.harness_arn == ARN and loaded.goal == 'Inspect\x00the source'
+    assert task.etag and task.session_id and task.id
+    assert client.calls[0][1]['IfNoneMatch'] == '*'
+    assert all(stream.closed for stream in client.streams)
+
+
+def test_two_concurrent_stale_writers_only_allow_one_external_invocation():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect')
+    invocations = []
+    def invoke(_):
+        try:
+            turn_id = store.begin_turn(task, 'Inspect', ())
+            invocations.append(turn_id)
+            return 'invoked'
+        except StoreError as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(invoke, range(2)))
+    assert sorted(outcomes) == ['TASK_BUSY', 'invoked'] and len(invocations) == 1
+    assert any(request.get('IfMatch') == task.etag for operation, request in client.calls if operation == 'put')
+
+
+@pytest.mark.parametrize('failure', ['before', 'after'])
+def test_receipt_recovers_commit_failure_or_ack_loss_without_reinvoking(failure):
+    client = S3()
+    store, task, turn = begin(client)
+    reply = HarnessReply('Done', 'end_turn')
+    client.fail_manifest = failure
+    with pytest.raises(StoreError) as error:
+        store.finish_turn(task, turn, 'Inspect', reply, ())
+    assert 'PRIVATE' not in str(error.value)
+    _, state = manifest(client)
+    assert bool(state['in_flight']) == (failure == 'before')
+    recovered = make_store(client).recover_turn(context(), task.id)
+    assert recovered.task_id == task.id and recovered.turn_id == turn and recovered.reply == reply
+    assert manifest(client)[1]['in_flight'] is None
+    again = make_store(client).recover_turn(context(), task.id)
+    assert again == recovered
+
+
+def test_missing_receipt_keeps_execution_uncertain_and_blocks_new_turn():
+    client = S3()
+    store, task, turn = begin(client)
+    with pytest.raises(StoreError, match='EXECUTION_UNCERTAIN'):
+        store.recover_turn(context(), task.id)
+    assert manifest(client)[1]['in_flight']['turn_id'] == turn
+    with pytest.raises(StoreError, match='TASK_BUSY'):
+        store.begin_turn(store.get_task(context(), task.id), 'Retry', ())
+
+
+def test_recovery_cas_conflict_keeps_the_recorded_execution_pending():
+    client = S3()
+    store, task, turn = begin(client)
+    client.fail_manifest = 'before'
+    with pytest.raises(StoreError):
+        store.finish_turn(task, turn, 'Inspect', HarnessReply('Done', 'end_turn'), ())
+    client.fail_manifest = 'conflict'
+    with pytest.raises(StoreError, match='STORAGE_CONFLICT'):
+        store.recover_turn(context(), task.id)
+    assert manifest(client)[1]['in_flight']['turn_id'] == turn
+    assert store.recover_turn(context(), task.id).turn_id == turn
+
+
+def test_receipt_is_immutable_and_keeps_all_actual_tool_results():
+    client = S3()
+    store, task, turn = begin(client)
+    pending = ({'toolUseId': 'approve', 'name': 'approve', 'input': {'plan': 'Inspect'}},)
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Approve', 'tool_use', pending), ())
+    task = store.get_task(context(), task.id)
+    results = ({'toolUseId': 'approve', 'status': 'success', 'content': [{'text': 'Approved\x00by user'}]},)
+    turn = store.begin_turn(task, '', results)
+    reply = HarnessReply('Done', 'end_turn')
+    store.finish_turn(task, turn, '', reply, results)
+    receipt_key = manifest(client)[1]['last_turn']
+    receipt_before = client.objects[receipt_key]
+    assert json.loads(receipt_before[0])['tool_results'] == list(results)
+    store.finish_turn(task, turn, '', reply, results)
+    assert client.objects[receipt_key] == receipt_before
+    with pytest.raises(StoreError, match='STORAGE_CONFLICT'):
+        store.finish_turn(task, turn, '', HarnessReply('Different', 'end_turn'), results)
+    assert client.objects[receipt_key] == receipt_before
+
+
+def test_interrupted_receipt_is_preserved_and_explicit_follow_up_can_start():
+    client = S3()
+    store, task, turn = begin(client)
+    reply = HarnessReply('Partial', 'error', error='HARNESS_UNAVAILABLE')
+    store.finish_turn(task, turn, 'Inspect', reply, ())
+    assert manifest(client)[1]['state'] == 'interrupted'
+    assert store.recover_turn(context(), task.id).reply == reply
+    next_turn = store.begin_turn(store.get_task(context(), task.id), 'I checked the execution; continue', ())
+    assert next_turn != turn
+
+
+def test_throttled_approval_can_be_explicitly_resubmitted_through_the_real_workflow():
+    from daeri.application.cloud import CloudWorkflow
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+    from daeri.core.projects import Project
+
+    class Catalog:
+        def get(self, project_id):
+            return Project(project_id, 'Project', ARN)
+
+    class HarnessClient:
+        def __init__(self):
+            self.requests = []
+
+        def invoke_harness(self, **request):
+            validate_parameters(request, get_session().get_service_model('bedrock-agentcore')
+                                .operation_model('InvokeHarness').input_shape)
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                raise ClientError({'Error': {'Code': 'ThrottlingException', 'Message': 'PRIVATE'}}, 'InvokeHarness')
+            return {'stream': (event for event in [
+                {'messageStart': {'role': 'assistant'}},
+                {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Done'}}},
+                {'contentBlockStop': {'contentBlockIndex': 0}},
+                {'messageStop': {'stopReason': 'end_turn'}},
+            ])}
+
+    client = S3()
+    store, task, turn = begin(client)
+    pending = ({'toolUseId': 'approve', 'name': 'confirm_plan', 'input': {'plan': 'Inspect'}},)
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Approve', 'tool_use', pending), ())
+    harness_client = HarnessClient()
+    workflow = CloudWorkflow(store, AgentCoreHarness(harness_client), Catalog())
+    actual = ({'toolUseId': 'approve', 'status': 'success', 'content': [{'text': 'Approved by user'}]},)
+
+    first = workflow.resume(context(), task.id, tool_results=actual)
+    assert first.reply.error == 'HARNESS_THROTTLED'
+    assert store.get_task(context(), task.id).pending_tools == pending
+    second = workflow.resume(context(), task.id, tool_results=actual)
+    assert second.reply.text == 'Done' and second.reply.error is None
+    assert store.get_task(context(), task.id).pending_tools == ()
+    assert len(harness_client.requests) == 2
+    assert all(request['messages'][0]['content'][0]['toolResult']['toolUseId'] == 'approve'
+               for request in harness_client.requests)
+
+
+@pytest.mark.parametrize('other', [('bob', 'project'), ('alice', 'another')])
+def test_task_cannot_be_read_through_another_actor_or_project(other):
+    client = S3()
+    store, task, _ = begin(client)
+    with pytest.raises(StoreError, match='ACCESS_DENIED'):
+        store.get_task(AccessContext(*other), task.id)
+    other_key = client.calls[-1][1]['Key']
+    original_key, _ = manifest(client)
+    assert other_key != original_key
+    client.objects[other_key] = client.objects[original_key]
+    with pytest.raises(StoreError, match='ACCESS_DENIED'):
+        store.get_task(AccessContext(*other), task.id)
+
+
+def test_state_keys_hash_identity_and_project_instead_of_accepting_path_segments():
+    client = S3()
+    unusual = AccessContext('../alice/private', '../../project')
+    task = make_store(client).create_task(unusual, ARN, 'Inspect')
+    key, _ = manifest(client)
+    assert '../' not in key and 'alice' not in key and len(key.encode()) <= 1024
+    assert make_store(client).get_task(unusual, task.id).context == unusual
+
+
+@pytest.mark.parametrize('task_id', ['', '../manifest', 'a/b', 'not-a-uuid', None])
+def test_invalid_task_identifier_is_rejected_before_s3(task_id):
+    client = S3()
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        make_store(client).get_task(context(), task_id)
+    assert client.calls == []
+
+
+def test_recovery_rejects_wrong_or_malformed_receipt_without_unlocking():
+    client = S3()
+    store, task, turn = begin(client)
+    client.fail_manifest = 'before'
+    with pytest.raises(StoreError):
+        store.finish_turn(task, turn, 'Inspect', HarnessReply('Done', 'end_turn'), ())
+    receipt_key = next(key for key in client.objects if '/turns/' in key)
+    payload, etag = client.objects[receipt_key]
+    wrong = json.loads(payload)
+    wrong['actor_id'] = 'bob'
+    for body in [json.dumps(wrong).encode(), b'{bad-json', b'[]']:
+        client.objects[receipt_key] = (body, etag)
+        with pytest.raises(StoreError) as error:
+            store.recover_turn(context(), task.id)
+        assert error.value.code in {'STORAGE_CONFLICT', 'STORAGE_UNAVAILABLE'}
+        assert manifest(client)[1]['in_flight']['turn_id'] == turn
+
+
+def test_oversized_manifest_is_rejected_and_the_body_is_closed():
+    client = S3()
+    store, task, _ = begin(client)
+    key, _ = manifest(client)
+    client.objects[key] = (b' ' * (8 * 1024 * 1024 + 1), '"oversized"')
+    with pytest.raises(StoreError, match='STORAGE_UNAVAILABLE'):
+        store.get_task(context(), task.id)
+    assert client.streams[-1].closed
+
+
+def test_saved_manifest_must_be_utf8_json_with_unique_fields():
+    client = S3()
+    store, task, _ = begin(client)
+    key, original = manifest(client)
+    for body in [json.dumps(original).encode('utf-16'), b'{"id":1,"id":2}']:
+        client.objects[key] = (body, '"bad-encoding"')
+        with pytest.raises(StoreError, match='STORAGE_UNAVAILABLE'):
+            store.get_task(context(), task.id)
+        assert client.streams[-1].closed
+
+
+def test_begin_checks_pending_call_snapshot_and_actual_response_ids_before_writing():
+    client = S3()
+    store, task, turn = begin(client)
+    pending = ({'toolUseId': 'approve', 'name': 'approve', 'input': {}},)
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Approve', 'tool_use', pending), ())
+    task = store.get_task(context(), task.id)
+    writes = len([1 for name, _ in client.calls if name == 'put'])
+    with pytest.raises(StoreError, match='TASK_BUSY'):
+        store.begin_turn(replace(task, pending_tools=()), 'Continue', ())
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        store.begin_turn(task, 'Continue', ())
+    assert len([1 for name, _ in client.calls if name == 'put']) == writes
+
+
+def test_creation_ack_loss_exposes_the_created_task_identifier_for_inspection():
+    client = S3()
+    client.fail_manifest = 'after'
+    with pytest.raises(StoreError) as caught:
+        make_store(client).create_task(context(), ARN, 'Inspect')
+    assert caught.value.task_id
+    assert make_store(client).get_task(context(), caught.value.task_id).goal == 'Inspect'
+
+
+def test_begin_ack_loss_exposes_the_pending_turn_without_claiming_execution_happened():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect')
+    client.fail_manifest = 'after'
+    with pytest.raises(StoreError) as caught:
+        store.begin_turn(task, 'Inspect', ())
+    assert caught.value.task_id == task.id
+    assert caught.value.turn_id == manifest(client)[1]['in_flight']['turn_id']
+    with pytest.raises(StoreError, match='EXECUTION_UNCERTAIN'):
+        store.recover_turn(context(), task.id)
+
+
+@pytest.mark.parametrize('response', [None, {'Error': []}, {'Error': {'Code': {}}}])
+@pytest.mark.parametrize('operation', ['get', 'put'])
+def test_malformed_sdk_errors_never_leak_raw_exception_or_metadata(response, operation):
+    failure = RuntimeError('password=PRIVATE')
+    failure.response = response
+    class BrokenS3:
+        def get_object(self, **request):
+            raise failure
+        def put_object(self, **request):
+            raise failure
+    with pytest.raises(StoreError) as caught:
+        store = make_store(BrokenS3())
+        if operation == 'get':
+            store.get_task(context(), '01234567-89ab-cdef-0123-456789abcdef')
+        else:
+            store.create_task(context(), ARN, 'Inspect')
+    assert caught.value.code == 'STORAGE_UNAVAILABLE' and 'PRIVATE' not in str(caught.value)
+
+
+def test_normalized_prefix_leaves_room_for_hashed_scopes_and_both_uuids():
+    from daeri.infrastructure.cloud_s3 import S3CloudStore, normalize_storage_prefix
+    assert len(normalize_storage_prefix('x' * 787)) == 788
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        normalize_storage_prefix('x' * 788)
+    client = S3()
+    store = S3CloudStore(client, BUCKET, 'x' * 787)
+    task = store.create_task(context(), ARN, 'Inspect')
+    turn = store.begin_turn(task, 'Inspect', ())
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Done', 'end_turn'), ())
+    assert max(len(key.encode()) for key in client.objects) == 1024
+
+
+def test_sdk_stubber_accepts_native_conditional_create_request():
+    client = boto3.client('s3', region_name='us-east-1', aws_access_key_id='offline', aws_secret_access_key='offline')
+    with Stubber(client) as stub:
+        stub.add_response('put_object', {'ETag': '"created"'},
+            {'Bucket': BUCKET, 'Key': ANY, 'Body': ANY, 'ContentType': 'application/json', 'IfNoneMatch': '*'})
+        task = make_store(client).create_task(context(), ARN, 'Inspect')
+        assert task.etag == '"created"'
+        stub.assert_no_pending_responses()
+    client.close()
+
+
+def test_storage_names_are_validated_without_sdk_or_credentials():
+    from daeri.infrastructure.cloud_s3 import normalize_storage_prefix, validate_storage_bucket
+    assert normalize_storage_prefix('company/daeri') == 'company/daeri/'
+    assert normalize_storage_prefix('daeri/') == 'daeri/'
+    assert validate_storage_bucket('company-daeri.archive') == 'company-daeri.archive'
+
+
+@pytest.mark.parametrize('prefix', ['', '/', '/absolute', 'a//b', 'a/../b', 'a/./b', 'a\x00b', 'a\ud800'])
+def test_invalid_storage_prefix_is_rejected(prefix):
+    from daeri.infrastructure.cloud_s3 import normalize_storage_prefix
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        normalize_storage_prefix(prefix)
+
+
+@pytest.mark.parametrize('bucket', ['ab', 'Uppercase', '127.0.0.1', 'a..b', 'a.-b', 'xn--bucket', 'bucket--x-s3'])
+def test_invalid_storage_bucket_is_rejected(bucket):
+    from daeri.infrastructure.cloud_s3 import validate_storage_bucket
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        validate_storage_bucket(bucket)

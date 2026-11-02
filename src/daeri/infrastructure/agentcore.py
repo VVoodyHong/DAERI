@@ -1,8 +1,11 @@
 """Translate the AgentCore InvokeHarness event stream into the cloud port."""
 
 import json
+from dataclasses import replace
 
 from daeri.core.cloud import HarnessReply
+from daeri.core.errors import StoreError
+from daeri.core.serialization import validate_storable_json
 
 
 _EVENT_ERRORS = {
@@ -126,6 +129,19 @@ class _HarnessStream:
                     self.error = 'HARNESS_INVALID_TOOL_INPUT'
             elif self.stop not in {'end_turn', 'stop_sequence'} or self.role != 'assistant':
                 self.error = 'HARNESS_STREAM_INCOMPLETE'
+        try:
+            validate_storable_json((self.text, pending, self.observations))
+        except (TypeError, ValueError, RecursionError):
+            self.error = 'HARNESS_INVALID_OUTPUT'
+            self.text = self.text.encode('utf-8', 'backslashreplace').decode('utf-8')
+            valid_observations = []
+            for observation in self.observations:
+                try:
+                    validate_storable_json(observation)
+                except (TypeError, ValueError, RecursionError):
+                    continue
+                valid_observations.append(observation)
+            self.observations = valid_observations
         return HarnessReply(self.text, self.stop or 'failed',
                             tuple(pending) if not self.error else (), tuple(self.observations), self.error)
 
@@ -133,16 +149,16 @@ class _HarnessStream:
 class AgentCoreHarness:
     """Use a caller-configured SDK client; this adapter never creates credentials or retries."""
 
-    def __init__(self, client, harness_arn, model=None):
-        self.client, self.harness_arn, self.model = client, harness_arn, model
+    def __init__(self, client):
+        self.client = client
 
     def invoke(self, task, messages):
-        state, stream = _HarnessStream(), None
-        request = {'harnessArn': self.harness_arn, 'runtimeSessionId': task.session_id,
+        if not task.harness_arn:
+            raise StoreError('PROJECT_UNAVAILABLE', 'The saved task has no project harness route.')
+        state, stream, rejected = _HarnessStream(), None, False
+        request = {'harnessArn': task.harness_arn, 'runtimeSessionId': task.session_id,
                    'actorId': task.context.actor_id, 'runtimeUserId': task.context.actor_id,
                    'messages': messages}
-        if self.model is not None:
-            request['model'] = self.model
         try:
             stream = self.client.invoke_harness(**request)['stream']
             for event in stream:
@@ -154,10 +170,13 @@ class AgentCoreHarness:
             details = response.get('Error') if isinstance(response, dict) else None
             code = details.get('Code') if isinstance(details, dict) else None
             state.error = _CLIENT_ERRORS.get(code, 'HARNESS_UNAVAILABLE') if isinstance(code, str) else 'HARNESS_UNAVAILABLE'
+            rejected = stream is None and isinstance(code, str) and code in _CLIENT_ERRORS
         finally:
             if stream is not None:
                 try:
                     stream.close()
                 except Exception:
                     pass
-        return state.reply()
+        reply = state.reply()
+        # A rejected request leaves the harness's authoritative pending calls unchanged.
+        return replace(reply, pending_tools=task.pending_tools) if rejected else reply

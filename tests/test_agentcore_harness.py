@@ -1,5 +1,6 @@
 """InvokeHarness fixtures validated against the installed AWS SDK, without AWS calls."""
 
+import json
 from uuid import uuid4
 
 import pytest
@@ -12,7 +13,6 @@ from daeri.core.cloud import AccessContext, CloudTask
 
 
 ARN = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/daeri-abcdefghij'
-MODEL = {'bedrockModelConfig': {'modelId': 'example.model-v1', 'apiFormat': 'converse_stream'}}
 SERVICE = boto3.Session()._session.get_service_model('bedrock-agentcore')
 OPERATION = SERVICE.operation_model('InvokeHarness')
 
@@ -47,7 +47,7 @@ class Client:
 
 
 def task():
-    return CloudTask(str(uuid4()), str(uuid4()), AccessContext('actor-one', 'project', 'service', frozenset({'source'})))
+    return CloudTask(str(uuid4()), str(uuid4()), AccessContext('actor-one', 'project'), harness_arn=ARN)
 
 
 def text_events(text='Completed.', reason='end_turn'):
@@ -81,14 +81,14 @@ def test_native_sdk_request_and_final_text_exclude_reasoning_and_close_stream():
     ])
     current = task()
     messages = [{'role': 'user', 'content': [{'text': 'Question'}]}]
-    reply = AgentCoreHarness(client, ARN, MODEL).invoke(current, messages)
+    reply = AgentCoreHarness(client).invoke(current, messages)
 
     assert reply.text == 'Final answer.' and reply.stop_reason == 'end_turn'
     assert reply.error is None and reply.observations == () and reply.pending_tools == ()
     assert 'PRIVATE' not in repr(reply)
     assert client.requests == [{'harnessArn': ARN, 'runtimeSessionId': current.session_id,
                                 'actorId': current.context.actor_id, 'runtimeUserId': current.context.actor_id,
-                                'model': MODEL, 'messages': messages}]
+                                'messages': messages}]
     assert client.stream.closed
 
 
@@ -111,7 +111,7 @@ def test_only_final_inline_handoff_is_pending_after_remote_tool_result_with_reus
         {'messageStop': {'stopReason': 'tool_use'}},
     ]
     client = Client(events)
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [{'role': 'user', 'content': [{'text': 'Run'}]}])
+    reply = AgentCoreHarness(client).invoke(task(), [{'role': 'user', 'content': [{'text': 'Run'}]}])
 
     assert reply.error is None and reply.stop_reason == 'tool_use'
     assert reply.pending_tools == ({'name': 'search', 'toolUseId': 'inline',
@@ -128,7 +128,7 @@ def test_tools_executed_by_harness_are_not_pending(kind):
 
     events = [{'messageStart': {'role': 'assistant'}}, *tool_events('remote', kind),
               {'messageStop': {'stopReason': 'tool_use'}}, *text_events()]
-    reply = AgentCoreHarness(Client(events), ARN).invoke(task(), [])
+    reply = AgentCoreHarness(Client(events)).invoke(task(), [])
     assert reply.error is None and reply.pending_tools == ()
 
 
@@ -138,7 +138,7 @@ def test_malformed_inline_tool_input_cannot_be_executed(payload):
 
     events = [{'messageStart': {'role': 'assistant'}}, *tool_events('inline', data=payload),
               {'messageStop': {'stopReason': 'tool_use'}}]
-    reply = AgentCoreHarness(Client(events), ARN).invoke(task(), [])
+    reply = AgentCoreHarness(Client(events)).invoke(task(), [])
     assert reply.error == 'HARNESS_INVALID_TOOL_INPUT' and reply.pending_tools == ()
 
 
@@ -147,7 +147,7 @@ def test_malformed_inline_tool_input_cannot_be_executed(payload):
 def test_explicit_stop_reason_is_preserved_as_failure_and_keeps_text(reason):
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
-    reply = AgentCoreHarness(Client(text_events('Partial', reason)), ARN).invoke(task(), [])
+    reply = AgentCoreHarness(Client(text_events('Partial', reason))).invoke(task(), [])
     assert reply.text == 'Partial' and reply.stop_reason == reason
     assert reply.error == 'HARNESS_' + reason.upper()
     assert reply.pending_tools == ()
@@ -158,7 +158,7 @@ def test_truncated_stream_preserves_partial_text_without_error_details(failure):
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
     client = Client(text_events('Partial')[:2], failure=failure)
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    reply = AgentCoreHarness(client).invoke(task(), [])
     assert reply.text == 'Partial' and reply.error and reply.pending_tools == ()
     assert 'PRIVATE' not in repr(reply) and client.stream.closed
 
@@ -167,7 +167,7 @@ def test_later_open_message_cannot_reuse_previous_success_stop():
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
     client = Client(text_events('Old') + text_events('New partial')[:2])
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    reply = AgentCoreHarness(client).invoke(task(), [])
     assert reply.text == 'New partial' and reply.error
 
 
@@ -175,7 +175,7 @@ def test_exception_event_after_partial_text_is_sanitized_and_not_retried():
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
     client = Client(text_events('Partial')[:2] + [{'runtimeClientError': {'message': 'PRIVATE'}}])
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    reply = AgentCoreHarness(client).invoke(task(), [])
     assert reply.text == 'Partial' and reply.error == 'HARNESS_RUNTIME_ERROR'
     assert 'PRIVATE' not in repr(reply) and len(client.requests) == 1 and client.stream.closed
 
@@ -185,7 +185,7 @@ def test_sdk_client_error_is_sanitized_without_retry():
 
     failure = ClientError({'Error': {'Code': 'AccessDeniedException', 'Message': 'PRIVATE'}}, 'InvokeHarness')
     client = Client(invoke_failure=failure)
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    reply = AgentCoreHarness(client).invoke(task(), [])
     assert reply.error == 'HARNESS_ACCESS_DENIED' and len(client.requests) == 1
     assert 'PRIVATE' not in repr(reply)
 
@@ -201,7 +201,7 @@ def test_inline_handoff_stops_at_next_harness_executed_tool():
         *tool_events('later', index=3),
         {'messageStop': {'stopReason': 'tool_use'}},
     ]
-    reply = AgentCoreHarness(Client(events), ARN).invoke(task(), [])
+    reply = AgentCoreHarness(Client(events)).invoke(task(), [])
     assert reply.error is None
     assert [tool['toolUseId'] for tool in reply.pending_tools] == ['first', 'adjacent']
 
@@ -213,7 +213,7 @@ def test_duplicate_inline_tool_id_cannot_be_handed_off_for_execution_twice():
               *tool_events('duplicate', index=0), *tool_events('duplicate', index=1),
               {'messageStop': {'stopReason': 'tool_use'}}]
     client = Client(events)
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    reply = AgentCoreHarness(client).invoke(task(), [])
     assert reply.error and reply.pending_tools == () and client.stream.closed
 
 
@@ -226,7 +226,7 @@ def test_incomplete_remote_result_is_not_a_completed_observation():
             'toolUseId': 'remote', 'status': 'success'}}}},
         {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'toolResult': [{'text': 'Partial'}]}}},
     ]
-    reply = AgentCoreHarness(Client(events), ARN).invoke(task(), [])
+    reply = AgentCoreHarness(Client(events)).invoke(task(), [])
     assert reply.error and reply.observations == () and reply.pending_tools == ()
 
 
@@ -239,7 +239,7 @@ def test_stream_close_failure_preserves_completed_reply():
             raise RuntimeError('PRIVATE transport details')
     client = Client()
     client.stream = CloseFailure(text_events())
-    reply = AgentCoreHarness(client, ARN).invoke(task(), [])
+    reply = AgentCoreHarness(client).invoke(task(), [])
     assert reply.text == 'Completed.' and reply.stop_reason == 'end_turn' and reply.error is None
     assert client.stream.closed and 'PRIVATE' not in repr(reply)
 
@@ -250,5 +250,84 @@ def test_non_sdk_exception_response_cannot_escape_sanitized_boundary(response):
 
     failure = RuntimeError('PRIVATE transport details')
     failure.response = response
-    reply = AgentCoreHarness(Client(invoke_failure=failure), ARN).invoke(task(), [])
+    reply = AgentCoreHarness(Client(invoke_failure=failure)).invoke(task(), [])
     assert reply.error == 'HARNESS_UNAVAILABLE' and 'PRIVATE' not in repr(reply)
+
+
+def test_missing_saved_route_never_invokes_an_arbitrary_harness():
+    from dataclasses import replace
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+    from daeri.core.errors import StoreError
+
+    client = Client()
+    with pytest.raises(StoreError, match='PROJECT_UNAVAILABLE'):
+        AgentCoreHarness(client).invoke(replace(task(), harness_arn=''), [])
+    assert client.requests == []
+
+
+@pytest.mark.parametrize('code', ['AccessDeniedException', 'ResourceNotFoundException',
+    'ThrottlingException', 'ValidationException', 'ServiceQuotaExceededException'])
+def test_rejected_invocation_keeps_existing_pending_calls_for_explicit_resubmission(code):
+    from dataclasses import replace
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+
+    pending = ({'toolUseId': 'approve', 'name': 'confirm_plan', 'input': {'plan': 'Inspect'}},)
+    failure = ClientError({'Error': {'Code': code, 'Message': 'PRIVATE'}}, 'InvokeHarness')
+    reply = AgentCoreHarness(Client(invoke_failure=failure)).invoke(replace(task(), pending_tools=pending), [])
+    assert reply.error and reply.pending_tools == pending
+    assert 'PRIVATE' not in repr(reply)
+
+
+def test_unconfirmed_transport_failure_keeps_no_actionable_handoff():
+    from dataclasses import replace
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+
+    pending = ({'toolUseId': 'approve', 'name': 'confirm_plan', 'input': {}},)
+    reply = AgentCoreHarness(Client(invoke_failure=TimeoutError('PRIVATE'))).invoke(
+        replace(task(), pending_tools=pending), [])
+    assert reply.error == 'HARNESS_UNAVAILABLE' and reply.pending_tools == ()
+
+
+@pytest.mark.parametrize('location', ['text', 'pending_key', 'pending_value',
+                                     'observation_key', 'observation_value'])
+@pytest.mark.parametrize('invalid,escaped', [('\ud800', '확보\\ud800텍스트')])
+def test_invalid_output_cannot_handoff_tools_or_prevent_saving_valid_evidence(location, invalid, escaped):
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+    from daeri.core.serialization import validate_storable_json
+
+    dirty = '확보' + invalid + '텍스트'
+    events = [
+        {'messageStart': {'role': 'user'}},
+        {'contentBlockStart': {'contentBlockIndex': 0, 'start': {'toolResult': {
+            'toolUseId': 'completed', 'status': 'success'}}}},
+        {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'toolResult': [{'text': 'Safe evidence.'}]}}},
+        {'contentBlockStop': {'contentBlockIndex': 0}},
+    ]
+    if location.startswith('observation'):
+        payload = {dirty: 'value'} if location.endswith('key') else {'value': [dirty]}
+        events += [
+            {'contentBlockStart': {'contentBlockIndex': 1, 'start': {'toolResult': {
+                'toolUseId': 'invalid', 'status': 'success'}}}},
+            {'contentBlockDelta': {'contentBlockIndex': 1, 'delta': {'toolResult': [{'json': {'nested': payload}}]}}},
+            {'contentBlockStop': {'contentBlockIndex': 1}},
+        ]
+    events += [
+        {'messageStop': {'stopReason': 'tool_result'}},
+        {'messageStart': {'role': 'assistant'}},
+        {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {
+            'text': dirty if location == 'text' else 'Valid answer.'}}},
+        {'contentBlockStop': {'contentBlockIndex': 0}},
+    ]
+    payload = {dirty: 'value'} if location == 'pending_key' else {
+        'value': [dirty] if location == 'pending_value' else ['valid']}
+    events += tool_events('inline', index=1, data=json.dumps({'nested': payload}))
+    events += [{'messageStop': {'stopReason': 'tool_use'}}]
+
+    reply = AgentCoreHarness(Client(events)).invoke(task(), [])
+
+    assert reply.error == 'HARNESS_INVALID_OUTPUT' and reply.pending_tools == ()
+    assert reply.text == (escaped if location == 'text' else 'Valid answer.')
+    assert reply.observations == ({'toolUseId': 'completed', 'status': 'success',
+                                   'content': [{'text': 'Safe evidence.'}]},)
+    validate_storable_json(reply.text)
+    validate_storable_json(reply.observations)

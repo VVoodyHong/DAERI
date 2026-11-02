@@ -2,37 +2,19 @@
 
 import builtins
 import importlib
-import io
-import json
-from copy import deepcopy
-from decimal import Decimal
 
-import httpx
 import pytest
 from pydantic import ValidationError
-
 from yaml import safe_dump
+
 from daeri.core.errors import StoreError
 
 
-SECRET = 'arn:aws:secretsmanager:us-east-1:123456789012:secret:company-key'
-IDENTITY_KEY = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:token-vault/default/apikeycredentialprovider/company-key'
-HARNESS = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/assistant-1234567890'
-BASE = {
-    'harness_arn': HARNESS,
-    'database': {'resource_arn': 'arn:aws:rds:us-east-1:123456789012:cluster:shared',
-                 'secret_arn': SECRET, 'name': 'daeri'},
-    'knowledge_model': {'provider': 'bedrock', 'model': 'summary-model'},
-}
+BASE = {'storage': {'bucket': 'daeri-workspace'}}
 
 
 def cloud():
     return importlib.import_module('daeri.config.cloud')
-
-
-def api(endpoint):
-    return {'provider': 'api', 'endpoint': endpoint, 'model': 'company-model',
-            'api_key_secret_arn': SECRET}
 
 
 def test_reading_yaml_does_not_import_aws_sdk_or_resolve_credentials(tmp_path, monkeypatch):
@@ -48,25 +30,22 @@ def test_reading_yaml_does_not_import_aws_sdk_or_resolve_credentials(tmp_path, m
     path.write_text(safe_dump(BASE))
     settings = cloud().CloudSettings.from_yaml(path)
     assert settings.region is None
-    assert settings.harness_model is None
-    assert settings.embedding.provider == 'keyword_only'
-    assert settings.database.name == 'daeri'
+    assert settings.project_parameter_prefix == '/daeri/projects/'
+    assert settings.storage.bucket == 'daeri-workspace'
+    assert settings.storage.prefix == 'daeri/'
 
 
 @pytest.mark.parametrize('addition', [
-    '\nharness_arn: duplicate\n', '\nunknown: true\n', '\napi_key: do-not-print-this\n',
-    '\nembedding: {provider: api, endpoint: https://company.test/v1/embeddings, model: chosen, api_key: do-not-print-this}\n',
-    '\nharness_model: {openAiModelConfig: {modelId: chosen, apiKey: do-not-print-this}}\n',
-    '\nharness_model: {openAiModelConfig: {modelId: chosen, apiKeyArn: do-not-print-this}}\n',
-    '\nembedding: {provider: keyword_only, dimensions: 2}\n',
-    '\nembedding: {provider: bedrock, dimensions: 384}\n',
-    '\nembedding: {provider: bedrock, dimensions: true}\n',
-    '\nembedding: {provider: bedrock, model: unsupported}\n',
-    '\nembedding: {provider: local}\n',
-    '\nembedding: &embedding {provider: keyword_only}\n',
-    '\nembedding: !!python/object:object {}\n',
+    '\nproject_parameter_prefix: /duplicate/\nproject_parameter_prefix: /another/\n',
+    '\nunknown: true\n', '\napi_key: do-not-print-this\n',
+    '\ndatabase: {name: do-not-print-this}\n',
+    '\nknowledge_model: {provider: bedrock, model: legacy}\n',
+    '\nembedding: {provider: keyword_only}\n',
+    '\nharness_model: {openAiModelConfig: {apiKey: do-not-print-this}}\n',
+    '\nstorage: &storage {bucket: daeri-workspace}\n',
+    '\nstorage: !!python/object:object {}\n',
 ])
-def test_yaml_rejects_unknown_duplicate_unsafe_or_secret_values(tmp_path, addition):
+def test_yaml_rejects_legacy_unknown_duplicate_unsafe_or_secret_values(tmp_path, addition):
     path = tmp_path / 'cloud.yaml'
     path.write_text(safe_dump(BASE) + addition)
     with pytest.raises(StoreError) as error:
@@ -75,24 +54,38 @@ def test_yaml_rejects_unknown_duplicate_unsafe_or_secret_values(tmp_path, additi
     assert 'do-not-print-this' not in str(error.value)
 
 
-@pytest.mark.parametrize('endpoint', ['http://company.test/v1/chat/completions',
-                                      'https://user:password@company.test/v1/chat/completions',
-                                      'https://company.test/',
-                                      'https://company.test/v1/chat/completions?api_key=secret'])
-def test_cloud_api_endpoints_require_explicit_nonsecret_https_request_url(tmp_path, endpoint):
-    settings = {**BASE, 'knowledge_model': api(endpoint)}
+def test_previously_valid_database_and_model_configuration_requires_migration(tmp_path):
     path = tmp_path / 'cloud.yaml'
-    path.write_text(safe_dump(settings))
+    path.write_text(safe_dump({
+        'database': {
+            'resource_arn': 'arn:aws:rds:us-east-1:123456789012:cluster:shared',
+            'secret_arn': 'arn:aws:secretsmanager:us-east-1:123456789012:secret:company-key',
+            'name': 'daeri'},
+        'knowledge_model': {'provider': 'bedrock', 'model': 'summary-model'},
+    }))
     with pytest.raises(StoreError, match='INVALID_INPUT'):
         cloud().CloudSettings.from_yaml(path)
 
 
-@pytest.mark.parametrize('model', ['', ' summary', 'summary ', '\x00summary', '\x7f', 'summary\n'])
-def test_model_identifiers_reject_empty_whitespace_or_control_characters(tmp_path, model):
-    path = tmp_path / 'cloud.yaml'
-    path.write_text(safe_dump({**BASE, 'knowledge_model': {'provider': 'bedrock', 'model': model}}))
-    with pytest.raises(StoreError, match='INVALID_INPUT'):
-        cloud().CloudSettings.from_yaml(path)
+@pytest.mark.parametrize('storage', [
+    {}, {'bucket': ''}, {'bucket': 'ab'}, {'bucket': 'Uppercase'},
+    {'bucket': '192.168.1.1'}, {'bucket': 'bad..name'}, {'bucket': 'bad_bucket'},
+    {'bucket': '-bad-name'}, {'bucket': 'bad-name-'}, {'bucket': 'bad\x00name'},
+    {'bucket': 'daeri-workspace', 'prefix': ''},
+    {'bucket': 'daeri-workspace', 'prefix': '/absolute/'},
+    {'bucket': 'daeri-workspace', 'prefix': 'a//b'},
+    {'bucket': 'daeri-workspace', 'prefix': 'a/../b'},
+    {'bucket': 'daeri-workspace', 'prefix': 'a/./b'},
+    {'bucket': 'daeri-workspace', 'prefix': 'bad\x00prefix'},
+    {'bucket': 'daeri-workspace', 'prefix': 'bad\ud800prefix'},
+    {'bucket': 'daeri-workspace', 'unknown': True},
+])
+def test_storage_settings_reject_invalid_locations_before_creating_clients(storage):
+    session = Session()
+    with pytest.raises(ValidationError):
+        settings = cloud().CloudSettings.model_validate({'storage': storage})
+        cloud().build_cloud(settings, session=session)
+    assert session.clients == {}
 
 
 class Client:
@@ -101,20 +94,6 @@ class Client:
 
     def close(self):
         self.closed = True
-
-    def get_secret_value(self, **request):
-        self.requests.append(request)
-        return {'SecretString': 'resolved-company-token'}
-
-    def invoke_model(self, **request):
-        self.requests.append(request)
-        dimensions = json.loads(request['body'])['dimensions']
-        return {'body': io.BytesIO(json.dumps({'embedding': [1.] * dimensions}).encode())}
-
-    def converse(self, **request):
-        self.requests.append(request)
-        return {'stopReason': 'end_turn', 'output': {'message': {'role': 'assistant',
-                'content': [{'text': 'Observed experience.'}]}}}
 
 
 class Session:
@@ -129,141 +108,55 @@ class Session:
         return self.clients[service]
 
 
-def test_composition_disables_aws_retries_and_leaves_initialization_explicit():
+def test_composition_creates_only_required_clients_without_storage_operations():
     session = Session()
     settings = cloud().CloudSettings.model_validate({**BASE, 'region': 'us-east-1'})
     with cloud().build_cloud(settings, session=session) as services:
-        assert services.workflow.store is services.knowledge.store is services.store
-        assert services.workflow.embedder is services.knowledge.embedder is None
-        assert services.workflow.harness.harness_arn == HARNESS
-        assert services.workflow.harness.model is None
-        assert services.store.connection == {
-            'resourceArn': BASE['database']['resource_arn'], 'secretArn': SECRET, 'database': 'daeri'}
-        assert services.knowledge.extractor.extract('request', 'result') == 'Observed experience.'
-        for options in session.options.values():
+        assert services.workflow.store is services.store
+        assert services.store.client is session.clients['s3']
+        assert services.store.bucket == 'daeri-workspace'
+        assert services.store.prefix == 'daeri/'
+        assert services.workflow.catalog.client is session.clients['ssm']
+        assert services.workflow.catalog.prefix == '/daeri/projects/'
+        assert services.workflow.harness.client is session.clients['bedrock-agentcore']
+        assert set(session.clients) == {'s3', 'ssm', 'bedrock-agentcore'}
+        for service, options in session.options.items():
             assert options['region_name'] == 'us-east-1'
             assert options['config'].retries['total_max_attempts'] == 1
             assert options['config'].connect_timeout == 10
-            assert options['config'].read_timeout > 0
-        assert session.clients['rds-data'].requests == []
-        assert session.clients['bedrock-agentcore'].requests == []
+            assert options['config'].read_timeout == (300 if service == 'bedrock-agentcore' else 60)
+        assert all(client.requests == [] for client in session.clients.values())
     assert all(client.closed for client in session.clients.values())
     services.close()
 
 
-@pytest.mark.parametrize('knowledge_api', [True, False])
-def test_knowledge_and_embedding_providers_are_independent_and_secrets_resolve_on_request(knowledge_api):
-    session, requests = Session(), []
-
-    def respond(request):
-        requests.append(request)
-        assert request.headers['authorization'] == 'Bearer resolved-company-token'
-        if request.url.path.endswith('/embeddings'):
-            return httpx.Response(200, json={'data': [{'index': 0, 'embedding': [1., 0.]}]})
-        return httpx.Response(200, json={'choices': [{'finish_reason': 'stop',
-                              'message': {'content': 'Company experience.'}}]})
-
-    config = deepcopy(BASE)
-    config['knowledge_model'] = (api('https://company.test/exact/chat/completions')
-                                 if knowledge_api else BASE['knowledge_model'])
-    config['embedding'] = ({'provider': 'bedrock', 'dimensions': 256} if knowledge_api
-                           else {**api('https://company.test/exact/embeddings'), 'dimensions': 2})
-    with httpx.Client(transport=httpx.MockTransport(respond)) as http:
-        with cloud().build_cloud(cloud().CloudSettings.model_validate(config),
-                                 session=session, http_client=http) as services:
-            secrets = session.clients['secretsmanager']
-            assert secrets.requests == [] and requests == []
-            assert session.options['rds-data']['region_name'] is None
-            summary = services.knowledge.extractor.extract('request', 'result')
-            assert summary == ('Company experience.' if knowledge_api else 'Observed experience.')
-            vector = services.workflow.embedder.embed_query('query')
-            assert vector == ([1.] * 256 if knowledge_api else [1., 0.])
-            assert secrets.requests == [{'SecretId': SECRET}]
-            assert str(requests[0].url) == ('https://company.test/exact/chat/completions'
-                    if knowledge_api else 'https://company.test/exact/embeddings')
-        assert not http.is_closed
-    assert all(client.closed for client in session.clients.values())
-
-
-def test_factory_closes_owned_http_and_clients_after_use():
-    session = Session()
-    config = {**BASE, 'knowledge_model': api('https://company.test/v1/chat/completions')}
-    with cloud().build_cloud(cloud().CloudSettings.model_validate(config), session=session) as services:
-        http = services.knowledge.extractor.client
-        assert not http.is_closed
-    assert http.is_closed
-    assert all(client.closed for client in session.clients.values())
-
-
 def test_partial_factory_failure_closes_previously_created_clients():
-    session = Session(fail_service='bedrock-runtime')
+    session = Session(fail_service='bedrock-agentcore')
     with pytest.raises(RuntimeError, match='Client creation failed'):
         cloud().build_cloud(cloud().CloudSettings.model_validate(BASE), session=session)
-    assert session.clients
+    assert set(session.clients) == {'s3', 'ssm'}
     assert all(client.closed for client in session.clients.values())
 
 
-@pytest.mark.parametrize('model', [{}, {'bedrockModelConfig': {'modelId': 'chosen', 'unknown': 1}},
-                                  {'openAiModelConfig': {'modelId': 'chosen'}},
-                                  {'bedrockModelConfig': {'modelId': 'chosen'},
-                                   'openAiModelConfig': {'modelId': 'chosen', 'apiKeyArn': IDENTITY_KEY}},
-                                  {'openAiModelConfig': {'modelId': 'chosen', 'apiKeyArn': IDENTITY_KEY,
-                                   'endpoint': {'bedrockMantle': {}}}}])
-def test_harness_override_is_validated_against_sdk_shape_before_creating_clients(model):
+@pytest.mark.parametrize('prefix', ['relative', '/', '/daeri/../projects', '/daeri/./projects', '/daeri//projects'])
+def test_project_prefix_is_validated_before_creating_clients(prefix):
     session = Session()
-    settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': model})
-    with pytest.raises(StoreError, match='INVALID_INPUT'):
+    with pytest.raises(ValidationError):
+        settings = cloud().CloudSettings.model_validate({**BASE, 'project_parameter_prefix': prefix})
         cloud().build_cloud(settings, session=session)
     assert session.clients == {}
 
 
-@pytest.mark.parametrize('provider,fields', [
-    ('bedrockModelConfig', {'apiFormat': 'unsupported'}),
-    ('bedrockModelConfig', {'temperature': 3.0}),
-    ('bedrockModelConfig', {'temperature': float('nan')}),
-    ('bedrockModelConfig', {'topP': 2.0}),
-    ('bedrockModelConfig', {'maxTokens': True}),
-    ('bedrockModelConfig', {'additionalParams': {'value': float('inf')}}),
-    ('openAiModelConfig', {'apiFormat': 'converse_stream'}),
-    ('geminiModelConfig', {'topK': 501}),
-])
-def test_harness_model_rejects_invalid_protocol_values_not_checked_by_sdk(provider, fields):
+def test_custom_storage_and_project_prefixes_are_normalized_without_resolving_them():
     session = Session()
-    settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': {
-        provider: {'modelId': 'model', **fields,
-                   **({'apiKeyArn': IDENTITY_KEY} if provider != 'bedrockModelConfig' else {})}}})
-    with pytest.raises(StoreError, match='INVALID_INPUT'):
-        cloud().build_cloud(settings, session=session)
-    assert session.clients == {}
-
-
-def test_native_harness_model_uses_identity_key_without_resolving_it_in_daeri():
-    session = Session()
-    model = {'openAiModelConfig': {'modelId': 'company-chat', 'apiKeyArn': IDENTITY_KEY,
-                                 'apiBase': 'https://company.test/v1', 'apiFormat': 'chat_completions'}}
-    settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': model})
+    settings = cloud().CloudSettings.model_validate({
+        'storage': {'bucket': 'daeri-workspace', 'prefix': 'company/daeri'},
+        'project_parameter_prefix': '/company/projects'})
     with cloud().build_cloud(settings, session=session) as services:
-        assert services.workflow.harness.model == model
-        assert services.workflow.embedder is None
-        assert services.knowledge.extractor.model_id == 'summary-model'
-        assert 'secretsmanager' not in session.clients
-
-
-def test_native_harness_model_accepts_sdk_supported_decimal_parameters():
-    model = {'bedrockModelConfig': {'modelId': 'model', 'temperature': Decimal('0.5')}}
-    settings = cloud().CloudSettings.model_validate({**BASE, 'harness_model': model})
-    with cloud().build_cloud(settings, session=Session()) as services:
-        assert services.workflow.harness.model == model
-
-
-@pytest.mark.parametrize('provider', ['openAiModelConfig', 'geminiModelConfig', 'liteLlmModelConfig'])
-@pytest.mark.parametrize('reference', [SECRET,
-    'arn:aws:bedrock-agentcore:us-east-1:123456789012:token-vault/default',
-    'arn:aws:bedrock-agentcore:us-east-1:123456789012:token-vault/default/oauth2credentialprovider/company-key'])
-def test_harness_api_key_requires_identity_api_key_provider_reference(provider, reference):
-    with pytest.raises(ValidationError, match='AgentCore Identity'):
-        cloud().CloudSettings.model_validate({**BASE, 'harness_model': {
-            provider: {'modelId': 'company-chat', 'apiKeyArn': reference}}})
+        assert services.store.prefix == 'company/daeri/'
+        assert services.workflow.catalog.prefix == '/company/projects/'
+        assert all(options['region_name'] is None for options in session.options.values())
+        assert all(client.requests == [] for client in session.clients.values())
 
 
 def test_missing_sdk_has_actionable_setup_error(monkeypatch):

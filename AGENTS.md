@@ -23,7 +23,7 @@ AWS 공용 서비스의 구현과 사양 문서화를 함께 진행한다.
 | 문서 작성·수정·이동·삭제 | [문서 작성·변경](docs/rules/documentation.md) |
 | 요구사항 해석·대안 비교·설계안 구성 | [기획 원칙](docs/rules/planning.md) |
 | 구조 설계·코드·설정·의존성 변경 | [개발 원칙](docs/rules/development.md) |
-| 문서·설계 검토와 확인 | [검토 원칙](docs/rules/review.md) |
+| 프로젝트·문서·코드 검토와 간소화 | [검토 원칙](docs/rules/review.md) |
 | Git 기록·작업 인계 | [Git·인계](docs/rules/documentation.md#git-기록과-인계) |
 
 여러 작업이 함께 있으면 해당 규칙을 모두 적용한다.

@@ -8,13 +8,13 @@
 | 정본 | 소유하는 내용 |
 |---|---|
 | [README](../../README.md) | 제품 소개·활용 예시·구성도·시작 경로 |
-| [제품 명세](../spec/product.md) | 확정 요구·업무·승인·접근·공유 기억·설정 입력·실패 동작 |
-| [아키텍처](../architecture/overview.md) | AWS·DAERI 책임·구성도·요청 연결·설계 근거 |
+| [제품 명세](../spec/product.md) | 확정 요구·업무·승인·프로젝트 공유·기억·설정 입력·실패·복구 동작 |
+| [아키텍처](../architecture/overview.md) | AWS·DAERI 책임·구성도·Memory·S3 수명·요청 연결·설계 근거 |
 | [개발 안내](dependencies.md) | 환경·의존성·패키지·구현 단계·대표 검증·배포 조건 |
 | [문서 규칙](../rules/documentation.md) | 문서 작성·변경·통합·Git 기록 |
 | [기획 규칙](../rules/planning.md) | 요구 해석·선택·확정·미결 |
 | [개발 규칙](../rules/development.md) | 클린 아키텍처·최소 코드·의존 방향·입력 경계 |
-| [검토 규칙](../rules/review.md) | 정합성·중복·근거·실제 검증 |
+| [검토 규칙](../rules/review.md) | 프로젝트 전체의 문서·코드 정합성·간소화·검증 |
 | [AGENTS](../../AGENTS.md)·[CLAUDE](../../CLAUDE.md) | Codex·Claude Code의 공유 개발 진입점 |
 | `docs/assets/` | README의 동작 구성도와 상세 AWS 구성도 |
 
