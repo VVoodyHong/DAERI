@@ -346,3 +346,17 @@ def test_memory_override_is_validated_before_aws_initialization(tmp_path, monkey
                       f'approval_hook_arn: {HOOK}\nmemory_id: invalid/private-value\n')
     assert main(['--config', str(config), '--apply']) == 2
     assert json.loads(capsys.readouterr().out)['error']['code'] == 'INVALID_INPUT'
+
+
+@pytest.mark.parametrize('apply', [False, True])
+def test_project_command_rejects_non_lambda_approval_hook_before_aws(tmp_path, monkeypatch, capsys, apply):
+    from scripts.configure_project import main
+
+    monkeypatch.setattr('scripts.configure_project.boto3.Session', lambda: pytest.fail('Invalid input created AWS clients'))
+    config = tmp_path / 'project.yaml'
+    config.write_text(f'project_id: payments\nname: Payments\nharness_arn: {ARN}\n'
+                      'approval_hook_arn: arn:aws:sns:us-east-1:123456789012:private-topic\n')
+    assert main(['--config', str(config)] + (['--apply'] if apply else [])) == 2
+    output = capsys.readouterr().out
+    assert json.loads(output)['error']['code'] == 'INVALID_INPUT'
+    assert 'private-topic' not in output

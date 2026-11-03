@@ -8,7 +8,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 from daeri.core.errors import StoreError
-from daeri.infrastructure.cloud_s3 import normalize_storage_prefix, validate_storage_bucket
+from daeri.infrastructure.cloud_s3 import S3CloudStore
 
 
 def _encode(value):
@@ -32,7 +32,8 @@ def _relative(value):
 class ArtifactService:
     def __init__(self, client, bucket, prefix='daeri/'):
         self.client = client
-        self.bucket, self.prefix = validate_storage_bucket(bucket), normalize_storage_prefix(prefix)
+        self.objects = S3CloudStore(client, bucket, prefix)
+        self.bucket, self.prefix = self.objects.bucket, self.objects.prefix
 
     def location(self, task):
         project, actor = (sha256(value.encode('utf-8')).hexdigest()
@@ -73,7 +74,9 @@ class ArtifactService:
                 relative = _relative(key[len(location['prefix']):])
                 if type(item['Size']) is not int or item['Size'] < 0:
                     raise ValueError('Invalid artifact size')
-                items.append({'id': _encode(relative), 'name': relative.rsplit('/', 1)[-1], 'size': item['Size']})
+                original = self.objects.original_artifact(task, relative)
+                items.append({'id': _encode(relative), 'name': relative.rsplit('/', 1)[-1],
+                              'size': original['bytes'] if original else item['Size']})
             cursor = None
             if response.get('IsTruncated'):
                 token = response['NextContinuationToken']
@@ -93,10 +96,14 @@ class ArtifactService:
         name = relative.rsplit('/', 1)[-1]
         try:
             key = location['prefix'] + relative
-            head = self.client.head_object(Bucket=self.bucket, Key=key)
+            original = self.objects.original_artifact(task, relative)
+            head = self.client.head_object(Bucket=self.bucket, Key=key,
+                **({'VersionId': original['version_id']} if original else {}))
             version = head.get('VersionId')
             if not isinstance(version, str) or not version or version == 'null':
                 raise ValueError('Artifacts require S3 versioning')
+            if original and (version != original['version_id'] or head['ContentLength'] != original['bytes']):
+                raise ValueError('The original artifact version changed')
             user.context(task.context.project_id)
             now = int(time.time())
             ttl = min(300, user.expires_at - now)

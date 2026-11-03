@@ -181,6 +181,25 @@ def test_receipt_fallback_rebuilds_original_requests_tool_evidence_and_result_af
     assert '42' in memory.created[1]['payload'][0]['conversational']['content']['text']
 
 
+def test_receipt_fallback_rebuilds_the_full_offloaded_response_and_tool_evidence():
+    archive, memory, _, _ = setup()
+    task = archive.objects.create_task(AccessContext('alice', 'project'), 'saved-harness', 'Compare')
+    turn = archive.objects.begin_turn(task, 'Compare the counts', ())
+    text = 'Verified total: ' + 'x' * (8 * 1024 * 1024) + ' complete.'
+    evidence = {'toolUseId': 'query', 'status': 'success', 'content': [{'json': {'count': 42}}]}
+    archive.objects.finish_turn(task, turn, 'Compare the counts',
+        HarnessReply(text, 'end_turn', observations=(evidence,)), ())
+
+    archive.capture_receipts('project', apply=True)
+    archive.replay('project', 'receipts', TARGET, apply=True)
+
+    messages = [item['payload'][0]['conversational'] for item in memory.created]
+    assert messages[0] == {'role': 'USER', 'content': {'text': 'Compare the counts'}}
+    assert json.loads(messages[1]['content']['text']) == evidence
+    assert ''.join(message['content']['text'] for message in messages if message['role'] == 'ASSISTANT') == text
+    assert all(item['actorId'] == 'alice' and item['sessionId'] == task.session_id for item in memory.created)
+
+
 def test_replay_reuses_client_token_when_checkpoint_write_failed_after_event_creation(monkeypatch):
     archive, memory, _, _ = setup()
     archive.capture('project', SOURCE, apply=True)

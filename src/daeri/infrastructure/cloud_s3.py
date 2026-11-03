@@ -51,9 +51,9 @@ def _uuid(value):
         raise StoreError('INVALID_INPUT', 'Supply a valid task or turn UUID.') from None
 
 
-def _encode(value):
+def _encode(value, max_bytes=_MAX_BYTES):
     data = validate_storable_json(value)
-    if len(data) > _MAX_BYTES:
+    if max_bytes is not None and len(data) > max_bytes:
         raise ValueError('Oversized document')
     return data
 
@@ -140,25 +140,42 @@ class S3CloudStore:
             raise StoreError('INVALID_INPUT', 'The configured storage prefix is too long.')
         return root
 
-    def _get(self, key, missing='STORAGE_UNAVAILABLE'):
+    def _get(self, key, missing='STORAGE_UNAVAILABLE', *, max_bytes=_MAX_BYTES, expected_sha256=None,
+             version_id=None, return_version=False):
         try:
-            response = self.client.get_object(Bucket=self.bucket, Key=key)
+            request = {'Bucket': self.bucket, 'Key': key}
+            if version_id is not None:
+                request['VersionId'] = version_id
+            response = self.client.get_object(**request)
         except Exception as error:
             code = missing if _error_code(error) in {'NoSuchKey', 'NotFound', '404'} else 'STORAGE_UNAVAILABLE'
             raise StoreError(code, 'The saved task or turn could not be read.') from None
         body = response.get('Body')
         try:
-            if response.get('ContentLength', 0) > _MAX_BYTES:
+            length = response.get('ContentLength', 0)
+            if expected_sha256 is not None and length != max_bytes:
+                raise StoreError('STORAGE_CONFLICT', 'The immutable original receipt changed size.')
+            if length > max_bytes:
                 raise ValueError('Oversized document')
-            data = body.read(_MAX_BYTES + 1)
-            if not isinstance(data, bytes) or len(data) > _MAX_BYTES:
+            data = body.read(max_bytes + 1)
+            if not isinstance(data, bytes) or len(data) > max_bytes:
                 raise ValueError('Invalid document body')
+            if expected_sha256 is not None and (len(data) != max_bytes or sha256(data).hexdigest() != expected_sha256):
+                raise StoreError('STORAGE_CONFLICT', 'The immutable original receipt changed content.')
             document = json.loads(data.decode('utf-8'), object_pairs_hook=_unique)
-            _encode(document)
+            _encode(document, max_bytes)
             etag = response['ETag']
             if not isinstance(etag, str) or not etag:
                 raise ValueError('Missing ETag')
-            return document, etag
+            version = response.get('VersionId')
+            if return_version or version_id is not None:
+                if not isinstance(version, str) or not version or version == 'null':
+                    raise StoreError('ARTIFACT_UNAVAILABLE', 'Original receipts require S3 versioning.')
+                if version_id is not None and version != version_id:
+                    raise StoreError('STORAGE_CONFLICT', 'The original receipt version changed.')
+            return document, version if return_version else etag
+        except StoreError:
+            raise
         except Exception:
             raise StoreError('STORAGE_UNAVAILABLE', 'The saved JSON document is invalid or unavailable.') from None
         finally:
@@ -173,16 +190,35 @@ class S3CloudStore:
             data = _encode(document)
         except (TypeError, ValueError, RecursionError):
             raise StoreError('INVALID_INPUT', 'The JSON document must be finite UTF-8 data within 8 MiB.') from None
+        return self._put_encoded(key, data, **condition)
+
+    def _put_encoded(self, key, data, *, return_version=False, **condition):
         try:
             response = self.client.put_object(Bucket=self.bucket, Key=key, Body=data,
                 ContentType='application/json', **condition)
             etag = response['ETag']
             if not isinstance(etag, str) or not etag:
                 raise ValueError('Missing ETag')
+            if return_version:
+                version = response.get('VersionId')
+                if not isinstance(version, str) or not version or version == 'null':
+                    raise StoreError('ARTIFACT_UNAVAILABLE', 'Original receipts require S3 versioning.')
+                return version
             return etag
+        except StoreError:
+            raise
         except Exception as error:
             code = 'STORAGE_CONFLICT' if _error_code(error) in {'PreconditionFailed', 'ConditionalRequestConflict'} else 'STORAGE_UNAVAILABLE'
             raise StoreError(code, 'The saved task changed or the storage write could not be confirmed.') from None
+
+    def _immutable(self, key, data, *, versioned=False):
+        try:
+            return self._put_encoded(key, data, IfNoneMatch='*', return_version=versioned)
+        except StoreError as error:
+            if error.code != 'STORAGE_CONFLICT':
+                raise
+            return self._get(key, max_bytes=len(data), expected_sha256=sha256(data).hexdigest(),
+                             return_version=versioned)[1]
 
     def _manifest(self, context, task_id):
         task_id = _uuid(task_id)
@@ -405,6 +441,128 @@ class S3CloudStore:
             raise
         return turn_id
 
+    def _original_key(self, receipt):
+        context = AccessContext(receipt['actor_id'], receipt['project_id'])
+        return self._root(context, receipt['task_id']) + 'artifacts/' + UUID(receipt['turn_id']).hex + '.json'
+
+    @staticmethod
+    def _input_hash(prompt, tool_results):
+        return sha256(validate_storable_json({'prompt': prompt, 'tool_results': tool_results})).hexdigest()
+
+    @staticmethod
+    def _offloaded_reply(reference):
+        filename = reference['key'].rsplit('/', 1)[-1]
+        return HarnessReply(
+            f'응답 원본이 저장 한도를 초과해 업무 파일 {filename}에 보관했습니다. '
+            '원본에서 실제 결과와 기존 실행의 종료를 확인한 뒤 새 세션으로 복구해 계획을 다시 확인하세요.',
+            'invalid_output', error='HARNESS_INVALID_OUTPUT')
+
+    def _compact_receipt(self, receipt, data, version_id):
+        reference = {'key': self._original_key(receipt), 'bytes': len(data), 'sha256': sha256(data).hexdigest(),
+                     'version_id': version_id,
+                     'input_sha256': self._input_hash(receipt['prompt'], receipt['tool_results']),
+                     'stop_reason': receipt['reply']['stop_reason'], 'error': receipt['reply']['error']}
+        return {**{key: value for key, value in receipt.items() if key not in {'prompt', 'tool_results', 'reply'}},
+                'reply': asdict(self._offloaded_reply(reference)), 'original_receipt': reference}
+
+    def _checked_receipt(self, receipt):
+        binding = {'task_id', 'turn_id', 'session_id', 'actor_id', 'project_id', 'harness_arn'}
+        offloaded = isinstance(receipt, dict) and 'original_receipt' in receipt
+        required = binding | {'reply'} | ({'original_receipt'} if offloaded else {'prompt', 'tool_results'})
+        if (not isinstance(receipt, dict) or not required <= set(receipt)
+                or set(receipt) - required - {'harness_endpoint', 'harness_version'}
+                or any(not isinstance(receipt[name], str) or not receipt[name] for name in binding)):
+            raise ValueError('Invalid saved receipt')
+        for name in ('task_id', 'turn_id', 'session_id'):
+            if _uuid(receipt[name]) != receipt[name]:
+                raise ValueError('Invalid receipt identifier')
+        _release_route(receipt.get('harness_endpoint', ''), receipt.get('harness_version', ''))
+        reply = _reply(receipt['reply'])
+        if offloaded:
+            reference = receipt['original_receipt']
+            if (not isinstance(reference, dict)
+                    or set(reference) != {'key', 'bytes', 'sha256', 'version_id', 'input_sha256', 'stop_reason', 'error'}
+                    or type(reference['bytes']) is not int or reference['bytes'] <= _MAX_BYTES
+                    or not isinstance(reference['version_id'], str) or not reference['version_id']
+                    or reference['version_id'] == 'null'
+                    or any(not isinstance(reference[name], str) or not re.fullmatch(r'[a-f0-9]{64}', reference[name])
+                           for name in ('sha256', 'input_sha256'))
+                    or not isinstance(reference['stop_reason'], str) or not reference['stop_reason']
+                    or (reference['error'] is not None
+                        and (not isinstance(reference['error'], str) or not reference['error']))
+                    or reference['key'] != self._original_key(receipt)
+                    or reply.stop_reason != 'invalid_output' or reply.error != 'HARNESS_INVALID_OUTPUT'
+                    or reply.pending_tools or reply.observations):
+                raise ValueError('Invalid original receipt reference')
+        elif (not isinstance(receipt['prompt'], str) or not isinstance(receipt['tool_results'], list)
+                or any(not isinstance(item, dict) for item in receipt['tool_results'])):
+            raise ValueError('Invalid saved receipt inputs')
+        return reply
+
+    def read_original_receipt(self, receipt):
+        """Expand only a same-task original whose exact bytes and invocation inputs still match."""
+        try:
+            self._checked_receipt(receipt)
+            if 'original_receipt' not in receipt:
+                return receipt
+            reference = receipt['original_receipt']
+            original, _ = self._get(reference['key'], max_bytes=reference['bytes'],
+                                    expected_sha256=reference['sha256'], version_id=reference['version_id'])
+            reply = self._checked_receipt(original)
+            expected = {key: value for key, value in receipt.items() if key not in {'reply', 'original_receipt'}}
+            actual = {key: value for key, value in original.items() if key not in {'prompt', 'tool_results', 'reply'}}
+            if ('original_receipt' in original or actual != expected
+                    or self._input_hash(original['prompt'], original['tool_results']) != reference['input_sha256']
+                    or (reply.stop_reason, reply.error) != (reference['stop_reason'], reference['error'])):
+                raise StoreError('STORAGE_CONFLICT', 'The original receipt no longer matches its saved invocation.')
+            return original
+        except StoreError:
+            raise
+        except (KeyError, TypeError, ValueError):
+            raise StoreError('STORAGE_UNAVAILABLE', 'The original receipt reference is invalid.') from None
+
+    def original_artifact(self, task, relative):
+        """Resolve service-generated task files through their protected receipt version."""
+        if not re.fullmatch(r'[a-f0-9]{32}\.json', relative):
+            return None
+        key = self._root(task.context, task.id) + 'turns/' + str(UUID(relative[:-5])) + '.json'
+        try:
+            receipt, _ = self._get(key, 'RECEIPT_NOT_FOUND')
+        except StoreError as error:
+            if error.code == 'RECEIPT_NOT_FOUND':
+                return None
+            raise
+        try:
+            self._checked_receipt(receipt)
+            if (receipt['task_id'], receipt['actor_id'], receipt['project_id'], receipt['turn_id']) != (
+                    task.id, task.context.actor_id, task.context.project_id, str(UUID(relative[:-5]))):
+                raise ValueError('Foreign task receipt')
+            return receipt.get('original_receipt')
+        except (KeyError, TypeError, ValueError):
+            raise StoreError('STORAGE_UNAVAILABLE', 'The original artifact receipt is invalid.') from None
+
+    def _write_receipt(self, key, receipt):
+        try:
+            data = _encode(receipt, max_bytes=None)
+            self._checked_receipt(json.loads(data))
+            try:
+                existing, _ = self._get(key, 'RECEIPT_NOT_FOUND')
+            except StoreError as error:
+                if error.code != 'RECEIPT_NOT_FOUND':
+                    raise
+            else:
+                original = self.read_original_receipt(existing)
+                if _encode(original, max_bytes=None) != data:
+                    raise StoreError('STORAGE_CONFLICT', 'The immutable turn receipt already has different content.')
+                return
+            if len(data) > _MAX_BYTES:
+                version = self._immutable(self._original_key(receipt), data, versioned=True)
+                receipt = self._compact_receipt(receipt, data, version)
+                data = _encode(receipt)
+            self._immutable(key, data)
+        except (TypeError, ValueError, RecursionError):
+            raise StoreError('INVALID_INPUT', 'The receipt must contain finite UTF-8 JSON.') from None
+
     def _receipt(self, value, turn_id, *, current_execution=True):
         key = self._root(AccessContext(value['actor_id'], value['project_id']), value['id']) + 'turns/' + _uuid(turn_id) + '.json'
         receipt, _ = self._get(key, 'EXECUTION_UNCERTAIN')
@@ -417,20 +575,16 @@ class S3CloudStore:
                 or receipt.get('harness_version', '') != value['harness_version']):
             raise StoreError('STORAGE_CONFLICT', 'The saved receipt does not belong to this task execution.')
         try:
-            allowed = {*expected, 'prompt', 'tool_results', 'reply'}
-            if not value['harness_endpoint'] and not value['harness_version']:
-                allowed.update({'harness_endpoint', 'harness_version'} & set(receipt))
-            if (set(receipt) != allowed
-                    or not isinstance(receipt['prompt'], str) or not isinstance(receipt['tool_results'], list)
-                    or any(not isinstance(item, dict) for item in receipt['tool_results'])):
-                raise ValueError
-            reply = _reply(receipt['reply'])
+            reply = self._checked_receipt(receipt)
         except (KeyError, TypeError, ValueError):
             raise StoreError('STORAGE_UNAVAILABLE', 'The saved receipt is invalid.') from None
         flight = value['in_flight'] if current_execution else None
-        if flight is not None and (flight['turn_id'] != turn_id or receipt['prompt'] != flight['prompt']
-                or _encode(receipt['tool_results']) != _encode(flight['tool_results'])):
-            raise StoreError('STORAGE_CONFLICT', 'The saved receipt does not match the pending execution.')
+        if flight is not None:
+            saved_input = (receipt['original_receipt']['input_sha256'] if 'original_receipt' in receipt
+                           else self._input_hash(receipt['prompt'], receipt['tool_results']))
+            if (flight['turn_id'] != turn_id
+                    or saved_input != self._input_hash(flight['prompt'], flight['tool_results'])):
+                raise StoreError('STORAGE_CONFLICT', 'The saved receipt does not match the pending execution.')
         return key, reply
 
     def _finalize(self, context, value, etag, key, reply):
@@ -467,16 +621,10 @@ class S3CloudStore:
                    'harness_arn': task.harness_arn, 'harness_endpoint': task.harness_endpoint,
                    'harness_version': task.harness_version, 'prompt': prompt,
                    'tool_results': tool_results, 'reply': asdict(reply)}
-        try:
-            self._put(key, receipt, IfNoneMatch='*')
-        except StoreError as error:
-            if error.code != 'STORAGE_CONFLICT':
-                raise
-            stored, _ = self._get(key)
-            if _encode(stored) != _encode(receipt):
-                raise StoreError('STORAGE_CONFLICT', 'The immutable turn receipt already has different content.') from None
+        self._write_receipt(key, receipt)
         _, saved_reply = self._receipt(value, turn_id)
         self._finalize(task.context, value, etag, key, saved_reply)
+        return saved_reply
 
     def recover_turn(self, context, task_id):
         value, etag = self._manifest(context, task_id)

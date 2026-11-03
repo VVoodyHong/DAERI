@@ -33,6 +33,7 @@ class S3:
 
     def __init__(self):
         self.objects, self.calls, self.streams = {}, [], []
+        self.versions, self.current_versions = {}, {}
         self.lock = Lock()
         self.fail_manifest = None
 
@@ -55,21 +56,26 @@ class S3:
             body = request['Body']
             etag = '"' + sha256(body).hexdigest() + '"'
             self.objects[key] = (body, etag)
+            version = str(len(self.versions) + 1)
+            self.versions[key, version] = (body, etag)
+            self.current_versions[key] = version
             if failure == 'after':
                 self.fail_manifest = None
                 raise TimeoutError('password=PRIVATE')
-            return {'ETag': etag}
+            return {'ETag': etag, 'VersionId': version}
 
     def get_object(self, **request):
         validate_parameters(request, MODEL.operation_model('GetObject').input_shape)
         with self.lock:
             self.calls.append(('get', request))
-            if request['Key'] not in self.objects:
+            key, version = request['Key'], request.get('VersionId')
+            if key not in self.objects or version is not None and (key, version) not in self.versions:
                 raise aws_error('NoSuchKey', 404)
-            body, etag = self.objects[request['Key']]
+            body, etag = self.versions[key, version] if version is not None else self.objects[key]
             stream = BytesIO(body)
             self.streams.append(stream)
-            return {'Body': stream, 'ETag': etag, 'ContentLength': len(body)}
+            return {'Body': stream, 'ETag': etag, 'ContentLength': len(body),
+                    'VersionId': version or self.current_versions.get(key)}
 
     def list_objects_v2(self, **request):
         validate_parameters(request, MODEL.operation_model('ListObjectsV2').input_shape)

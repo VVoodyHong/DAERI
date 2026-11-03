@@ -34,7 +34,9 @@ def main():
             failure['runtime_id'] = error.runtime_id
         parser.exit(2, json.dumps(failure, ensure_ascii=False) + '\n')
     except ValidationError:
-        parser.exit(2, 'Runtime configuration failed; check supported deployment inputs.\n')
+        failure = {'error': {'code': 'INVALID_INPUT',
+                            'message': 'Runtime configuration failed; check supported deployment inputs.'}}
+        parser.exit(2, json.dumps(failure) + '\n')
 
 
 if __name__ == '__main__':

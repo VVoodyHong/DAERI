@@ -19,7 +19,7 @@ def gateway_target(settings):
                   'request': {'type': 'string', 'description': 'Delegated goal, approved scope and required evidence.'}},
                   'required': ['request']}}
              for name, agent in settings.subagents.items()]
-    return {'gatewayIdentifier': settings.gateway_arn, 'name': settings.target_name,
+    return {'gatewayIdentifier': settings.gateway_arn.rsplit('/', 1)[1], 'name': settings.target_name,
             'targetConfiguration': {'mcp': {'lambda': {'lambdaArn': settings.lambda_arn,
                                                      'toolSchema': {'inlinePayload': tools}}}},
             'credentialProviderConfigurations': [{'credentialProviderType': 'GATEWAY_IAM_ROLE'}]}
@@ -95,7 +95,8 @@ def configure_subagents(control, lambdas, ssm, settings, project_settings, check
                        == project_settings.approval_hook_arn for hook in child.get('hooks', []))):
             raise StoreError('PROJECT_NOT_READY', 'Subagents need shared project Memory, bounded execution and server-side tools.')
     request, target_id = gateway_target(settings), None
-    query = {'gatewayIdentifier': settings.gateway_arn}
+    gateway_id = request['gatewayIdentifier']
+    query = {'gatewayIdentifier': gateway_id}
     while True:
         page = control.list_gateway_targets(**query)
         for target in page.get('items', []):
@@ -107,12 +108,12 @@ def configure_subagents(control, lambdas, ssm, settings, project_settings, check
     if target_id is None:
         target_id = control.create_gateway_target(**request)['targetId']
     else:
-        current = control.get_gateway_target(gatewayIdentifier=settings.gateway_arn, targetId=target_id)
+        current = control.get_gateway_target(gatewayIdentifier=gateway_id, targetId=target_id)
         if current.get('targetConfiguration', {}).get('mcp', {}).get('lambda', {}).get('lambdaArn') != settings.lambda_arn:
             raise StoreError('PROJECT_NOT_READY', 'The Gateway target name belongs to another configured function.')
         control.update_gateway_target(**request, targetId=target_id)
     for attempt in range(60):
-        target = control.get_gateway_target(gatewayIdentifier=settings.gateway_arn, targetId=target_id)
+        target = control.get_gateway_target(gatewayIdentifier=gateway_id, targetId=target_id)
         if target['status'] == 'READY':
             break
         if target['status'] not in {'CREATING', 'UPDATING'} or attempt == 59:

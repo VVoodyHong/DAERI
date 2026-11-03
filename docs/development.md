@@ -141,6 +141,8 @@ inline `confirm_plan`은 필수 문자열 `plan`을 받는 객체이며 system p
 | [Runtime](../src/daeri/config/runtime.py) | `name`·`image_uri`·`role_arn`·`client_ids`·`server` 매핑 | 갱신할 `runtime_id`·`endpoint=PROD`·`network_configuration`의 기본 PUBLIC 또는 native VPC 설정 |
 
 Runtime의 `server`는 자동 생성하는 `public_url`을 제외한 서버 필드다.
+`network_configuration`은 native 필드·타입·식별자 문법을 검사한다.
+`networkMode`가 `VPC`이면 `networkModeConfig`의 `subnets`·`securityGroups`가 필수이며 `PUBLIC`은 기본 네트워크 설정만 사용한다.
 기억 전략·보존 조건은 [공유 기억](service.md#공유-기억), 모델·도구·Gateway·Identity는 해당 AWS 리소스에서 설정한다.
 생성 모델·도구는 `CreateHarness`·`UpdateHarness`로 구성하고 프로젝트 배포는 이를 유지하며 Memory 연결·릴리스를 공개한다.
 외부 모델의 `apiKeyArn`은 AgentCore Identity API key credential provider ARN을 참조한다.
@@ -167,9 +169,9 @@ Runtime의 공개 주소를 서비스 설정에 연결하고 준비된 버전의
 ### 하위 에이전트와 개인 위임
 
 [하위 설정](../src/daeri/config/delegation.py)은 `project_id`·`gateway_arn`·`lambda_arn`과 역할별 `description`·`harness_arn`·`harness_endpoint`·`harness_version`을 받는다.
-`target_name`은 기본 `subagents`이며 handler는 `daeri.infrastructure.delegation.lambda_handler`다.
+`target_name`은 기본 `subagents`이고 AWS Gateway 대상 이름 문법을 사용하며 handler는 `daeri.infrastructure.delegation.lambda_handler`다.
 하위 harness는 공개한 프로젝트 Memory·서비스 자격·서버 실행 도구를 사용하며, timeout은 위임 Lambda 안에 끝나게 구성한다.
-등록은 고정된 대상 설정을 Lambda 환경에 연결하고 Gateway 도구·총괄 harness·프로젝트 릴리스를 갱신한다.
+등록은 Gateway ID로 대상을 생성·갱신하고 고정 설정을 Lambda 환경에 연결하며, 총괄 harness에는 Gateway ARN을 연결해 프로젝트 릴리스를 공개한다.
 
 ```sh
 uv run python scripts/configure_subagents.py --config subagents.yaml --project-config project.yaml --apply
@@ -269,8 +271,14 @@ OIDC discovery·JWKS는 토큰 검증 때 조회한다.
 
 `tool_results`는 저장한 `toolUseId`마다 한 번씩 정확히 대응하고 대기 순서로 전달한다.
 상태는 `success`·`error`, 본문은 text·JSON 블록이며 대기가 없으면 비어 있지 않은 후속 요청을 받는다.
-S3 업무 상태·호출 원본 JSON은 객체당 8MiB 이내로 받고 산출물 본문은 별도 파일로 보관한다.
-응답 원본을 먼저 보존한 뒤 manifest를 조건부 갱신하며 내부 `StoreError`는 확보한 `task_id`·`turn_id`로 복구 대상을 연결한다.
+S3 업무 상태·호출 요약 JSON은 객체당 8MiB 이내로 받고 산출물 본문은 별도 파일로 보관한다.
+전체 호출 기록이 8MiB를 초과하면 입력·응답 원본을 업무 파일로 보관하고 요약 기록에 S3 버전·경로·크기·SHA256·입력 해시·원래 종료 사유·오류를 연결한다.
+요약 응답은 `HARNESS_INVALID_OUTPUT`과 파일 확인·새 세션 복구 경로를 반환하며 기존 도구 대기를 해제한다.
+호출 원본의 다운로드는 고정한 S3 버전을 제공한다.
+기억 재구성은 같은 버전의 원본을 읽고 경로·크기·해시와 실행 문맥을 검증한다.
+요약 보관 전 장애로 원본 버전을 확정할 수 없으면 `EXECUTION_UNCERTAIN`을 유지하고 실제 효과 확인 뒤 새 세션으로 복구한다.
+원본 보존 뒤 manifest를 조건부 갱신하고 실행 흐름은 확정한 저장 응답을 반환한다.
+내부 `StoreError`는 확보한 `task_id`·`turn_id`로 복구 대상을 연결한다.
 
 ### 오류와 복구
 
@@ -288,8 +296,10 @@ S3 업무 상태·호출 원본 JSON은 객체당 8MiB 이내로 받고 산출�
 | 응답 원본이 없는 진행 업무 | `EXECUTION_UNCERTAIN`; 실제 세션·외부 효과 확인 |
 | SDK 권한·대상·호출 제한·입력·할당량 오류 | `HARNESS_ACCESS_DENIED`·`HARNESS_NOT_FOUND`·`HARNESS_THROTTLED`·`HARNESS_VALIDATION_ERROR`·`HARNESS_QUOTA_EXCEEDED` |
 | 그 외 호출 실패·불완전 스트림 | `HARNESS_UNAVAILABLE`·`HARNESS_STREAM_INCOMPLETE`; 확보한 응답·오류 보존 |
+| 스트림의 서버·runtime·도구 입력 오류 | `HARNESS_INTERNAL_SERVER_ERROR`·`HARNESS_RUNTIME_ERROR`·`HARNESS_INVALID_TOOL_INPUT` |
+| 토큰·시간·반복 한도 등의 명시적 종료 | `HARNESS_<종료 사유의 대문자>`; 예: `HARNESS_MAX_TOKENS`·`HARNESS_TIMEOUT_EXCEEDED` |
 | Guardrails 개입 종료 | `HARNESS_GUARDRAIL_INTERVENED`·확보한 텍스트 보존 |
-| 본문·대기 도구·관찰의 저장 조건 위반 | `HARNESS_INVALID_OUTPUT`; 대기 비움·유효한 관찰과 원래 사유 보존 |
+| 본문·대기 도구·관찰의 저장 조건 위반 | `HARNESS_INVALID_OUTPUT`; 대기 해제·유효한 근거 보존, 크기 초과는 전체 기록을 업무 파일로 보관 |
 
 HTTP의 잘못된 bearer 토큰은 401, 필수 scope 부족은 403이다.
 SDK의 다섯 명시 오류나 전송 전 위임 자격 만료로 스트림 수신 전에 거절되면 기존 대기를 유지하고 재개 때 같은 실제 응답을 다시 제출한다.
@@ -307,11 +317,11 @@ S3 상태 확정 실패는 보관 응답으로 복구하고, 오류 응답이 �
 | 프로젝트 JSON·SSM | [프로젝트 카탈로그](../tests/test_project_catalog.py) |
 | 허용 목록·업무·재개·승인 | [업무 흐름](../tests/test_cloud_workflow.py)·[사용자 서비스](../tests/test_agent_service.py) |
 | SDK·스트림·출력·대기 | [harness](../tests/test_agentcore_harness.py) |
-| S3 충돌·원본 우선·장애 복구 | [저장 계약](../tests/test_cloud_s3.py) |
+| S3 충돌·원본 우선·장애 복구 | [저장 계약](../tests/test_cloud_s3.py)·[큰 응답 원본](../tests/test_large_receipts.py) |
 | YAML·조립·실행 명령 | [YAML](../tests/test_yaml.py)·[클라우드](../tests/test_cloud_config.py)·[서버](../tests/test_server_config.py)·[진입점](../tests/test_server_entrypoint.py) |
 | 토큰·HTTP·확인창 | [인증](../tests/test_auth.py)·[실제 localhost MCP](../tests/test_mcp_server.py) |
 | 승인 hook·플러그인·프로젝트/Runtime 공개 | [hook](../tests/test_approval_hook.py)·[배포물](../tests/test_plugin_bundle.py)·[프로젝트](../tests/test_project_deployment.py)·[Runtime](../tests/test_runtime_deployment.py) |
-| Gateway 위임·Git 작업/배포 | [위임](../tests/test_delegation.py)·[실제 Git](../tests/test_workspaces.py)·[Git Skill](../tests/test_workspace_deployment.py) |
+| Gateway 위임·Git 작업/배포 | [위임](../tests/test_delegation.py)·[실제 Git](../tests/test_workspaces.py)·[Git Skill](../tests/test_workspace_deployment.py)·[배포 입력 오류](../tests/test_deployment_cli_errors.py) |
 | 개인 위임·산출물·공개 도구 | [OAuth](../tests/test_harness_oauth.py)·[파일](../tests/test_artifacts.py)·[서비스 통합](../tests/test_service_capabilities.py) |
 | 새 세션·취소·동시 변경 | [복구](../tests/test_task_restart.py)·[HTTP 확인창](../tests/test_task_restart_http.py) |
 | 이벤트·분기·재생·격리 | [기억 재구성](../tests/test_memory_archive.py) |

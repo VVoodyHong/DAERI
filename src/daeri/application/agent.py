@@ -53,6 +53,7 @@ class AgentService:
         if task_id is None:
             project = self.workflow.catalog.get(project_id)
             self.check_harness(project)
+            context = user.context(project_id)
             turn = self.workflow.start(context, request, project=project)
         else:
             task = self.workflow.get_task(context, task_id)
@@ -60,6 +61,7 @@ class AgentService:
                 turn = self._decide(user, task, 'revise', request)
             else:
                 self.check_harness(task)
+                context = user.context(project_id)
                 turn = self.workflow.resume(context, task_id, request)
         return self._result(user, project_id, turn)
 
@@ -120,6 +122,7 @@ class AgentService:
         if approval.decision not in {'approve', 'revise', 'reject'}:
             raise StoreError('PLAN_UNAVAILABLE', 'A host-confirmed response is required to continue.')
         self.check_harness(task)
+        context = user.context(task.context.project_id)
         result = {'toolUseId': approval.tool_use_id, 'status': 'success',
                   'content': [{'json': {'decision': approval.decision, 'response': approval.response}}]}
         return self.workflow.resume(context, task.id, tool_results=(result,), expected_etag=task.etag)

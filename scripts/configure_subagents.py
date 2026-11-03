@@ -3,6 +3,8 @@
 import argparse
 import json
 
+from pydantic import ValidationError
+
 from daeri.config.delegation import DelegationSettings
 from daeri.config.project import ProjectSettings
 from daeri.config.server import HarnessReadiness
@@ -33,8 +35,14 @@ def main():
         else:
             result = gateway_target(settings)
         print(json.dumps(result, ensure_ascii=False))
+    except StoreError as error:
+        parser.exit(2, json.dumps({'error': {'code': error.code, 'message': error.message}}, ensure_ascii=False) + '\n')
+    except ValidationError:
+        parser.exit(2, json.dumps({'error': {'code': 'INVALID_INPUT',
+            'message': 'Subagent configuration is invalid; check supported fields and project resources.'}}) + '\n')
     except Exception:
-        parser.exit(2, 'Subagent configuration failed; check the project, Gateway and current resource state.\n')
+        parser.exit(2, json.dumps({'error': {'code': 'DEPLOYMENT_FAILED',
+            'message': 'Subagent configuration failed; check the project, Gateway and current resource state.'}}) + '\n')
 
 
 if __name__ == '__main__':

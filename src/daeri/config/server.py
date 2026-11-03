@@ -7,6 +7,7 @@ import re
 from pydantic import Field, field_validator, model_validator
 
 from daeri.config.cloud import CloudServices, CloudSettings, _Settings, build_cloud
+from daeri.config.validation import ApprovalHookArn
 from daeri.core.errors import StoreError
 from daeri.core.projects import valid_harness_release
 from daeri.core.endpoints import mcp_endpoint
@@ -42,21 +43,13 @@ class AuthSettings(_Settings):
 
 class ServiceSettings(CloudSettings):
     auth: AuthSettings
-    approval_hook_arn: str
+    approval_hook_arn: ApprovalHookArn
 
     @model_validator(mode='after')
     def delegated_token_audience(self):
         if self.harness_oauth_audience is not None and self.harness_oauth_audience != self.auth.audience:
             raise ValueError('The service and delegated harness must accept the same user-token audience.')
         return self
-
-    @field_validator('approval_hook_arn')
-    @classmethod
-    def validate_hook_arn(cls, value):
-        if not re.fullmatch(r'arn:[a-z0-9-]+:lambda:[a-z0-9-]+:[0-9]{12}:function:'
-                            r'[A-Za-z0-9_-]{1,64}(?::[A-Za-z0-9_-]+|:\$LATEST)?', value):
-            raise ValueError('Supply the managed approval hook Lambda ARN.')
-        return value
 
 
 class ServerSettings(ServiceSettings):

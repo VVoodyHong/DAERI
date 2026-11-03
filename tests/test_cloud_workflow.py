@@ -57,6 +57,7 @@ class Store:
         self.turns[task.id] = deepcopy((turn_id, prompt, reply, tool_results))
         self.tasks[task.id] = replace(task, pending_tools=reply.pending_tools)
         self.busy.remove(task.id)
+        return reply
 
     def recover_turn(self, context, task_id):
         self.get_task(context, task_id)

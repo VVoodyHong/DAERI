@@ -3,9 +3,12 @@
 import argparse
 import json
 
+from pydantic import ValidationError
+
 from daeri.config.project import ProjectSettings
 from daeri.config.server import HarnessReadiness
 from daeri.config.yaml import read_yaml
+from daeri.core.errors import StoreError
 from daeri.infrastructure.workspace_deployment import configure_workspaces, workspace_plan
 
 
@@ -32,8 +35,14 @@ def main():
             result = {'project_id': project.project_id, 'workspace': config, 'skill_uri': plan['skill_uri'],
                       'files': list(plan['files'])}
         print(json.dumps(result, ensure_ascii=False))
+    except StoreError as error:
+        parser.exit(2, json.dumps({'error': {'code': error.code, 'message': error.message}}, ensure_ascii=False) + '\n')
+    except ValidationError:
+        parser.exit(2, json.dumps({'error': {'code': 'INVALID_INPUT',
+            'message': 'Workspace configuration is invalid; check supported fields and project resources.'}}) + '\n')
     except Exception:
-        parser.exit(2, 'Workspace configuration failed; check project resources, repository settings and the persistent mount.\n')
+        parser.exit(2, json.dumps({'error': {'code': 'DEPLOYMENT_FAILED',
+            'message': 'Workspace configuration failed; check project resources, repository settings and the persistent mount.'}}) + '\n')
 
 
 if __name__ == '__main__':

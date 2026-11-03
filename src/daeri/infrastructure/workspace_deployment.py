@@ -32,7 +32,9 @@ def workspace_files(config):
 
 
 def workspace_plan(settings, config, skill_uri):
-    root = PurePosixPath(config.get('root', ''))
+    if not isinstance(config.get('root'), str) or '\x00' in config['root']:
+        raise StoreError('INVALID_INPUT', 'Supply a workspace path under /mnt.')
+    root = PurePosixPath(config['root'])
     uri = urlsplit(skill_uri)
     if (set(config) != {'root', 'repositories'} or not root.is_absolute()
             or len(root.parts) < 3 or root.parts[1] != 'mnt' or '..' in root.parts

@@ -138,6 +138,42 @@ def test_expired_identity_during_the_confirmation_cannot_grant_execution(monkeyp
     assert store.get_task(harness.calls[0][0].context, first['task_id']).approval.decision == 'pending'
 
 
+@pytest.mark.parametrize('existing_task', [False, True])
+def test_identity_expiring_during_readiness_cannot_claim_work(monkeypatch, existing_task):
+    service, user, store, harness = setup(HarnessReply('Existing result', 'end_turn'),
+                                         HarnessReply('Should not execute', 'end_turn'))
+    task_id = service.work(user, 'project', 'Original request')['task_id'] if existing_task else None
+    calls_before, saved_before = len(harness.calls), dict(store.client.objects)
+    service.check_harness = lambda route: monkeypatch.setattr(
+        'daeri.core.access.time.time', lambda: user.expires_at + 1)
+
+    with pytest.raises(StoreError, match='AUTHENTICATION_REQUIRED'):
+        service.work(user, 'project', 'New request', task_id)
+
+    assert len(harness.calls) == calls_before
+    assert store.client.objects == saved_before
+
+
+def test_identity_expiring_during_final_readiness_cannot_execute_approved_tools(monkeypatch):
+    service, user, store, harness = setup(HarnessReply('Confirm', 'tool_use', (PENDING,)),
+                                         HarnessReply('Should not execute', 'end_turn'))
+    first = service.work(user, 'project', 'Compare cache')
+    checks = []
+    def readiness(route):
+        checks.append(route)
+        if len(checks) == 2:
+            monkeypatch.setattr('daeri.core.access.time.time', lambda: user.expires_at + 1)
+    service.check_harness = readiness
+
+    with pytest.raises(StoreError, match='AUTHENTICATION_REQUIRED'):
+        asyncio.run(service.confirm(user, 'project', first['task_id'], answer))
+
+    assert len(harness.calls) == 1
+    current = store.get_task(harness.calls[0][0].context, first['task_id'])
+    assert current.state == 'waiting' and current.pending_tools == (PENDING,)
+    assert current.approval.decision == 'approve'
+
+
 def test_new_plan_arriving_during_confirmation_rejects_the_stale_response():
     newer = {**PENDING, 'toolUseId': 'plan-2', 'input': {'plan': 'Different scope'}}
     service, user, store, harness = setup(HarnessReply('Confirm', 'tool_use', (PENDING,)),

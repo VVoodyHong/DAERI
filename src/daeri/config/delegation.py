@@ -24,7 +24,7 @@ class SubagentSettings(_Settings):
 class DelegationSettings(_Settings):
     project_id: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
     gateway_arn: str = Field(pattern=r'^arn:[a-z0-9-]+:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:gateway/[A-Za-z0-9_-]+$')
-    target_name: str = Field(default='subagents', pattern=r'^[A-Za-z][A-Za-z0-9_-]{0,63}$')
+    target_name: str = Field(default='subagents', pattern=r'^([0-9a-zA-Z][-]?){1,100}$')
     lambda_arn: str = Field(pattern=r'^arn:[a-z0-9-]+:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+$')
     subagents: dict[str, SubagentSettings] = Field(min_length=1, max_length=20)
 

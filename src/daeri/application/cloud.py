@@ -149,7 +149,7 @@ class CloudWorkflow:
             reply = HarnessReply('The harness response could not be obtained. Check the saved execution state before retrying.',
                                  'error', error='HARNESS_UNAVAILABLE')
         try:
-            self.store.finish_turn(task, turn_id, prompt, reply, tool_results)
+            reply = self.store.finish_turn(task, turn_id, prompt, reply, tool_results)
         except StoreError as error:
             error.task_id, error.turn_id = task.id, turn_id
             raise

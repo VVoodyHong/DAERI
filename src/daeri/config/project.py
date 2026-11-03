@@ -6,6 +6,7 @@ from typing import Annotated
 from pydantic import StringConstraints, ValidationError, field_validator
 
 from daeri.config.cloud import _Settings
+from daeri.config.validation import ApprovalHookArn
 from daeri.config.yaml import read_yaml
 from daeri.core.errors import StoreError
 from daeri.infrastructure.project_catalog import _HARNESS_ARN, normalize_project_prefix
@@ -17,7 +18,7 @@ class ProjectSettings(_Settings):
     project_id: Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')]
     name: Annotated[str, StringConstraints(min_length=1, max_length=256)]
     harness_arn: str
-    approval_hook_arn: str
+    approval_hook_arn: ApprovalHookArn
     memory_id: Annotated[str, StringConstraints(pattern=r'^[A-Za-z][A-Za-z0-9_-]{0,99}-[A-Za-z0-9]{10}$')] | None = None
     memory_execution_role_arn: str | None = None
     encryption_key_arn: str | None = None
@@ -41,7 +42,7 @@ class ProjectSettings(_Settings):
             raise ValueError('Supply an existing managed harness ARN.')
         return value
 
-    @field_validator('approval_hook_arn', 'memory_execution_role_arn', 'encryption_key_arn')
+    @field_validator('memory_execution_role_arn', 'encryption_key_arn')
     @classmethod
     def resource_arn(cls, value):
         if value is not None and (not value.startswith('arn:') or any(char.isspace() for char in value)):

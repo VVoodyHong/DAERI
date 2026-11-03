@@ -183,6 +183,7 @@ class MemoryArchive:
         endpoint, version = receipt.get('harness_endpoint', ''), receipt.get('harness_version', '')
         if binding != expected or ((endpoint or version) and not valid_harness_release(endpoint, version)):
             raise StoreError('MEMORY_ARCHIVE_INVALID', 'The stored turn changed its original harness session or release.')
+        receipt = self.objects.read_original_receipt(receipt)
         for event in receipt_events(receipt, recorded_at):
             validate_parameters({k: event[k] for k in ('actorId', 'sessionId', 'payload')}
                 | {'memoryId': 'Receipts-0000000000', 'eventTimestamp': datetime.fromisoformat(event['eventTimestamp'])},

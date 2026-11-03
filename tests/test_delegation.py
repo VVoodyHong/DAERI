@@ -1,6 +1,7 @@
 """Managed subagents are fixed project targets behind the approved Gateway call."""
 
 from copy import deepcopy
+import re
 from types import SimpleNamespace
 
 import botocore.session
@@ -12,7 +13,9 @@ from daeri.core.errors import StoreError
 
 
 ARN = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/Research-abcdefghij'
-GATEWAY = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/project-gateway'
+GATEWAY_ID = 'project-abcdefghij'
+GATEWAY = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/' + GATEWAY_ID
+TARGET_ID = '0123456789'
 LAMBDA = 'arn:aws:lambda:us-east-1:123456789012:function:delegation'
 CONFIG = {'project_id': 'payments', 'gateway_arn': GATEWAY, 'target_name': 'subagents',
           'lambda_arn': LAMBDA, 'subagents': {'research': {'description': 'Research project facts',
@@ -26,7 +29,7 @@ class Control:
 
 def context(**patch):
     return SimpleNamespace(client_context=SimpleNamespace(custom={
-        'bedrockAgentCoreGatewayId': 'project-gateway', 'bedrockAgentCoreTargetId': 'target-1',
+        'bedrockAgentCoreGatewayId': GATEWAY_ID, 'bedrockAgentCoreTargetId': TARGET_ID,
         'bedrockAgentCoreToolName': 'subagents___research', **patch}))
 
 
@@ -36,20 +39,30 @@ def test_native_target_schema_and_project_scoped_subagent_result():
     settings = DelegationSettings.model_validate(CONFIG)
     request = gateway_target(settings)
     model = botocore.session.get_session().get_service_model('bedrock-agentcore-control')
-    validate_parameters(request, model.operation_model('CreateGatewayTarget').input_shape)
+    shape = model.operation_model('CreateGatewayTarget').input_shape
+    validate_parameters(request, shape)
+    for field in ('gatewayIdentifier', 'name'):
+        assert re.fullmatch(shape.members[field].metadata['pattern'], request[field])
     assert request['targetConfiguration']['mcp']['lambda']['toolSchema']['inlinePayload'][0]['name'] == 'research'
     calls = []
     class Harness:
         def invoke(self, task, messages):
             calls.append((task, messages))
             return HarnessReply('Verified findings', 'end_turn')
-    result = handle_delegation({'request': 'Find the prior failure'}, context(), settings, 'target-1', Control(), Harness())
+    result = handle_delegation({'request': 'Find the prior failure'}, context(), settings, TARGET_ID, Control(), Harness())
     assert result['response'] == 'Verified findings' and result['completed'] is True
     task, messages = calls[0]
     assert task.context.project_id == 'payments' and task.harness_version == '2'
     assert task.context.actor_id == 'agent:payments:research'
     assert messages[0]['content'][0] == {'text': 'Find the prior failure'}
     assert result['task_id'] == task.id and task.id in messages[0]['content'][1]['text']
+
+
+@pytest.mark.parametrize('name', ['sub_agents', 'sub--agents'])
+def test_target_names_rejected_by_aws_fail_configuration_validation(name):
+    from daeri.config.delegation import DelegationSettings
+    with pytest.raises(ValueError):
+        DelegationSettings.model_validate({**CONFIG, 'target_name': name})
 
 
 @pytest.mark.parametrize('patch,event', [
@@ -66,7 +79,7 @@ def test_untrusted_gateway_scope_or_model_supplied_routing_is_rejected(patch, ev
             pytest.fail('Untrusted routing invoked a subagent')
     with pytest.raises(StoreError):
         handle_delegation(event, context(**patch), DelegationSettings.model_validate(CONFIG),
-                          'target-1', Control(), Harness())
+                          TARGET_ID, Control(), Harness())
 
 
 def test_changed_release_and_inline_input_are_not_reported_as_completed():
@@ -76,23 +89,30 @@ def test_changed_release_and_inline_input_are_not_reported_as_completed():
         def invoke(self, *args):
             return HarnessReply('Need a decision', 'tool_use', ({'toolUseId': 'pending'},))
     result = handle_delegation({'request': 'Investigate'}, context(),
-        DelegationSettings.model_validate(CONFIG), 'target-1', Control(), Harness())
+        DelegationSettings.model_validate(CONFIG), TARGET_ID, Control(), Harness())
     assert not result['completed'] and result['error'] == 'SUBAGENT_INPUT_REQUIRED'
     class Drift(Control):
         def get_harness_endpoint(self, **request):
             return {'endpoint': {'status': 'READY', 'liveVersion': '3', 'targetVersion': '3'}}
     with pytest.raises(StoreError, match='HARNESS_NOT_READY'):
         handle_delegation({'request': 'Investigate'}, context(),
-            DelegationSettings.model_validate(CONFIG), 'target-1', Drift(), Harness())
+            DelegationSettings.model_validate(CONFIG), TARGET_ID, Drift(), Harness())
 
 
-def test_registration_connects_gateway_preserves_root_tools_and_publishes_the_new_release():
+@pytest.mark.parametrize('existing_target', [False, True])
+def test_registration_connects_gateway_preserves_root_tools_and_publishes_the_new_release(existing_target):
     from daeri.config.delegation import DelegationSettings
     from daeri.infrastructure.delegation import configure_subagents
     from test_project_deployment import Control as ProjectControl, Ssm, settings, missing
     from daeri.infrastructure.project_deployment import ProjectDeployment
 
     class DeploymentControl(ProjectControl):
+        def record(self, operation, request):
+            shape = self.schema.operation_model(operation).input_shape
+            for field in ('gatewayIdentifier', 'name'):
+                if 'GatewayTarget' in operation and field in request:
+                    assert re.fullmatch(shape.members[field].metadata['pattern'], request[field])
+            super().record(operation, request)
         def get_harness(self, **request):
             if request['harnessId'] == ARN.rsplit('/', 1)[1]:
                 self.record('GetHarness', request)
@@ -116,13 +136,16 @@ def test_registration_connects_gateway_preserves_root_tools_and_publishes_the_ne
             return super().update_harness(**request)
         def list_gateway_targets(self, **request):
             self.record('ListGatewayTargets', request)
-            return {'items': []}
+            return {'items': [{'name': 'subagents', 'targetId': TARGET_ID}] if existing_target else []}
         def create_gateway_target(self, **request):
             self.record('CreateGatewayTarget', request)
-            return {'targetId': 'target-1'}
+            return {'targetId': TARGET_ID}
+        def update_gateway_target(self, **request):
+            self.record('UpdateGatewayTarget', request)
+            return {'targetId': TARGET_ID}
         def get_gateway_target(self, **request):
             self.record('GetGatewayTarget', request)
-            return {'status': 'READY'}
+            return {'status': 'READY', 'targetConfiguration': {'mcp': {'lambda': {'lambdaArn': LAMBDA}}}}
 
     class Lambdas:
         def get_function_configuration(self, **request):
@@ -147,7 +170,7 @@ def test_registration_connects_gateway_preserves_root_tools_and_publishes_the_ne
     assert control.harness['tools'][-1]['config']['agentCoreGateway']['gatewayArn'] == GATEWAY
     assert functions.saved['Environment']['Variables']['EXISTING'] == 'retained'
     saved = __import__('json').loads(functions.saved['Environment']['Variables']['DAERI_DELEGATION_CONFIG'])
-    assert saved['target_id'] == 'target-1' and saved['project_id'] == 'payments'
+    assert saved['target_id'] == TARGET_ID and saved['project_id'] == 'payments'
 
 
 def test_registration_rejects_a_different_orchestrator_before_creating_resources():
