@@ -1,15 +1,13 @@
 # DAERI 개발·운영 안내
 
 상태: AWS 공용 서비스의 구현·설정·배포·API·검증 기준.
-사용자 동작과 AWS·DAERI의 역할은 [서비스 설계](service.md), 작업 방법은 [작업 규칙](rules/work.md)을 따른다.
+사용자 동작과 AWS·DAERI의 역할은 [서비스 명세](../spec/service.md), 작업 방법은 [개발 규칙](../rules/development.md)을 따른다.
 
-[개발 환경](#개발-환경) → [코드 구조](#코드-구조) → [설정](#설정) → [배포와 운영](#배포와-운영) 순서로 시작한다.
-세부 동작은 [API와 저장 계약](#api와-저장-계약), 확인 근거와 남은 연결은 [구현과 검증](#구현과-검증)에서 찾는다.
+[개발 환경](#개발-환경) · [코드 구조](#코드-구조) · [설정](#설정) · [배포와 운영](#배포와-운영) · [API와 저장 계약](#api와-저장-계약) · [구현과 검증](#구현과-검증)
 
 ## 개발 환경
 
-지원 Python·의존성 버전은 [pyproject.toml](../pyproject.toml)·[uv.lock](../uv.lock)이 소유한다.
-`main`은 AWS 공용 서비스, 기존 PC 제품은 [local-agent 브랜치](https://github.com/VVoodyHong/DAERI/tree/local-agent)의 코드·설치를 사용한다.
+지원 Python·의존성 버전은 [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock)이 소유한다.
 
 ```sh
 uv sync --frozen
@@ -18,33 +16,30 @@ uv run --no-sync pytest
 uv build
 ```
 
-AWS 연결은 boto3, HTTP MCP·확인창은 mcp, 서명·JWKS는 PyJWT·cryptography를 사용한다.
-httpx·uvicorn은 HTTP·ASGI, pydantic·PyYAML은 설정, pytest는 검증, Hatchling·uv는 빌드·잠금을 담당한다.
-설정 읽기는 파일·스키마를 검사하고 클라이언트·자격 연결은 명시적인 조립·배포 실행에서 시작한다.
-
 ## 코드 구조
 
 핵심 계약 `core` ← 흐름 `application` ← 외부 연결 `infrastructure`를 `config`에서 조립한다.
-SDK 객체·오류는 외부 어댑터에서 변환하며 내부 흐름은 저장·프로젝트·harness 포트에 의존한다.
+외부 어댑터가 SDK 객체·오류를 내부 포트의 자료형·오류로 변환한다.
 
 | 위치 | 책임 |
 |---|---|
-| [core/cloud.py](../src/daeri/core/cloud.py)·[approval.py](../src/daeri/core/approval.py)·[access.py](../src/daeri/core/access.py) | 업무·현재 계획·결정·인증한 구성원과 저장·harness 포트 |
-| [core/projects.py](../src/daeri/core/projects.py)·[errors.py](../src/daeri/core/errors.py)·[serialization.py](../src/daeri/core/serialization.py) | 프로젝트·릴리스·조회 포트, 경계 오류·유한 UTF-8 JSON |
-| [application](../src/daeri/application/) | 내부 업무 호출, 공개 권한·목록·계획 확인·복구 |
-| [project_catalog.py](../src/daeri/infrastructure/project_catalog.py)·[cloud_s3.py](../src/daeri/infrastructure/cloud_s3.py) | SSM 조회, S3 조건부 상태·불변 호출 원본·복구 |
-| [agentcore.py](../src/daeri/infrastructure/agentcore.py)·[harness_oauth.py](../src/daeri/infrastructure/harness_oauth.py) | native 호출·스트림 해석, 요청 범위 Bearer 인증 |
-| [auth.py](../src/daeri/infrastructure/auth.py)·[mcp_server.py](../src/daeri/infrastructure/mcp_server.py)·[artifacts.py](../src/daeri/infrastructure/artifacts.py) | OIDC·HTTP MCP·확인창·업무별 파일과 임시 링크 |
-| [approval_hook.py](../src/daeri/infrastructure/approval_hook.py)·[delegation.py](../src/daeri/infrastructure/delegation.py)·[memory_archive.py](../src/daeri/infrastructure/memory_archive.py) | 승인·위임·Memory 수집 Lambda와 설정·복원 |
-| [workspaces.py](../src/daeri/infrastructure/workspaces.py)·[workspace_cli.py](../src/daeri/infrastructure/workspace_cli.py) | 업무별 Git 사본·통합 검사와 실행 명령 |
-| [project_deployment.py](../src/daeri/infrastructure/project_deployment.py)·[runtime_deployment.py](../src/daeri/infrastructure/runtime_deployment.py)·[workspace_deployment.py](../src/daeri/infrastructure/workspace_deployment.py) | Memory·릴리스·SSM, MCP Runtime, Git Skill 배포 |
-| [config](../src/daeri/config/)·[서버 진입점](../src/daeri/__main__.py)·[scripts](../scripts/) | YAML·AWS·인증 조립·종료, 서버·배포물 생성 |
+| [core](../../src/daeri/core/) | 업무·프로젝트·승인·인증 문맥, 저장·harness 포트, JSON·오류 |
+| [CloudWorkflow](../../src/daeri/application/cloud.py)·[AgentService](../../src/daeri/application/agent.py) | 업무 실행·권한·목록·확인·복구 |
+| [project_catalog.py](../../src/daeri/infrastructure/project_catalog.py)·[cloud_s3.py](../../src/daeri/infrastructure/cloud_s3.py)·[artifacts.py](../../src/daeri/infrastructure/artifacts.py) | SSM 조회, S3 상태·원본·복구·파일 |
+| [agentcore.py](../../src/daeri/infrastructure/agentcore.py)·[harness_oauth.py](../../src/daeri/infrastructure/harness_oauth.py) | [관리형 harness](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-vs-runtime.html) 호출·스트림·요청별 Bearer 전달 |
+| [auth.py](../../src/daeri/infrastructure/auth.py)·[mcp_server.py](../../src/daeri/infrastructure/mcp_server.py) | OIDC·HTTP MCP·사용자 확인창 |
+| [approval_hook.py](../../src/daeri/infrastructure/approval_hook.py)·[delegation.py](../../src/daeri/infrastructure/delegation.py)·[memory_archive.py](../../src/daeri/infrastructure/memory_archive.py) | 승인·위임·Memory 수집 Lambda와 설정·복원 |
+| [workspaces.py](../../src/daeri/infrastructure/workspaces.py)·[workspace_cli.py](../../src/daeri/infrastructure/workspace_cli.py) | 업무별 Git 사본·통합 검사와 실행 명령 |
+| [project_deployment.py](../../src/daeri/infrastructure/project_deployment.py)·[runtime_deployment.py](../../src/daeri/infrastructure/runtime_deployment.py)·[workspace_deployment.py](../../src/daeri/infrastructure/workspace_deployment.py) | Memory·릴리스·SSM, MCP Runtime, Git Skill 배포 |
+| [config](../../src/daeri/config/)·[서버 진입점](../../src/daeri/__main__.py)·[scripts](../../scripts/) | YAML·AWS·인증 조립·종료, 서버·배포물 생성 |
 
 ## 설정
 
 `CloudSettings.from_yaml(path)`는 내부 서비스, `ServerSettings.from_yaml(path)`는 공개 MCP 서버의 UTF-8 YAML을 읽는다.
 허용 입력은 최상위 매핑·유한한 JSON 호환 값·2MiB 이내·중첩 32단계다.
 중복 키·명시적 태그·앵커·별칭·병합·지시문·알 수 없는 필드는 원문을 포함하지 않는 `INVALID_INPUT`으로 처리한다.
+
+파일·스키마 검사 뒤 명시적인 조립·배포 실행에서 AWS 클라이언트와 자격을 연결한다.
 
 ### 서버 설정
 
@@ -66,7 +61,7 @@ SDK 객체·오류는 외부 어댑터에서 변환하며 내부 흐름은 저�
 
 `storage.prefix`는 영문·숫자·`_`·`.`·`-`·`/`로 구성하고 생략한 끝 `/`는 추가한다.
 빈 구간·중복 `/`·`.`·`..` 구간은 입력 오류로 처리한다.
-다음은 실제 자격을 포함하지 않는 가상 서버 설정이다.
+다음은 가상 서버 설정이다.
 
 ```yaml
 region: us-east-1
@@ -82,7 +77,7 @@ storage:
 ### 프로젝트 설정
 
 SSM의 `<project_parameter_prefix><project_id>`에 프로젝트별 JSON을 등록한다.
-권한은 인증 서버가, 표시 이름·실행 대상은 다음 네 필드가 정한다.
+표시 이름·실행 대상은 다음 네 필드로 지정한다.
 
 ```json
 {
@@ -107,7 +102,7 @@ SSM의 `<project_parameter_prefix><project_id>`에 프로젝트별 JSON을 등�
 ## 배포와 운영
 
 인프라 생성·변경은 클라우드서비스팀의 승인된 배포 체계에서 진행한다.
-아래 명령은 가상 설정 파일·주소를 사용하는 실행 진입점이며 실제 자격·계정·리전·역할은 배포 환경에서 지정한다.
+아래 명령의 설정·주소는 가상 값이며 자격·계정·리전·역할은 배포 환경에서 지정한다.
 
 ### 서버와 플러그인
 
@@ -120,16 +115,14 @@ SSM의 `<project_parameter_prefix><project_id>`에 프로젝트별 JSON을 등�
 uv run python scripts/build_plugin.py --endpoint https://daeri.example.com/mcp --client-id company-public-client --callback-port 59383 --output /tmp/daeri-plugin.zip
 ```
 
-공유 Skill·MCP 설정과 `.claude-plugin`·`.codex-plugin` manifest를 묶고 호스트별 marketplace를 생성한다.
-사용자는 [Claude](https://code.claude.com/docs/en/plugins/install)·[Codex](https://developers.openai.com/plugins/build/plugins)의 설치 경로를 사용한다.
+빌드는 공유 Skill·MCP 설정·호스트별 manifest와 marketplace를 묶는다.
+사용자 설치는 [README](../../README.md)를 따른다.
 IdP에는 public client·실제 callback·audience·scope·프로젝트 claim을 등록하고, [Codex callback](https://learn.chatgpt.com/docs/extend/mcp)의 issuer·URL별 차이를 대조한다.
-서버는 기존 IdP의 발급·로그인을 사용하며 Cognito도 같은 access token 조건을 충족하게 구성한다.
 HTTP 서버는 [공식 MCP SDK](https://github.com/modelcontextprotocol/python-sdk/tree/v1.30.0)의 stateful Streamable HTTP·인증 middleware를 사용한다.
-Runtime은 JWT 진입 검사·세션 라우팅을, 서버는 프로젝트·업무·확인 응답의 권한 검사를 담당한다.
 
 승인 Lambda handler는 `daeri.infrastructure.approval_hook.lambda_handler`다.
-`DAERI_STORAGE_BUCKET`·선택 `DAERI_STORAGE_PREFIX=daeri/`를 서버와 맞추고 harness의 `beforeToolCall`에 ARN·`failureMode: deny`를 등록한다.
-inline `confirm_plan`은 필수 문자열 `plan`을 받는 객체이며 system prompt는 [계획·승인 절차](service.md#계획과-승인)를 정의한다.
+`DAERI_STORAGE_BUCKET`·선택 `DAERI_STORAGE_PREFIX=daeri/`를 서버와 맞추고 harness의 [beforeToolCall](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-lifecycle-hooks.html)에 ARN·`failureMode: deny`를 등록한다.
+inline `confirm_plan`은 필수 문자열 `plan`을 받는 객체이며 system prompt는 [계획·승인 절차](../spec/service.md#계획과-승인)를 정의한다.
 서비스 역할은 호출·업무·세션·결정을 작성하고 hook 역할은 연결·현재 결정 조회와 승인 해제를 수행한다.
 업무·승인·세션 저장 쓰기는 서비스·hook의 담당 경로에, 위임 Lambda 호출은 해당 프로젝트 Gateway 역할에 연결한다.
 
@@ -137,15 +130,18 @@ inline `confirm_plan`은 필수 문자열 `plan`을 받는 객체이며 system p
 
 | 배포 도구 | 필수 입력 | 선택·기본값 |
 |---|---|---|
-| [프로젝트](../src/daeri/config/project.py) | `project_id`·`name`·기존 `harness_arn`·`approval_hook_arn` | `region`·`project_parameter_prefix`·`memory_id`·`memory_execution_role_arn`·`encryption_key_arn` |
-| [Runtime](../src/daeri/config/runtime.py) | `name`·`image_uri`·`role_arn`·`client_ids`·`server` 매핑 | 갱신할 `runtime_id`·`endpoint=PROD`·`network_configuration`의 기본 PUBLIC 또는 native VPC 설정 |
+| [프로젝트](../../src/daeri/config/project.py) | `project_id`·`name`·기존 `harness_arn`·`approval_hook_arn` | `region`·`project_parameter_prefix`·`memory_id`·`memory_execution_role_arn`·`encryption_key_arn` |
+| [Runtime](../../src/daeri/config/runtime.py) | `name`·`image_uri`·`role_arn`·`client_ids`·`server` 매핑 | 갱신할 `runtime_id`·`endpoint=PROD`·`network_configuration`의 기본 PUBLIC 또는 native VPC 설정 |
 
 Runtime의 `server`는 자동 생성하는 `public_url`을 제외한 서버 필드다.
 `network_configuration`은 native 필드·타입·식별자 문법을 검사한다.
 `networkMode`가 `VPC`이면 `networkModeConfig`의 `subnets`·`securityGroups`가 필수이며 `PUBLIC`은 기본 네트워크 설정만 사용한다.
-기억 전략·보존 조건은 [공유 기억](service.md#공유-기억), 모델·도구·Gateway·Identity는 해당 AWS 리소스에서 설정한다.
 생성 모델·도구는 `CreateHarness`·`UpdateHarness`로 구성하고 프로젝트 배포는 이를 유지하며 Memory 연결·릴리스를 공개한다.
 외부 모델의 `apiKeyArn`은 AgentCore Identity API key credential provider ARN을 참조한다.
+
+[Gateway](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-MCPservers.html)에 remote MCP·OpenAPI·Lambda를 연결한다.
+stdio MCP는 HTTP MCP로 호스팅·변환하고 사내 리소스의 실행 위치에 [VPC](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-vpc-egress.html)·DNS·CA·자격을 준비한다.
+분석·파일 생성에는 기본 shell·파일 도구 또는 [Code Interpreter·S3](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-s3-integration.html)를 연결한다.
 
 ```sh
 uv run python scripts/configure_project.py --config project.yaml
@@ -159,18 +155,21 @@ uv run python scripts/configure_runtime.py --config runtime.yaml --apply
 `--apply`는 프로젝트의 독립 Memory·릴리스·SSM 또는 Runtime의 컨테이너·MCP·JWT authorizer·Authorization 전달·endpoint를 생성·갱신한다.
 프로젝트는 카탈로그 경로·ID로 Memory 이름을 정해 소유 태그·활성 전략·검색·보존을 검사하고, 연결한 `RELEASE_V<버전>`을 검증한 뒤 SSM을 마지막에 공개한다.
 기존 Memory·릴리스의 조건 불일치는 `PROJECT_NOT_READY`이며 다른 BYO Memory로 전환할 때는 이관·복원 검증을 거쳐 `memory_id`를 지정한다.
-이전 릴리스·독립 Memory·원본은 수명을 유지하고 기존 업무는 저장한 릴리스로 이어간다.
+이전 릴리스·독립 Memory·원본을 유지하며 업무의 릴리스 고정은 [프로젝트와 접근](../spec/service.md#프로젝트와-접근)을 따른다.
 운영자는 프로젝트·Runtime별 배포를 순차 실행하고 endpoint 변경 권한을 관리한다.
 
 Runtime의 공개 주소를 서비스 설정에 연결하고 준비된 버전의 endpoint를 공개한 뒤 반환한 `public_url`로 플러그인을 생성한다.
 서비스 코드의 Runtime endpoint와 개별 업무의 harness 릴리스 endpoint는 각각의 배포 단위다.
-모델·리전·사내 API·네트워크·CA·자격의 실제 호환성은 배포 검증에서 확인한다.
 
 ### 하위 에이전트와 개인 위임
 
-[하위 설정](../src/daeri/config/delegation.py)은 `project_id`·`gateway_arn`·`lambda_arn`과 역할별 `description`·`harness_arn`·`harness_endpoint`·`harness_version`을 받는다.
+[하위 설정](../../src/daeri/config/delegation.py)은 `project_id`·`gateway_arn`·`lambda_arn`과 역할별 `description`·`harness_arn`·`harness_endpoint`·`harness_version`을 받는다.
 `target_name`은 기본 `subagents`이고 AWS Gateway 대상 이름 문법을 사용하며 handler는 `daeri.infrastructure.delegation.lambda_handler`다.
-하위 harness는 공개한 프로젝트 Memory·서비스 자격·서버 실행 도구를 사용하며, timeout은 위임 Lambda 안에 끝나게 구성한다.
+
+하위 harness의 timeout은 위임 Lambda 안에 끝나게 구성한다.
+하위 사용자 식별자 `agent:<project>:<subagent>`는 역할이며 실제 사용자의 개인 OAuth 위임과 구분한다.
+Memory·자격·도구 범위는 [멀티 에이전트와 도구](../spec/service.md#멀티-에이전트와-도구)를 따른다.
+
 등록은 Gateway ID로 대상을 생성·갱신하고 고정 설정을 Lambda 환경에 연결하며, 총괄 harness에는 Gateway ARN을 연결해 프로젝트 릴리스를 공개한다.
 
 ```sh
@@ -184,7 +183,16 @@ S3·SSM·제어 API는 서비스 IAM, 하위 위임 Lambda는 프로젝트 서�
 
 ### Memory 수집과 복원
 
-[수집 설정](../src/daeri/config/memory.py)은 서비스 리전·S3·카탈로그 경로에 `project_id`·`source_memory_id`를 추가한다.
+프로젝트별 [BYO Memory](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-memory.html)의 전략과 namespace는 다음과 같다.
+공유 범위·보존 정책은 [공유 기억](../spec/service.md#공유-기억)을 따른다.
+
+| 전략 | Namespace |
+|---|---|
+| Semantic | `/shared/facts/` |
+| Episodic·reflection | `/shared/experiences/` |
+| Summarization | `/summaries/{actorId}/{sessionId}/` |
+
+[수집 설정](../../src/daeri/config/memory.py)은 서비스 리전·S3·카탈로그 경로에 `project_id`·`source_memory_id`를 추가한다.
 실제 Memory ID는 네이티브 이벤트, 기본 `receipts`는 S3 업무 호출 원본을 수집한다.
 
 ```sh
@@ -196,12 +204,14 @@ uv run python scripts/archive_memory.py --config memory.yaml --restore-to Restor
 기본 실행은 읽기 전용 검사이며 `--apply`가 불변 원본·진행 기록 또는 별도 대상 이벤트를 작성한다.
 예약 handler는 `daeri.infrastructure.memory_archive.lambda_handler`, `DAERI_MEMORY_ARCHIVE_CONFIG`는 같은 설정의 JSON이다.
 한 호출은 최대 50페이지·약 45초 범위를 처리하고 S3 진행 상태로 이어가며 전체 순회 뒤 새 수집 주기를 시작한다.
+
 EventBridge Scheduler·권한·실패 알림을 연결하고 원본 이벤트의 보존 기간 안에 수집을 완료한다.
 동일 프로젝트 소유의 비어 있는 독립 Memory에 재생하고 비동기 추출·검색을 검증한 뒤 프로젝트의 `memory_id`를 지정해 공개한다.
+재생은 원본별 고정 `clientToken`과 S3 진행 기록으로 중복 처리를 대조하고 중단 지점에서 이어간다.
 
 ### Git 작업 환경
 
-[Git Skill](../src/daeri/assets/source-workspace/SKILL.md)은 기본 shell에서 표준 라이브러리만 사용하는 `workspace.pyz`를 실행한다.
+[Git Skill](../../src/daeri/assets/source-workspace/SKILL.md)은 기본 shell에서 표준 라이브러리만 사용하는 `workspace.pyz`를 실행한다.
 다음 가상 `workspaces.yaml`은 실행 환경에 보이는 경로 또는 원격 Git 주소를 여러 개 등록한다.
 
 ```yaml
@@ -218,7 +228,7 @@ uv run python scripts/configure_workspaces.py --project-config project.yaml --co
 기본 실행은 배포 파일 구성을 검사하며 `--apply`는 내용 해시별 S3 Skill·실행 묶음·설정을 게시하고 세션 저장소·harness·SSM을 갱신한다.
 `root`는 `/mnt` 아래에 두고 Git·네트워크·표준 자격은 프로젝트 실행 환경에서 준비한다.
 설치된 개발 환경에서는 생성한 JSON 설정으로 `daeri-workspace --config workspaces.json prepare TASK_UUID REPOSITORY`를 사용한다.
-파일은 해당 세션의 작업 저장소에, 원격 인계는 push한 업무 브랜치에 연결하며 재개·통합 조건은 [소스와 산출물](service.md#소스와-산출물)을 따른다.
+재개·통합 조건은 [소스와 산출물](../spec/service.md#소스와-산출물)을 따른다.
 `prepare`는 기준 ref를 fetch해 commit과 `daeri/<task UUID>/<repository>` 브랜치·사본을 고정하며 재호출은 저장한 기준을 유지한다.
 새 환경의 재개는 선택한 기준 ref와 원격 업무 브랜치의 공통 조상을 기록하고, `prepare`·`verify`의 `--reference` 기본값은 `HEAD`다.
 
@@ -226,8 +236,7 @@ uv run python scripts/configure_workspaces.py --project-config project.yaml --co
 
 ### 공개 MCP 도구
 
-모든 도구는 현재 요청에서 검증한 사용자·프로젝트로 `AgentService`를 호출한다.
-호스트 선택값은 호출의 `project_id`·`task_id`로 전달하며 목록·상태 조회와 실행·복구를 구분한다.
+모든 도구는 현재 요청의 검증된 사용자로 `AgentService`를 호출하고 선택한 `project_id`·`task_id`를 전달한다.
 
 | 도구 | 입력·결과 |
 |---|---|
@@ -241,7 +250,7 @@ uv run python scripts/configure_workspaces.py --project-config project.yaml --co
 | `daeri_download` | `project_id`·`task_id`·`artifact_id`; 선택 버전의 임시 다운로드 링크 |
 
 업무·파일 페이지 크기는 1~100이며 커서는 사용자·프로젝트·페이지 크기에, 파일은 업무에도 연결한다.
-확인창의 결정·대기·취소·만료 처리는 [계획과 승인](service.md#계획과-승인), 세션 전환은 [실패와 복구](service.md#실패와-복구)를 따른다.
+확인창의 결정·대기·취소·만료 처리는 [계획과 승인](../spec/service.md#계획과-승인), 세션 전환은 [실패와 복구](../spec/service.md#실패와-복구)를 따른다.
 
 ### 내부 업무 호출
 
@@ -259,8 +268,7 @@ OIDC discovery·JWKS는 토큰 검증 때 조회한다.
 | `restart(context, task_id, review, expected_etag=...)` | 실제 확인 내용·현재 ETag → 이전 상태 보존·새 세션·새 계획 |
 
 `AccessContext`는 인증 경계가 제공한 `actor_id`·`project_id`이며 저장한 문맥 불일치는 `ACCESS_DENIED`다.
-중앙 배포가 바뀌어도 기존 업무는 저장한 릴리스를 사용한다.
-버전이 없는 기존 업무는 상태·원본을 확인해 현재 프로젝트의 새 계획으로 시작한다.
+릴리스 고정·버전 정보가 없는 업무의 처리는 [프로젝트와 접근](../spec/service.md#프로젝트와-접근)을 따른다.
 원격 확인은 native handoff의 첫 `confirm_plan` 대기 하나를 처리하고 다음 도구는 재개한 harness가 선택한다.
 
 ### 입력과 응답 보관
@@ -271,14 +279,15 @@ OIDC discovery·JWKS는 토큰 검증 때 조회한다.
 
 `tool_results`는 저장한 `toolUseId`마다 한 번씩 정확히 대응하고 대기 순서로 전달한다.
 상태는 `success`·`error`, 본문은 text·JSON 블록이며 대기가 없으면 비어 있지 않은 후속 요청을 받는다.
+
 S3 업무 상태·호출 요약 JSON은 객체당 8MiB 이내로 받고 산출물 본문은 별도 파일로 보관한다.
 전체 호출 기록이 8MiB를 초과하면 입력·응답 원본을 업무 파일로 보관하고 요약 기록에 S3 버전·경로·크기·SHA256·입력 해시·원래 종료 사유·오류를 연결한다.
+
 요약 응답은 `HARNESS_INVALID_OUTPUT`과 파일 확인·새 세션 복구 경로를 반환하며 기존 도구 대기를 해제한다.
-호출 원본의 다운로드는 고정한 S3 버전을 제공한다.
-기억 재구성은 같은 버전의 원본을 읽고 경로·크기·해시와 실행 문맥을 검증한다.
+원본 다운로드·기억 재구성은 고정한 S3 버전을 사용하고 재구성 때 경로·크기·해시·실행 문맥을 검증한다.
+
 요약 보관 전 장애로 원본 버전을 확정할 수 없으면 `EXECUTION_UNCERTAIN`을 유지하고 실제 효과 확인 뒤 새 세션으로 복구한다.
-원본 보존 뒤 manifest를 조건부 갱신하고 실행 흐름은 확정한 저장 응답을 반환한다.
-내부 `StoreError`는 확보한 `task_id`·`turn_id`로 복구 대상을 연결한다.
+원본 보존 뒤 manifest를 조건부 갱신해 저장 응답을 반환하며 `StoreError`는 확보한 `task_id`·`turn_id`로 복구 대상을 연결한다.
 
 ### 오류와 복구
 
@@ -305,30 +314,27 @@ HTTP의 잘못된 bearer 토큰은 401, 필수 scope 부족은 403이다.
 SDK의 다섯 명시 오류나 전송 전 위임 자격 만료로 스트림 수신 전에 거절되면 기존 대기를 유지하고 재개 때 같은 실제 응답을 다시 제출한다.
 대기 ID 중복은 불완전 스트림으로 기록하며 잘못된 본문 유니코드는 눈에 보이는 이스케이프로 보존한다.
 S3 상태 확정 실패는 보관 응답으로 복구하고, 오류 응답이 보존된 업무는 중단 상태·현재 대기를 확인해 재개한다.
-`end_turn`은 한 응답의 종료이며 업무 전체의 완료는 목표·실제 결과 근거로 판정한다.
+`end_turn`은 한 응답의 종료이며 업무 완료는 목표·실제 결과로 판정한다.
 
 ## 구현과 검증
 
-원격 MCP·두 호스트 플러그인 배포물·프로젝트 배포·업무/승인/원본·개인 OAuth 전달·파일·Git·위임·Memory 복원 코드가 구현돼 있다.
-검증은 관찰 가능한 동작·실패 경계·native SDK 요청 형식을 대상으로 한다.
+다음은 [테스트 디렉터리](../../tests/)의 계약별 진입점이다.
 
 | 대상 | 대표 검증 |
 |---|---|
-| 프로젝트 JSON·SSM | [프로젝트 카탈로그](../tests/test_project_catalog.py) |
-| 허용 목록·업무·재개·승인 | [업무 흐름](../tests/test_cloud_workflow.py)·[사용자 서비스](../tests/test_agent_service.py) |
-| SDK·스트림·출력·대기 | [harness](../tests/test_agentcore_harness.py) |
-| S3 충돌·원본 우선·장애 복구 | [저장 계약](../tests/test_cloud_s3.py)·[큰 응답 원본](../tests/test_large_receipts.py) |
-| YAML·조립·실행 명령 | [YAML](../tests/test_yaml.py)·[클라우드](../tests/test_cloud_config.py)·[서버](../tests/test_server_config.py)·[진입점](../tests/test_server_entrypoint.py) |
-| 토큰·HTTP·확인창 | [인증](../tests/test_auth.py)·[실제 localhost MCP](../tests/test_mcp_server.py) |
-| 승인 hook·플러그인·프로젝트/Runtime 공개 | [hook](../tests/test_approval_hook.py)·[배포물](../tests/test_plugin_bundle.py)·[프로젝트](../tests/test_project_deployment.py)·[Runtime](../tests/test_runtime_deployment.py) |
-| Gateway 위임·Git 작업/배포 | [위임](../tests/test_delegation.py)·[실제 Git](../tests/test_workspaces.py)·[Git Skill](../tests/test_workspace_deployment.py)·[배포 입력 오류](../tests/test_deployment_cli_errors.py) |
-| 개인 위임·산출물·공개 도구 | [OAuth](../tests/test_harness_oauth.py)·[파일](../tests/test_artifacts.py)·[서비스 통합](../tests/test_service_capabilities.py) |
-| 새 세션·취소·동시 변경 | [복구](../tests/test_task_restart.py)·[HTTP 확인창](../tests/test_task_restart_http.py) |
-| 이벤트·분기·재생·격리 | [기억 재구성](../tests/test_memory_archive.py) |
-| 문서 링크·계층 경계 | [문서](../tests/test_documentation_links.py)·[패키지](../tests/test_package_boundaries.py) |
+| 업무·승인 | [흐름](../../tests/test_cloud_workflow.py)·[사용자 서비스](../../tests/test_agent_service.py)·[hook](../../tests/test_approval_hook.py) |
+| 새 세션·확인창·동시 변경 | [복구](../../tests/test_task_restart.py)·[HTTP 복구](../../tests/test_task_restart_http.py) |
+| harness·개인 OAuth | [스트림](../../tests/test_agentcore_harness.py)·[토큰 전달](../../tests/test_harness_oauth.py) |
+| S3·원본·파일 | [저장](../../tests/test_cloud_s3.py)·[큰 응답](../../tests/test_large_receipts.py)·[산출물](../../tests/test_artifacts.py) |
+| 설정·프로젝트 | [YAML](../../tests/test_yaml.py)·[카탈로그](../../tests/test_project_catalog.py)·[서버 조립](../../tests/test_server_config.py) |
+| 인증·공개 도구 | [JWT](../../tests/test_auth.py)·[localhost MCP](../../tests/test_mcp_server.py)·[서비스 통합](../../tests/test_service_capabilities.py) |
+| 배포·플러그인 | [프로젝트](../../tests/test_project_deployment.py)·[Runtime](../../tests/test_runtime_deployment.py)·[입력 오류](../../tests/test_deployment_cli_errors.py)·[플러그인](../../tests/test_plugin_bundle.py) |
+| 위임·Git | [위임](../../tests/test_delegation.py)·[실제 Git](../../tests/test_workspaces.py)·[Git Skill 배포](../../tests/test_workspace_deployment.py) |
+| Memory 재구성 | [이벤트·분기·재생·격리](../../tests/test_memory_archive.py) |
+| 문서 링크·계층 경계 | [문서](../../tests/test_documentation_links.py)·[패키지](../../tests/test_package_boundaries.py) |
 
 전체 pytest는 회사 자격·AWS·운영 리소스 없이 실행한다.
-MCP는 localhost의 실제 HTTP·SDK client로, Git은 임시 로컬 저장소로 검증하며 AWS 요청·응답은 모의 연결이다.
+AWS 요청은 native SDK 형식의 모의 연결, MCP는 localhost의 실제 HTTP·SDK client, Git은 임시 로컬 저장소로 검증한다.
 
 ### 실제 환경에서 확인할 사항
 
@@ -341,6 +347,4 @@ MCP는 localhost의 실제 HTTP·SDK client로, Git은 임시 로컬 저장소�
 | 공유 기억 | 예약 수집/실패 알림·A→B 재사용·프로젝트 차단·추출 지연/정정·재구성 품질 |
 | 운영 품질 | 실제 S3 동시 쓰기/장애 복구·추적·평가·비용·처리 리전 |
 
-[Transaction Search](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-operations.html)의 계정 설정·보존 기간을 확인한다.
-Memory·평가의 [교차 리전 처리](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/cross-region-inference.html)를 회사 정책과 대조하며 서울 Evaluations는 글로벌 교차 리전 추론을 사용한다.
-[Lambda 코드 평가기](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-based-evaluators.html)는 처리 위치·외부 API 조건에 따른 평가 후보다.
+[Transaction Search](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-operations.html)의 계정 설정·보존 기간과 Memory·평가의 [교차 리전 처리](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/cross-region-inference.html)를 회사 정책과 대조한다.
