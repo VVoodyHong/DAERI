@@ -101,16 +101,18 @@ def test_code_block_headings_do_not_satisfy_real_anchor_links(tmp_path):
 
 
 def test_scans_repository_documentation_without_git(tmp_path):
-    for name in ('AGENTS.md', 'CLAUDE.md', 'README.md', 'docs/nested/guide.md'):
+    for name in ('AGENTS.md', 'CLAUDE.md', 'README.md', 'docs/nested/guide.md',
+                 'plugins/daeri/skills/daeri/SKILL.md'):
         write(tmp_path, name, '[깨진 문서](missing.md)')
     write(tmp_path, '.venv/README.md', '[환경 내부](missing.md)')
     write(tmp_path, 'unrelated/README.md', '[검사 범위 밖](missing.md)')
 
     issues = check_docs(tmp_path)
 
-    assert len(issues) == 4
+    assert len(issues) == 5
     assert all(any(name + ':1:' in issue for issue in issues) for name in (
-        'AGENTS.md', 'CLAUDE.md', 'README.md', 'docs/nested/guide.md'))
+        'AGENTS.md', 'CLAUDE.md', 'README.md', 'docs/nested/guide.md',
+        'plugins/daeri/skills/daeri/SKILL.md'))
 
 
 def test_repository_documentation_links_resolve():

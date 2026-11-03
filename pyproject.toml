@@ -9,9 +9,16 @@ description = "DAERI orchestration runtime with shared project knowledge and Age
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "boto3>=1.43.122,<2",
+  "httpx>=0.28,<1",
+  "mcp>=1.30,<2",
   "pydantic>=2.11,<3",
+  "pyjwt[crypto]>=2.15,<3",
   "pyyaml>=6,<7",
+  "uvicorn>=0.54,<1",
 ]
+
+[project.scripts]
+daeri = "daeri.__main__:main"
 
 [dependency-groups]
 dev = ["pytest>=8,<10"]

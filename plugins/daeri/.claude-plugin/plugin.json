@@ -1,0 +1,8 @@
+{
+  "name": "daeri",
+  "version": "__DAERI_RELEASE__",
+  "author": {"name": "DAERI"},
+  "description": "회사 프로젝트의 업무를 맡기고 계획 확인과 결과를 받습니다.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

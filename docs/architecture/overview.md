@@ -9,19 +9,19 @@ DAERI는 같은 프로젝트의 구성원이 중앙 연결한 리소스와 업�
 ## 구성과 책임
 
 DAERI 자체의 업무·기억 저장은 Memory·S3로 구성하며 업무 대상 DB·API는 프로젝트 리소스로 연결한다.
-아래 그림은 채택 구조와 후속 접속·승인·관리형 연결을 함께 나타내며 실제 제공 범위는 [제품 명세](../spec/product.md#현재-제공-범위)를 따른다.
+아래 그림은 채택 구조와 접속·승인·관리형 연결을 나타내며 구현과 실제 연동 범위는 [제품 명세](../spec/product.md#현재-제공-범위)를 따른다.
 
 ![DAERI AWS 서비스 구성도](../assets/daeri-agentcore-architecture.svg)
 
 | 구성 | 책임 |
 |---|---|
 | Claude Code·Codex 접속부 | 회사 로그인·프로젝트 선택, 요청·실제 승인·피드백 전달, 진행·결과 표시 |
-| 회사 IdP·인증 경계 | 사용자 신원과 프로젝트 전체 자료·대화·과거 기억을 공유할 수 있는 구성원인지 확인 |
-| SSM Parameter Store | 프로젝트 이름·harness ARN의 중앙 참조 |
+| 회사 IdP·인증 경계 | 관리형 회사 로그인, resource server의 토큰 검증·프로젝트 grant 해소 |
+| SSM Parameter Store | 프로젝트 이름·harness·릴리스 endpoint와 버전의 중앙 참조 |
 | AgentCore managed harness | 모델·도구 반복·문맥, 총괄 에이전트 수행과 inline 도구의 대기·재개 |
-| AgentCore Runtime | 에이전트 실행의 격리·확장·호스팅 |
+| AgentCore Runtime | DAERI MCP 접속부와 에이전트 실행의 격리·확장·세션 라우팅 |
 | 프로젝트별 BYO Memory | 업무 대화와 공유 namespace의 경험 추출·통합·의미 검색 |
-| DAERI 서비스 | 허용 목록·업무·세션·실제 승인 연결, S3 상태·원본 보존과 저장 장애 복구 |
+| DAERI 서비스 | 인증된 MCP 접속·목록·업무·실제 확인 연결, S3 상태·원본 보존·복구 |
 | S3 | 업무별 상태 문서(manifest), 접수·수신한 불변 원본과 산출물 |
 | Gateway·Policy·Identity | MCP·API 연결·자격 관리·리소스 접근 정책 집행 |
 | Observability·Evaluations | 실행 추적과 업무·기억 검색 품질 평가 |
@@ -30,10 +30,17 @@ DAERI 자체의 업무·기억 저장은 Memory·S3로 구성하며 업무 대�
 개별 harness 생성·대상 연결·결과 수집은 후속 구현이며 고급 라우팅·병렬 조정은 별도 코드가 필요한 범위다.
 이는 AWS의 [멀티 에이전트 지원 범위](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-classic-maintenance-mode.html#comparing-capabilities)에 맞춘 분담이다.
 
+관리형 harness의 [Strands 기반 실행 루프](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-vs-runtime.html)를 사용한다.
+DAERI는 프로젝트·업무·실제 승인·원본을 연결하며 추론 루프와 기억 색인은 AWS가 관리한다.
+단계별 분기·병렬 제어·체크포인트가 제품 요구가 되면 Strands 직접 실행이나 LangGraph를 Runtime에 연결하는 구조를 비교한다.
+
 ## 요청과 응답의 연결
 
 회사 인증 경계는 검증한 사용자·프로젝트를 전달하고 DAERI는 중앙 설정을 조회해 허용된 목록을 반환한다.
-사용자가 선택한 프로젝트에서 업무를 시작하면 harness ARN을 업무에 고정하며 재개·복구는 작성 사용자·프로젝트와 원래 실행 대상을 확인한다.
+사용자가 선택한 프로젝트에서 업무를 시작하면 harness ARN·릴리스 endpoint·버전을 업무에 보존한다.
+호출 전 endpoint의 실제 버전과 해당 버전의 승인 설정을 확인하며 재개·복구는 작성 사용자·프로젝트와 원래 실행 대상을 사용한다.
+배포는 새 버전의 endpoint를 생성해 중앙 참조를 교체하고 기존 업무의 endpoint는 유지한다.
+이는 [AWS 버전·endpoint](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-versioning.html)에 맞춘 운영 경계이며 endpoint 변경 권한은 배포 주체가 관리한다.
 
 ```mermaid
 sequenceDiagram
@@ -42,12 +49,21 @@ sequenceDiagram
     participant S3 as S3 업무·원본
     participant Harness as 관리형 harness
     participant Memory as 프로젝트 Memory
+    participant Guard as 승인 Lambda hook
     participant Gateway as Gateway와 리소스
-    Client->>DAERI: 요청 또는 실제 승인·피드백
+    Client->>DAERI: 인증된 프로젝트 업무 요청
     DAERI->>S3: 업무 실행 점유·입력 보관
     DAERI->>Harness: 선택 프로젝트의 업무·세션
     Harness->>Memory: 관련 경험 검색
-    Harness->>Gateway: 현재 권한·승인으로 도구 호출
+    Harness-->>DAERI: 현재 계획의 inline 확인 대기
+    DAERI-->>Client: 호스트 사용자 확인창
+    Client->>DAERI: 실제 승인·수정·거절
+    DAERI->>S3: 현재 계획과 결정 CAS 보존
+    DAERI->>Harness: 같은 세션의 실제 대기 응답
+    Harness->>Guard: 도구 호출 직전 검사
+    Guard->>S3: 보호된 세션 연결·현재 승인 조회
+    Guard-->>Harness: 허용 또는 거부
+    Harness->>Gateway: 현재 리소스 권한으로 도구 호출
     Gateway-->>Harness: 결과·근거
     Harness-->>DAERI: 응답·상태·수신 관찰·파일 참조
     DAERI->>S3: 응답 원본 보관 후 상태 확정
@@ -58,6 +74,24 @@ sequenceDiagram
 서버 연결부는 `InvokeHarness`를 호출하고 managed harness가 모델·도구 루프와 [Memory 자동 검색·수집](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-memory.html)을 담당한다.
 Memory가 경험 추출·임베딩·색인과 [내장 의미 검색](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory-types.html)을 관리한다.
 자동 경험 추출·검색의 실제 사용자 간 공유·지연·정정 동작은 AWS 연동에서 검증한다.
+
+## 원격 접속과 신뢰 경계
+
+같은 Skill·MCP 설정을 두 호스트 manifest에서 사용하고 OAuth 로그인·form elicitation은 호스트의 표준 기능으로 연결한다.
+서버는 [공식 MCP SDK](https://github.com/modelcontextprotocol/python-sdk/tree/v1.30.0)의 stateful Streamable HTTP·protected resource metadata·인증 middleware를 사용한다.
+DAERI MCP 서버는 [AgentCore Runtime의 MCP 계약](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-mcp-protocol-contract.html)으로 배포한다.
+Runtime의 JWT 진입 검사·격리·확장과 `Mcp-Session-Id` 라우팅을 사용하고 서버는 프로젝트·업무·확인창의 신원을 검증한다.
+MCP 세션의 일시적 연결 상태는 Runtime 내 프로세스에, 업무·승인·원본은 S3에 보관한다.
+재연결·호스트 전환에는 공용 현재 업무 포인터 대신 자신의 업무 목록을 사용한다.
+
+신원은 관리형 IdP의 서명된 토큰에서 해소하고 도구 입력은 선택한 프로젝트·업무·요청으로 구성한다.
+SDK의 세션 소유권 검사는 검증한 사용자·프로젝트 grant·scope의 키로 묶어 확인창 응답에도 적용한다.
+같은 권한의 토큰 갱신은 이어지고 권한 변화에는 새 MCP 연결을 사용한다.
+이 검사는 서버에 제출한 토큰 기준이며 IdP의 즉시 철회 조회와 구별한다.
+
+호스트가 사용자 확인 응답을 전달하는 신뢰 경계와 계획·승인 상태는 [제품 계약](../spec/product.md#계획과-승인)을 따른다.
+자연어 계획의 의미적 범위 판단은 에이전트, 실제 대상 권한은 Gateway·Identity·리소스가 담당한다.
+Lambda hook은 실제 승인 순서와 현재 업무·세션 연결을 집행한다.
 
 ## 중앙 리소스 연결
 
@@ -79,6 +113,10 @@ stdio MCP는 중앙에서 실행 가능한 HTTP MCP로 호스팅·변환한다.
 `actorId`는 실사용자로 유지하며 장기 전략·자동 검색을 harness에 연결한다.
 공유 namespace는 출처별 검색 권한을 대신하지 않으므로 프로젝트 전체 공유가 가능한 구성원을 인증 경계에서 확인한다.
 
+프로젝트의 사실은 Semantic, 수행 경험·교훈은 [Episodic과 reflection](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/episodic-memory-strategy.html), 진행 문맥은 사용자·세션별 Summarization으로 구성한다.
+확정된 업무 절차는 Git/S3의 [Harness Skills](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-skills.html)로 관리하고 경험 검색과 구분한다.
+배포 도구가 독립 Memory·namespace·활성 전략·harness 연결을 확인한 뒤 프로젝트를 공개한다.
+
 단기 이벤트의 [보존 한도는 최대 365일](https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_Memory.html)이며 장기 기억은 [TTL을 생략하면 만료되지 않는다](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/long-term-record-ttl.html).
 장기 기억은 [통합 과정에서 교체·삭제될 수 있으므로](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory-record-streaming.html) 원본은 S3에 별도로 보존한다.
 S3 원본은 자동 만료를 생략하고 버전 관리·삭제 권한·배포 제거 정책으로 Memory·harness와 독립된 수명을 유지한다.
@@ -88,6 +126,9 @@ S3 원본은 자동 만료를 생략하고 버전 관리·삭제 권한·배포 
 단기 이벤트 만료 뒤 S3 원본으로 새 세션·현재 계획·승인을 준비하는 복구 경로도 실제 AWS에서 검증한다.
 
 ## S3 업무 상태와 장애 복구
+
+세션 연결 객체는 harness·session ID를 작성 사용자·프로젝트·업무에 고정하며 실행 전에 보존·대조한다.
+실행 role과 hook이 사용하는 연결은 서비스가 기록한 이 값으로 해소한다.
 
 업무 manifest는 [S3 조건부 쓰기](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)의 `If-Match`로 같은 업무의 동시 진입을 조정한다.
 호출 후에는 `If-None-Match: *`로 불변 응답 원본을 먼저 보관하고 실제 보관 성공을 확인한 뒤 manifest를 확정한다.
@@ -100,13 +141,12 @@ SDK·모의 검증과 실제 S3·Memory 연결의 경계는 [구현과 대표 �
 
 ## 관리형 기능과 확장
 
-다음은 현재 핵심 구현에 연결할 관리형 기능이며 리소스 배포와 실제 검증은 후속 단계다.
+승인 hook은 구현했으며 Lambda 배포·권한과 아래 관리형 기능의 실제 연결은 배포 단계에서 검증한다.
 
 | 역할 | 적용 판단과 연결 조건 |
 |---|---|
-| 승인 집행 | [Lambda lifecycle hooks](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-lifecycle-hooks.html)의 `before_invocation`에 신원·업무 상태, `before_tool_call`에 현재 승인·대상 대조 연결 |
-| Gateway 승인 이력 | [Temporal policies](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-temporal.html)에 검증한 승인 이벤트·현재 호출을 대응시키는 후보; 같은 계정·리전의 인증된 policy session으로 검증 |
+| 승인 집행 | [Lambda lifecycle hook](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-lifecycle-hooks.html)의 `before_tool_call`, `failureMode: deny`와 S3 현재 결정을 연결; 실행 대상 설정도 사전 검사 |
 | 분석·파일 | [Code Interpreter·S3](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-s3-integration.html)로 분석·파일을 생성하고 업무·다운로드 접근 연결 |
-| 관측·개선 | [CloudWatch 추적](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-operations.html)·Evaluations와 [Recommendations·A/B 검증](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/optimization.html)으로 변경 효과 평가 |
+| 관측·개선 | [CloudWatch 추적](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/harness-operations.html)·Evaluations와 [Recommendations·A/B 검증](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/optimization.html)으로 공유 기억의 성공률·오적용·도구 호출·시간·비용 비교 |
 
 업무별 소스 실행 위치·Git 자격은 [배포 조건](../development/dependencies.md#배포와-확장-시-확인할-조건), 포트·어댑터·조립 경계는 [패키지 안내](../development/dependencies.md#실행-진입점과-모듈)를 따른다.

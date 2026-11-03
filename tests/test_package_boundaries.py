@@ -25,8 +25,12 @@ sys.meta_path.insert(0, boundary)
 import daeri.core.cloud
 import daeri.core.errors
 import daeri.core.serialization
+import daeri.core.approval
+import daeri.core.access
+import daeri.core.endpoints
 boundary.blocked = boundary.blocked[1:]
 from daeri.application.cloud import CloudWorkflow
+from daeri.application.agent import AgentService
 '''
     result = subprocess.run([sys.executable, '-I', '-c', script, str(source)], cwd=tmp_path,
                             capture_output=True, text=True, timeout=20)

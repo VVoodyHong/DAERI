@@ -2,6 +2,7 @@
 
 import json
 from uuid import uuid4
+from dataclasses import replace
 
 import pytest
 
@@ -47,7 +48,23 @@ class Client:
 
 
 def task():
-    return CloudTask(str(uuid4()), str(uuid4()), AccessContext('actor-one', 'project'), harness_arn=ARN)
+    return CloudTask(str(uuid4()), str(uuid4()), AccessContext('actor-one', 'project'), harness_arn=ARN,
+                     harness_endpoint='RELEASE_V2', harness_version='2')
+
+
+@pytest.mark.parametrize('route', [
+    {'harness_endpoint': '', 'harness_version': ''},
+    {'harness_endpoint': 'DEFAULT'}, {'harness_endpoint': '2'},
+    {'harness_version': ''}, {'harness_version': '0'},
+])
+def test_unversioned_or_unsafe_route_is_rejected_before_calling_aws(route):
+    from daeri.infrastructure.agentcore import AgentCoreHarness
+    from daeri.core.errors import StoreError
+
+    client = Client()
+    with pytest.raises(StoreError) as error:
+        AgentCoreHarness(client).invoke(replace(task(), **route), [])
+    assert error.value.code == 'PROJECT_UNAVAILABLE' and client.requests == []
 
 
 def text_events(text='Completed.', reason='end_turn'):
@@ -87,6 +104,7 @@ def test_native_sdk_request_and_final_text_exclude_reasoning_and_close_stream():
     assert reply.error is None and reply.observations == () and reply.pending_tools == ()
     assert 'PRIVATE' not in repr(reply)
     assert client.requests == [{'harnessArn': ARN, 'runtimeSessionId': current.session_id,
+                                'qualifier': 'RELEASE_V2',
                                 'actorId': current.context.actor_id, 'runtimeUserId': current.context.actor_id,
                                 'messages': messages}]
     assert client.stream.closed
@@ -190,7 +208,7 @@ def test_sdk_client_error_is_sanitized_without_retry():
     assert 'PRIVATE' not in repr(reply)
 
 
-def test_inline_handoff_stops_at_next_harness_executed_tool():
+def test_native_handoff_returns_only_the_first_inline_call_awaiting_a_response():
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
     events = [
@@ -203,7 +221,7 @@ def test_inline_handoff_stops_at_next_harness_executed_tool():
     ]
     reply = AgentCoreHarness(Client(events)).invoke(task(), [])
     assert reply.error is None
-    assert [tool['toolUseId'] for tool in reply.pending_tools] == ['first', 'adjacent']
+    assert [tool['toolUseId'] for tool in reply.pending_tools] == ['first']
 
 
 def test_duplicate_inline_tool_id_cannot_be_handed_off_for_execution_twice():

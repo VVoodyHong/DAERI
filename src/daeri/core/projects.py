@@ -9,6 +9,8 @@ class Project:
     id: str
     name: str
     harness_arn: str
+    harness_endpoint: str = ''
+    harness_version: str = ''
 
 
 class ProjectCatalog(Protocol):

@@ -12,7 +12,8 @@ from daeri.core.errors import StoreError
 
 
 ARN = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/daeri-abcdefghij'
-METADATA = {'name': 'Charging', 'harness_arn': ARN}
+METADATA = {'name': 'Charging', 'harness_arn': ARN,
+            'harness_endpoint': 'RELEASE_V2', 'harness_version': '2'}
 OPERATION = boto3.Session()._session.get_service_model('ssm').operation_model('GetParameter')
 
 
@@ -41,6 +42,7 @@ def test_selected_project_reads_one_central_parameter_and_returns_immutable_meta
     client = Client()
     first, second = catalog(client).get('charging'), catalog(client).get('charging')
     assert first.id == 'charging' and first.name == 'Charging' and first.harness_arn == ARN
+    assert first.harness_endpoint == 'RELEASE_V2' and first.harness_version == '2'
     assert first == second and first is not second
     assert client.requests == [{'Name': '/daeri/projects/charging', 'WithDecryption': False}] * 2
     with pytest.raises(FrozenInstanceError):
@@ -76,6 +78,9 @@ def test_invalid_admin_prefix_is_rejected(prefix):
     {**METADATA, 'service': 'legacy'}, {**METADATA, 'profile': 'legacy'},
     {**METADATA, 'name': 'bad\ud800name'},
     {**METADATA, 'name': 'bad\x00name'},
+    {**METADATA, 'harness_endpoint': 'DEFAULT'}, {**METADATA, 'harness_endpoint': 'bad/path'},
+    {**METADATA, 'harness_version': ''}, {**METADATA, 'harness_version': '0'},
+    {**METADATA, 'harness_version': 2}, {**METADATA, 'harness_version': '02'},
 ])
 def test_invalid_metadata_is_sanitized(metadata):
     with pytest.raises(StoreError) as error:
@@ -87,6 +92,12 @@ def test_invalid_json_is_sanitized():
     with pytest.raises(StoreError) as error:
         catalog(Client('PRIVATE_PAYLOAD')).get('charging')
     assert error.value.code == 'INVALID_INPUT' and 'PRIVATE_PAYLOAD' not in str(error.value)
+
+
+def test_legacy_project_route_requires_a_release_before_it_can_be_used():
+    with pytest.raises(StoreError) as error:
+        catalog(Client(json.dumps({'name': 'Charging', 'harness_arn': ARN}))).get('charging')
+    assert error.value.code == 'INVALID_INPUT'
 
 
 @pytest.mark.parametrize(('failure', 'code'), [

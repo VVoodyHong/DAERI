@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "runtime": {
+      "type": "http",
+      "url": "__DAERI_MCP_URL__",
+      "oauth": {
+        "clientId": "__DAERI_OAUTH_CLIENT_ID__",
+        "callbackPort": "__DAERI_OAUTH_CALLBACK_PORT__"
+      }
+    }
+  }
+}

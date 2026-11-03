@@ -5,7 +5,7 @@ from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 import json
-from threading import Lock
+from threading import Barrier, Lock
 
 import boto3
 from botocore.exceptions import ClientError
@@ -71,6 +71,20 @@ class S3:
             self.streams.append(stream)
             return {'Body': stream, 'ETag': etag, 'ContentLength': len(body)}
 
+    def list_objects_v2(self, **request):
+        validate_parameters(request, MODEL.operation_model('ListObjectsV2').input_shape)
+        self.calls.append(('list', request))
+        prefix = request['Prefix']
+        groups = sorted({prefix + key[len(prefix):].split('/')[0] + '/'
+                         for key in self.objects if key.startswith(prefix)})
+        offset = int(request.get('ContinuationToken', '0'))
+        end = offset + request['MaxKeys']
+        response = {'CommonPrefixes': [{'Prefix': group} for group in groups[offset:end]],
+                    'IsTruncated': end < len(groups)}
+        if response['IsTruncated']:
+            response['NextContinuationToken'] = str(end)
+        return response
+
 
 def make_store(client):
     from daeri.infrastructure.cloud_s3 import S3CloudStore
@@ -83,7 +97,7 @@ def context():
 
 def begin(client):
     store = make_store(client)
-    task = store.create_task(context(), ARN, 'Inspect')
+    task = store.create_task(context(), ARN, 'Inspect', harness_endpoint='RELEASE_V1', harness_version='1')
     turn = store.begin_turn(task, 'Inspect', ())
     return store, task, turn
 
@@ -102,6 +116,37 @@ def test_manifest_creation_and_loading_preserve_binding_route_and_goal():
     assert task.etag and task.session_id and task.id
     assert client.calls[0][1]['IfNoneMatch'] == '*'
     assert all(stream.closed for stream in client.streams)
+
+
+def test_release_route_and_readonly_last_result_survive_a_new_execution():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect', harness_endpoint='RELEASE_V2', harness_version='2')
+    assert store.read_turn(context(), task.id) is None
+    turn = store.begin_turn(task, 'Inspect', ())
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Original result', 'end_turn'), ())
+    loaded = make_store(client).get_task(context(), task.id)
+    assert loaded.harness_endpoint == 'RELEASE_V2' and loaded.harness_version == '2'
+    store.begin_turn(loaded, 'Follow up', ())
+    calls = len(client.calls)
+    result = make_store(client).read_turn(context(), task.id)
+    assert result.reply.text == 'Original result'
+    assert all(operation != 'put' for operation, _ in client.calls[calls:])
+
+
+def test_modified_release_route_in_receipt_is_rejected():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect', harness_endpoint='RELEASE_V2', harness_version='2')
+    turn = store.begin_turn(task, 'Inspect', ())
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Original result', 'end_turn'), ())
+    key = next(key for key in client.objects if '/turns/' in key)
+    receipt = json.loads(client.objects[key][0])
+    receipt['harness_version'] = '3'
+    client.objects[key] = (json.dumps(receipt).encode(), 'changed')
+    with pytest.raises(StoreError) as error:
+        store.read_turn(context(), task.id)
+    assert error.value.code == 'STORAGE_CONFLICT'
 
 
 def test_two_concurrent_stale_writers_only_allow_one_external_invocation():
@@ -382,6 +427,8 @@ def test_sdk_stubber_accepts_native_conditional_create_request():
     with Stubber(client) as stub:
         stub.add_response('put_object', {'ETag': '"created"'},
             {'Bucket': BUCKET, 'Key': ANY, 'Body': ANY, 'ContentType': 'application/json', 'IfNoneMatch': '*'})
+        stub.add_response('put_object', {'ETag': '"index"'},
+            {'Bucket': BUCKET, 'Key': ANY, 'Body': ANY, 'ContentType': 'application/json', 'IfNoneMatch': '*'})
         task = make_store(client).create_task(context(), ARN, 'Inspect')
         assert task.etag == '"created"'
         stub.assert_no_pending_responses()
@@ -407,3 +454,203 @@ def test_invalid_storage_bucket_is_rejected(bucket):
     from daeri.infrastructure.cloud_s3 import validate_storage_bucket
     with pytest.raises(StoreError, match='INVALID_INPUT'):
         validate_storage_bucket(bucket)
+
+
+def approval_wait(client):
+    store, task, turn = begin(client)
+    pending = ({'toolUseId': 'plan-first', 'name': 'confirm_plan',
+                'input': {'plan': 'Inspect the current project cache.'}, 'type': 'tool_use'},)
+    store.finish_turn(task, turn, 'Inspect', HarnessReply('Review', 'tool_use', pending), ())
+    return store, store.get_task(context(), task.id)
+
+
+def test_native_plan_wait_is_durable_and_decision_is_bound_to_current_pending_plan():
+    client = S3()
+    store, task = approval_wait(client)
+    assert getattr(task, 'approval', None) is not None
+    assert task.approval.tool_use_id == 'plan-first' and task.approval.decision == 'pending'
+    approved = store.record_decision(task, 'plan-first', task.approval.plan, 'approve', '승인합니다.')
+    restored = make_store(client).get_task(context(), task.id)
+    assert restored == approved and restored.approval.decision == 'approve'
+    assert restored.approval.response == '승인합니다.' and restored.etag != task.etag
+    for stale in (task, restored):
+        with pytest.raises(StoreError, match='STORAGE_CONFLICT'):
+            store.record_decision(stale, 'plan-first', task.approval.plan, 'approve', '다시 승인')
+
+
+@pytest.mark.parametrize('tool_id,plan,decision', [
+    ('plan-old', 'Inspect the current project cache.', 'approve'),
+    ('plan-first', 'Delete another project.', 'approve'),
+    ('plan-first', 'Inspect the current project cache.', 'unknown'),
+])
+def test_mismatched_plan_or_decision_never_changes_the_waiting_approval(tool_id, plan, decision):
+    client = S3()
+    store, task = approval_wait(client)
+    assert getattr(task, 'approval', None) is not None
+    with pytest.raises(StoreError):
+        store.record_decision(task, tool_id, plan, decision, '응답')
+    assert store.get_task(context(), task.id) == task
+
+
+def test_hook_lookup_requires_the_saved_harness_session_index_and_live_invocation():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect')
+    assert hasattr(store, 'hook_get')
+    index_key = 'daeri/sessions/' + sha256(ARN.encode()).hexdigest() + '/' + task.session_id + '.json'
+    assert index_key in client.objects
+    with pytest.raises(StoreError):
+        store.hook_get(ARN, task.session_id)
+    store.begin_turn(task, 'Inspect', ())
+    assert store.hook_get(ARN, task.session_id).id == task.id
+    with pytest.raises(StoreError):
+        store.hook_get(ARN.replace('project-', 'another-'), task.session_id)
+    raw, etag = client.objects[index_key]
+    changed = json.loads(raw)
+    changed['actor_id'] = 'bob'
+    client.objects[index_key] = (json.dumps(changed).encode(), etag)
+    with pytest.raises(StoreError):
+        store.hook_get(ARN, task.session_id)
+
+
+def test_missing_index_is_repaired_before_begin_and_conflicting_index_never_dispatches():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect')
+    keys = [key for key in client.objects if '/sessions/' in key]
+    assert len(keys) == 1
+    saved = client.objects.pop(keys[0])
+    store.begin_turn(task, 'Inspect', ())
+    assert keys[0] in client.objects
+    another = store.create_task(context(), ARN, 'Another')
+    another_key = next(key for key in client.objects if key.endswith(another.session_id + '.json'))
+    client.objects[another_key] = saved
+    with pytest.raises(StoreError, match='STORAGE_CONFLICT'):
+        store.begin_turn(another, 'Another', ())
+    assert store._manifest(context(), another.id)[0]['in_flight'] is None
+
+
+def test_approved_plan_is_cleared_by_new_normal_request_and_by_new_confirmation_hook():
+    client = S3()
+    store, task = approval_wait(client)
+    assert getattr(task, 'approval', None) is not None
+    task = store.record_decision(task, 'plan-first', task.approval.plan, 'approve', '승인')
+    results = ({'toolUseId': 'plan-first', 'status': 'success', 'content': [{'text': 'Approved'}]},)
+    store.begin_turn(task, '', results)
+    active = store.hook_get(ARN, task.session_id)
+    assert active.approval.decision == 'approve'
+    store.revoke_approval(active)
+    assert store.hook_get(ARN, task.session_id).approval is None
+    with pytest.raises(StoreError, match='STORAGE_CONFLICT'):
+        store.revoke_approval(active)
+
+
+def test_new_text_turn_clears_previously_saved_approval_before_harness_invocation():
+    client = S3()
+    store, task = approval_wait(client)
+    assert getattr(task, 'approval', None) is not None
+    task = store.record_decision(task, 'plan-first', task.approval.plan, 'approve', '승인')
+    results = ({'toolUseId': 'plan-first', 'status': 'success', 'content': [{'text': 'Approved'}]},)
+    turn = store.begin_turn(task, '', results)
+    store.finish_turn(task, turn, '', HarnessReply('Done', 'end_turn'), results)
+    task = store.get_task(context(), task.id)
+    store.begin_turn(task, 'Change the target.', ())
+    assert store.hook_get(ARN, task.session_id).approval is None
+
+
+def test_approval_survives_verified_pre_stream_rejection_but_not_uncertain_failure():
+    client = S3()
+    store, task = approval_wait(client)
+    assert getattr(task, 'approval', None) is not None
+    task = store.record_decision(task, 'plan-first', task.approval.plan, 'approve', '승인')
+    results = ({'toolUseId': 'plan-first', 'status': 'success', 'content': [{'text': 'Approved'}]},)
+    turn = store.begin_turn(task, '', results)
+    store.finish_turn(task, turn, '', HarnessReply('Throttled', 'failed', task.pending_tools,
+                                                 error='HARNESS_THROTTLED'), results)
+    task = store.get_task(context(), task.id)
+    assert task.approval.decision == 'approve'
+    turn = store.begin_turn(task, '', results)
+    store.finish_turn(task, turn, '', HarnessReply('Uncertain', 'failed', error='HARNESS_UNAVAILABLE'), results)
+    assert store.get_task(context(), task.id).approval is None
+
+
+def test_legacy_manifest_without_approval_still_loads_and_never_grants_approval():
+    client = S3()
+    store, task, _ = begin(client)
+    key, value = manifest(client)
+    value.pop('approval', None)
+    client.objects[key] = (json.dumps(value).encode(), '"legacy"')
+    loaded = store.get_task(context(), task.id)
+    assert hasattr(loaded, 'approval') and loaded.approval is None
+
+
+def test_task_listing_uses_scoped_native_pagination_and_rejects_cross_context_cursor():
+    client = S3()
+    store = make_store(client)
+    created = [store.create_task(context(), ARN, goal) for goal in ('one', 'two', 'three')]
+    store.create_task(AccessContext('bob', 'project'), ARN, 'Private')
+    assert hasattr(store, 'list_tasks')
+    page = store.list_tasks(context(), limit=2)
+    assert len(page['items']) == 2 and page['next_cursor']
+    second = store.list_tasks(context(), cursor=page['next_cursor'], limit=2)
+    assert len(second['items']) == 1 and second['next_cursor'] is None
+    assert {task.id for task in page['items'] + second['items']} == {task.id for task in created}
+    request = next(request for op, request in client.calls if op == 'list')
+    assert request['Delimiter'] == '/' and request['MaxKeys'] == 2
+    for other, cursor in ((AccessContext('bob', 'project'), page['next_cursor']), (context(), 'not-a-cursor')):
+        with pytest.raises(StoreError, match='INVALID_INPUT'):
+            store.list_tasks(other, cursor=cursor, limit=2)
+
+
+def test_concurrent_user_decisions_only_commit_one_current_plan_response():
+    client = S3()
+    store, task = approval_wait(client)
+    original_put, ready = client.put_object, Barrier(2)
+    def simultaneous_put(**request):
+        ready.wait(timeout=2)
+        return original_put(**request)
+    client.put_object = simultaneous_put
+    def decide(choice):
+        try:
+            return store.record_decision(task, 'plan-first', task.approval.plan, choice, choice).approval.decision
+        except StoreError as error:
+            return error.code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        choices = list(pool.map(decide, ('approve', 'reject')))
+    assert choices.count('STORAGE_CONFLICT') == 1
+    assert store.get_task(context(), task.id).approval.decision in {'approve', 'reject'}
+
+
+def test_invalid_decision_type_is_a_controlled_input_error():
+    client = S3()
+    store, task = approval_wait(client)
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        store.record_decision(task, 'plan-first', task.approval.plan, [], 'response')
+
+
+def test_invalid_native_list_prefix_is_storage_failure_not_a_caller_error():
+    client = S3()
+    store = make_store(client)
+    task = store.create_task(context(), ARN, 'Inspect')
+    client.list_objects_v2 = lambda **_: {'CommonPrefixes': [{'Prefix': 'wrong/not-a-task/'}]}
+    with pytest.raises(StoreError, match='STORAGE_UNAVAILABLE'):
+        store.list_tasks(context())
+    assert store.get_task(context(), task.id).goal == 'Inspect'
+
+
+def test_live_invocation_snapshot_is_running_without_changing_persisted_state():
+    client = S3()
+    store, task, _ = begin(client)
+    assert store.get_task(context(), task.id).state == 'running'
+    assert manifest(client)[1]['state'] == 'active'
+
+
+@pytest.mark.parametrize('pending', [[None], ['not-a-tool'], [{}], None])
+def test_corrupt_pending_records_are_controlled_storage_errors(pending):
+    client = S3()
+    store, task, _ = begin(client)
+    key, value = manifest(client)
+    value['pending_tools'] = pending
+    client.objects[key] = (json.dumps(value).encode(), '"corrupt"')
+    with pytest.raises(StoreError, match='STORAGE_UNAVAILABLE'):
+        store.get_task(context(), task.id)

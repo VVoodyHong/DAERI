@@ -1,6 +1,7 @@
 """Translate the AgentCore InvokeHarness event stream into the cloud port."""
 
 import json
+import re
 from dataclasses import replace
 
 from daeri.core.cloud import HarnessReply
@@ -109,19 +110,21 @@ class _HarnessStream:
                 self.error = 'HARNESS_' + self.stop.upper()
             elif self.stop == 'tool_use':
                 try:
+                    ids = [block['toolUse']['toolUseId'] for block in self.tools]
+                    if len(ids) != len(set(ids)):
+                        self.error = 'HARNESS_STREAM_INCOMPLETE'
                     for block in self.tools:
                         tool = block['toolUse']
                         if tool['toolUseId'] in self.completed:
                             continue
                         if tool.get('type', 'tool_use') != 'tool_use':
-                            if pending:
-                                break
                             continue
                         data = json.loads(block['input'] or '{}', parse_constant=_reject_constant)
                         if not isinstance(data, dict):
                             raise ValueError('Tool input must be an object')
                         json.dumps(data, allow_nan=False)
                         pending.append({**tool, 'input': data})
+                        break
                     if (not pending or self.role != 'assistant'
                             or len({tool['toolUseId'] for tool in pending}) != len(pending)):
                         self.error = 'HARNESS_STREAM_INCOMPLETE'
@@ -153,10 +156,15 @@ class AgentCoreHarness:
         self.client = client
 
     def invoke(self, task, messages):
-        if not task.harness_arn:
-            raise StoreError('PROJECT_UNAVAILABLE', 'The saved task has no project harness route.')
+        if (not task.harness_arn or not isinstance(task.harness_endpoint, str)
+                or task.harness_endpoint == 'DEFAULT'
+                or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,47}', task.harness_endpoint)
+                or not isinstance(task.harness_version, str)
+                or not re.fullmatch(r'[1-9][0-9]{0,4}', task.harness_version)):
+            raise StoreError('PROJECT_UNAVAILABLE', 'The saved task needs a versioned project harness route.')
         state, stream, rejected = _HarnessStream(), None, False
         request = {'harnessArn': task.harness_arn, 'runtimeSessionId': task.session_id,
+                   'qualifier': task.harness_endpoint,
                    'actorId': task.context.actor_id, 'runtimeUserId': task.context.actor_id,
                    'messages': messages}
         try:

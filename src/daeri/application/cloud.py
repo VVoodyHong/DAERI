@@ -5,7 +5,7 @@ from typing import Any
 
 from daeri.core.cloud import AccessContext, CloudStore, CloudTask, CloudTurn, Harness, HarnessReply
 from daeri.core.errors import StoreError
-from daeri.core.projects import ProjectCatalog
+from daeri.core.projects import Project, ProjectCatalog
 from daeri.core.serialization import validate_storable_json
 
 
@@ -78,17 +78,23 @@ class CloudWorkflow:
             projects[project.id] = {'id': project.id, 'name': project.name}
         return list(projects.values())
 
-    def start(self, context: AccessContext, prompt: str) -> CloudTurn:
+    def start(self, context: AccessContext, prompt: str, *, project: Project | None = None) -> CloudTurn:
         _validate_prompt(prompt, required=True)
         _validate_context(context)
-        project = self.catalog.get(context.project_id)
-        task = self.store.create_task(context, project.harness_arn, prompt)
+        project = self.catalog.get(context.project_id) if project is None else project
+        if not isinstance(project, Project) or project.id != context.project_id:
+            raise StoreError('ACCESS_DENIED', 'The checked release belongs to another project.')
+        task = self.store.create_task(context, project.harness_arn, prompt,
+                                      harness_endpoint=project.harness_endpoint,
+                                      harness_version=project.harness_version)
         return self._invoke(task, prompt, (), [])
 
     def resume(self, context: AccessContext, task_id: str, prompt: str = '',
-               tool_results: tuple[dict[str, Any], ...] = ()) -> CloudTurn:
+               tool_results: tuple[dict[str, Any], ...] = (), *, expected_etag: str | None = None) -> CloudTurn:
         _validate_prompt(prompt)
-        task = self._task(context, task_id)
+        task = self.get_task(context, task_id)
+        if expected_etag is not None and task.etag != expected_etag:
+            raise StoreError('STORAGE_CONFLICT', 'The recorded plan response changed before execution could begin.')
         results = _tool_results(task, tool_results)
         if not prompt.strip() and not results:
             raise StoreError('INVALID_INPUT', 'Supply a follow-up request or actual pending tool responses')
@@ -96,10 +102,10 @@ class CloudWorkflow:
 
     def recover(self, context: AccessContext, task_id: str) -> CloudTurn:
         """Recover a recorded turn without repeating external execution."""
-        self._task(context, task_id)
+        self.get_task(context, task_id)
         return self.store.recover_turn(context, task_id)
 
-    def _task(self, context: AccessContext, task_id: str) -> CloudTask:
+    def get_task(self, context: AccessContext, task_id: str) -> CloudTask:
         _validate_context(context)
         self.catalog.get(context.project_id)
         task = self.store.get_task(context, task_id)

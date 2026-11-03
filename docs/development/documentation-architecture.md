@@ -17,6 +17,7 @@
 | [검토 규칙](../rules/review.md) | 프로젝트 전체의 문서·코드 정합성·간소화·검증 |
 | [AGENTS](../../AGENTS.md)·[CLAUDE](../../CLAUDE.md) | Codex·Claude Code의 공유 개발 진입점 |
 | `docs/assets/` | README의 동작 구성도와 상세 AWS 구성도 |
+| [플러그인 Skill](../../plugins/daeri/skills/daeri/SKILL.md) | 공개 도구의 호스트 호출·사용자 확인·결과 표시 절차; 동작 계약은 제품 명세 |
 
 ## 작업과 재개
 

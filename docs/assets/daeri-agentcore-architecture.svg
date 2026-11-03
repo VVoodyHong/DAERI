@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1320" viewBox="0 0 1800 1320" role="img" aria-labelledby="title desc">
   <title id="title">DAERI AWS AgentCore 아키텍처</title>
-  <desc id="desc">구성원은 Claude Code·Codex 플러그인에서 회사 로그인 뒤 중앙 프로젝트를 선택하고 업무를 요청·승인한다. SSM Parameter Store는 프로젝트 이름·harness ARN을 보관한다. DAERI는 업무·실제 승인·세션을 연결하고 원래 harness에서 재개한다. Managed harness가 모델·도구 반복과 문맥을 관리하며 프로젝트별 독립 BYO Memory가 고정 공유 namespace에서 경험을 비동기로 추출·통합·검색한다. S3는 업무 상태와 DAERI가 접수·수신한 요청·응답·도구 관찰·파일 참조·산출물을 보존한다. DAERI는 불변 응답 원본 보관 뒤 상태를 확정하고 저장된 원본으로만 복구한다. Gateway·Policy·Identity가 DB·AWS·Jira·Confluence 등 중앙 도구의 연결·자격·권한을 관리한다. 생성 모델은 Harness에서 사내·호환 API 또는 Bedrock으로 선택한다. 플러그인·실제 인증·승인·Memory·도구 연결·AWS 배포는 후속 연동·검증 범위다.</desc>
+  <desc id="desc">구성원은 Claude Code·Codex 플러그인에서 회사 로그인 뒤 중앙 프로젝트를 선택하고 업무를 요청·승인한다. SSM Parameter Store는 프로젝트 이름·harness 릴리스 endpoint·버전을 보관한다. DAERI MCP 접속부도 AgentCore Runtime에 배포하며 HTTP MCP·토큰 검증·업무 목록과 사용자 확인창을 연결하고 저장한 실제 결정으로 원래 harness에서 재개한다. 승인 Lambda hook은 보호된 세션 연결·현재 승인으로 도구 호출을 검사한다. Managed harness가 모델·도구 반복과 문맥을 관리하며 프로젝트별 독립 BYO Memory가 고정 공유 namespace에서 경험을 비동기로 추출·통합·검색한다. S3는 업무 상태와 DAERI가 접수·수신한 요청·응답·도구 관찰·파일 참조·산출물을 보존한다. DAERI는 불변 응답 원본 보관 뒤 상태를 확정하고 저장된 원본으로만 복구한다. Gateway·Policy·Identity가 DB·AWS·Jira·Confluence 등 중앙 도구의 연결·자격·권한을 관리한다. 생성 모델은 Harness에서 사내·호환 API 또는 Bedrock으로 선택한다. 플러그인 배포 파일·토큰 검증·확인 응답·hook은 구현했으며 실제 호스트 설치·회사 IdP·Memory·도구 연결·AWS 배포는 연동 검증 범위다.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#63758a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#306cb5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -36,9 +36,9 @@
   <text x="77" y="418" class="body">프로젝트 선택·전환</text>
 
   <rect x="430" y="260" width="300" height="175" rx="18" fill="#edf3ff" stroke="#adc6e7" stroke-width="2"/>
-  <text x="455" y="305" class="heading">DAERI 서버 연결부</text>
+  <text x="455" y="305" class="heading">Runtime · DAERI MCP</text>
   <text x="455" y="347" class="body">프로젝트·업무·세션 연결</text>
-  <text x="455" y="380" class="body">실제 승인 전달 · 응답 기록</text>
+  <text x="455" y="380" class="body">로그인 검증 · 실제 승인</text>
   <text x="455" y="413" class="small">S3 상태·원본 보존 · 복구</text>
 
   <rect x="800" y="240" width="530" height="225" rx="19" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
@@ -98,7 +98,7 @@
   <text x="580" y="568" text-anchor="middle" class="label" style="fill:#306cb5">업무 실행·상태 연결</text>
   <text x="580" y="597" text-anchor="middle" class="label" style="fill:#306cb5">요청·수신 원본 보존</text>
   <path d="M1330 417H1360V753H1330" class="line"/>
-  <text x="1317" y="663" text-anchor="end" class="label">승인 범위의 도구 호출</text>
+  <text x="1317" y="663" text-anchor="end" class="label">승인 hook 확인 후 호출</text>
   <path d="M1330 788H1450" class="line"/>
   <text x="1390" y="766" text-anchor="middle" class="label">직접 호출</text>
   <path d="M620 875V955" class="line two"/>

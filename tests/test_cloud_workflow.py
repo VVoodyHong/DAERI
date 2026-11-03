@@ -21,9 +21,11 @@ RESULT = {'toolUseId': 'approval-1', 'status': 'success',
 class Catalog:
     def __init__(self):
         self.routes = {}
+        self.release = ('RELEASE_V2', '2')
 
     def get(self, project_id):
-        return Project(project_id, project_id.title(), self.routes.get(project_id, 'harness-' + project_id))
+        return Project(project_id, project_id.title(), self.routes.get(project_id, 'harness-' + project_id),
+                       *self.release)
 
 
 class Store:
@@ -31,9 +33,9 @@ class Store:
         self.tasks, self.turns, self.busy = {}, {}, set()
         self.fail_capture = False
 
-    def create_task(self, context, harness_arn, goal):
+    def create_task(self, context, harness_arn, goal, **route):
         key = str(len(self.tasks) + 1)
-        task = CloudTask(key, 'session-' + key, context, goal=goal, harness_arn=harness_arn)
+        task = CloudTask(key, 'session-' + key, context, goal=goal, harness_arn=harness_arn, **route)
         self.tasks[key] = task
         return task
 
@@ -93,16 +95,37 @@ def test_native_memory_harness_receives_only_actual_user_input():
     assert store.tasks[first.task_id].goal == 'Inspect cache'
 
 
+def test_start_uses_the_exact_release_checked_by_the_service():
+    workflow, _, harness, catalog = app(HarnessReply('Done', 'end_turn'))
+    checked = catalog.get(CONTEXT.project_id)
+    catalog.routes['charging'] = 'new-harness'
+    catalog.release = ('RELEASE_V3', '3')
+    workflow.start(CONTEXT, 'Inspect cache', project=checked)
+    task = harness.calls[0][0]
+    assert (task.harness_arn, task.harness_endpoint, task.harness_version) == (
+        checked.harness_arn, 'RELEASE_V2', '2')
+
+
+def test_checked_release_from_another_project_is_rejected_before_storage():
+    workflow, store, harness, catalog = app()
+    with pytest.raises(StoreError) as error:
+        workflow.start(CONTEXT, 'Inspect', project=catalog.get('other'))
+    assert error.value.code == 'ACCESS_DENIED'
+    assert store.tasks == {} and harness.calls == []
+
+
 def test_resume_from_another_client_preserves_actual_approval_and_original_route():
     workflow, store, harness, catalog = app(HarnessReply('Approve this plan', 'tool_use', (PENDING,)),
                                           HarnessReply('Done', 'end_turn'))
     first = workflow.start(CONTEXT, 'Inspect cache')
     catalog.routes['charging'] = 'new-harness'
+    catalog.release = ('RELEASE_V3', '3')
     supplied = deepcopy(RESULT)
     other_client = CloudWorkflow(store, harness, catalog)
     resumed = other_client.resume(CONTEXT, first.task_id, 'Use current data', (supplied,))
     task, messages = harness.calls[1]
     assert task.harness_arn == 'harness-charging'
+    assert task.harness_endpoint == 'RELEASE_V2' and task.harness_version == '2'
     assert task.session_id == harness.calls[0][0].session_id
     assert messages == [{'role': 'user', 'content': [{'text': 'Use current data'},
                           {'toolResult': {**RESULT, 'type': 'tool_use'}}]}]

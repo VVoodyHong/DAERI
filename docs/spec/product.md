@@ -33,11 +33,15 @@ DAERI는 여러 직군의 구성원이 자연어로 업무를 맡기고 프로�
 
 ## 현재 제공 범위
 
-현재 제공 단위는 배포와 독립된 Python 서비스와 설정 조립부다.
-중앙 프로젝트 조회·허용 목록·harness 선택, 업무 시작·재개, S3 업무 상태·수신 원본 보존과 저장된 응답의 복구를 구현한다.
-운영자가 프로젝트별 독립 BYO Memory·공유 namespace·장기 전략을 harness에 연결해야 자동 추출·검색이 동작하며 현재 라이브러리는 그 harness를 호출한다.
-Memory 리소스 생성·배포와 실제 공유·검색 동작은 후속 연동·검증 대상이다.
-HTTP·회사 인증·사용자 플러그인·실제 계획 승인·관리형 도구 연결·AWS 배포는 [후속 단계](../development/dependencies.md#클라우드-개발-상태)에서 연결한다.
+제공 단위는 원격 MCP 서버, Claude Code·Codex 플러그인 배포 파일과 Python 업무 서비스다.
+OIDC 토큰 검증·프로젝트와 업무 목록·시작·조회·재개·확인창 승인·S3 원본 복구를 구현한다.
+실행 대상의 승인 hook·확인 도구 설정을 검사하고, hook은 서비스가 기록한 현재 승인으로 도구 실행 순서를 집행한다.
+프로젝트 배포 도구는 독립 Memory와 공유 검색 전략을 연결하고 검증한 릴리스 endpoint·버전을 중앙 설정에 공개한다.
+MCP 서버는 AgentCore Runtime 배포용 컨테이너·설정 도구를 제공한다.
+
+운영자는 공개 주소·회사 IdP·OAuth 클라이언트·Lambda·IAM·harness·Memory·도구를 배포 환경에 연결한다.
+Memory의 자동 추출·검색, 실제 회사 로그인·두 호스트 설치·AWS 실행은 [실제 연동 검증](../development/dependencies.md#클라우드-개발-상태) 대상이다.
+인증된 파일 다운로드·소스 작업 공간·하위 에이전트 연결은 후속 구현 범위다.
 
 ## 업무 흐름
 
@@ -46,7 +50,7 @@ HTTP·회사 인증·사용자 플러그인·실제 계획 승인·관리형 도
 | 1. 요청 | 회사 로그인 뒤 선택한 프로젝트에서 사용자의 목표와 원하는 결과 접수 |
 | 2. 기억 검색 | Harness가 프로젝트 Memory의 관련 경험을 검색해 문맥에 활용 |
 | 3. 계획 | 총괄 에이전트가 대상·예상 효과·수행 범위·완료 조건 제시 |
-| 4. 승인 | 실제 사용자 응답을 현재 업무·계획·대기 호출에 연결 |
+| 4. 승인 | 호스트 확인창의 승인·수정·거절을 현재 업무·계획·대기 호출에 연결 |
 | 5. 위임 | 필요한 하위 목표·에이전트 수·순서를 선택하고 근거 수집 |
 | 6. 수행 | 승인 범위에서 도구·분석·페이지·재시도를 자율 선택 |
 | 7. 보고 | 실제 결과·근거·파일·미충족 조건 전달과 S3 업무 기록 보존 |
@@ -58,15 +62,37 @@ HTTP·회사 인증·사용자 플러그인·실제 계획 승인·관리형 도
 
 ### 요청과 재개
 
+
+원격 도구는 검증한 토큰의 사용자·프로젝트 권한으로 `AgentService`를 호출한다.
+신원과 승인 결정은 서버의 인증·사용자 확인 경계에서 해소한다.
+
+| 도구 | 입력과 동작 |
+|---|---|
+| `daeri_projects` | 현재 허용된 프로젝트 목록 |
+| `daeri_tasks` | `project_id`, 선택 `cursor`·`limit`; 자신의 업무 목록·다음 커서 |
+| `daeri_work` | `project_id`·`request`, 선택 `task_id`; 새 업무 또는 후속 요청 |
+| `daeri_status` | `project_id`·`task_id`; 목표·진행 상태·현재 계획·확인 상태·마지막 보관 응답 |
+| `daeri_confirm` | `project_id`·`task_id`; 저장한 계획을 호스트 확인창에 표시하고 응답 대기 |
+| `daeri_recover` | `project_id`·`task_id`; 이미 저장한 원본으로 상태 복구 |
+
+업무 목록은 같은 사용자·프로젝트의 S3 경로로 제한하며 `limit`은 기본 20, 1~100이다.
+커서는 해당 사용자·프로젝트·페이지 크기에 연결한다.
+호스트 대화에서 프로젝트와 업무를 선택하며 공용 현재 업무 포인터를 따로 두는 대신 각 호출의 선택값을 사용한다.
+상태 조회는 마지막 확정 응답을 읽어 호스트를 바꿔도 결과를 확인하게 하며 실행이나 상태 복구를 수행하는 호출과 구분한다.
+
+아래 `CloudWorkflow`는 서버 내부의 신뢰한 문맥·도구 응답 전달 계약이다.
+
 `CloudWorkflow.list_projects(contexts)`는 인증 서버가 검증한 동일 사용자의 프로젝트별 `AccessContext`를 담은 `list`·`tuple`을 받아 `id`·`name` 목록을 반환한다.
 사용자 혼합·프로젝트 중복은 `INVALID_INPUT`으로 처리하며 중앙 설정은 이름·실행 대상을 해소한다.
 프로젝트 설정의 존재와 호출 권한은 구별하고 허용 목록은 인증한 문맥으로 제한한다.
 
 `start(context, prompt)`는 비어 있지 않은 요청과 내부 접근 문맥으로 선택한 프로젝트의 업무·harness 세션을 생성한다.
-시작할 때 선택한 harness ARN을 업무에 저장하며 `resume(context, task_id, prompt='', tool_results=())`은 같은 harness·세션에 후속 요청과 실제 대기 도구 응답을 전달한다.
+시작할 때 검사한 harness ARN·릴리스 endpoint·버전을 업무에 저장하며 `resume(context, task_id, prompt='', tool_results=())`은 같은 실행 대상·세션에 후속 요청과 실제 대기 도구 응답을 전달한다.
+버전 정보가 없는 기존 업무는 상태·원본 조회로 확인하고 현재 프로젝트에서 새 계획으로 시작한다.
 중앙 설정의 harness가 바뀌어도 기존 업무는 저장한 실행 대상으로 재개한다.
 프로젝트를 전환하면 선택한 프로젝트에서 새 업무를 요청하거나 자신의 기존 업무를 선택한다.
-재개는 대기 도구가 있으면 각각의 실제 응답을 모두 받으며 대기 도구가 없으면 비어 있지 않은 후속 요청을 받는다.
+원격 확인은 native handoff의 첫 `confirm_plan` 대기 하나를 처리하며, 다음 도구는 harness가 재개한 뒤 선택한다.
+대기 없는 업무의 재개에는 비어 있지 않은 후속 요청을 받는다.
 
 `AccessContext`는 사용자 `actor_id`와 프로젝트 `project_id`다.
 재개·복구는 업무에 저장한 작성 사용자와 프로젝트가 현재 인증 문맥과 일치할 때 수행한다.
@@ -81,7 +107,10 @@ JSON 이스케이프로 보존할 수 있는 NUL 문자와 정상 한글·이모
 | 정상 시작·재개 | 선택한 업무의 요청·도구 응답을 harness에 전달 |
 | 대기 도구 응답 | 저장한 `toolUseId`별로 정확히 대응시키고 대기 순서로 전달 |
 | 도구 응답 본문 | `success`·`error` 상태와 text·JSON 블록 검사 |
-| 동일 업무 호출 진행 중 | `TASK_BUSY` 반환 |
+| 동일 업무 호출 진행 중 | 조회에는 `running`, 추가 실행에는 `TASK_BUSY` 반환 |
+| 로그인 만료·프로젝트 권한 없음 | 재로그인 또는 `ACCESS_DENIED` 반환 |
+| 승인 hook·확인 도구 설정 미비 | `HARNESS_NOT_READY` 반환·실행 시작 전 중단 |
+| 현재 확인할 계획 없음 | `PLAN_UNAVAILABLE` 반환 |
 | 잘못된 입력·대기 대응 | `INVALID_INPUT` 반환 |
 | 현재 문맥 불일치 | `ACCESS_DENIED` 반환 |
 | 중앙 설정에 프로젝트 없음 | `PROJECT_UNAVAILABLE` 반환 |
@@ -109,27 +138,33 @@ harness의 본문·대기 도구·관찰 JSON이 저장 조건을 위반하면 `
 
 ## 계획과 승인
 
-이 절은 실제 사용자 승인 연결의 확정 동작과 연결 설계다.
-현재의 대기 도구 응답 전달은 승인 왕복의 기반이며 계획 저장·자연어 결정·도구별 집행은 후속 구현이다.
+총괄 에이전트는 목표·대상·예상 효과·완료 조건을 자유로운 계획 본문으로 제시하고 `confirm_plan` inline 도구에 `{plan: 본문}`을 전달한다.
+서버는 native handoff의 계획·`toolUseId`를 S3에 보존한 뒤 MCP form elicitation으로 현재 계획을 사용자에게 표시한다.
+사용자는 호스트 확인창에서 결정을 선택하며 서버가 반환 응답을 현재 업무·계획·대기에 CAS로 연결하고 실행 점유까지 같은 상태를 대조한다.
 
-총괄 에이전트는 목표·연결·대상·예상 효과·완료 조건을 계획으로 제시한다.
-harness의 inline function이 승인을 기다리고 접속부가 실제 사용자 응답을 전달하면 서버가 현재 업무·계획·대기 상태에 연결한다.
-기억·문서·코드·로그는 판단 자료로 취급하고 사용자 결정은 실제 대화 응답에서 확인한다.
-
-| 실제 응답·변화 | 동작 |
+| 확인창 응답·변화 | 동작 |
 |---|---|
-| 현재 계획의 명확한 승인 | 승인 범위의 실행 재개 |
-| 조건 수정·목표·대상·효과 확대 | 차이와 이미 수행한 내용을 담은 수정 계획 확인 |
-| 거절 | 계획 조정 단계로 연결 |
-| 모호한 응답·응답 부재 | 필요한 설명과 승인 대기 유지 |
-| 중단·취소 | 현재 업무·대기·실행 상태에 반영하고 재개 시 현재 조건 확인 |
-| 오래된 계획·다른 업무의 응답 | 현재 업무·계획·대기와 대응하는 응답 확인 |
+| `approve`·추가 조건 없음 | 결정을 보존한 뒤 동일 세션의 실제 대기 응답으로 실행 재개 |
+| `revise`·수정 내용 | 승인 없이 수정 내용을 harness에 전달하고 새 계획 확인 |
+| 승인 선택과 추가 조건 입력 | 수정 요청으로 연결해 새 계획 확인 |
+| `reject` | 승인 없이 거절을 전달하고 계획 조정 |
+| 응답 전 닫기·decline·cancel·300초 초과·확인 미지원·연결 종료 | 원래 계획의 승인 대기 유지 |
+| 다른 창의 계획 변경·중복 응답·만료된 로그인 | 현재 조건을 다시 확인하고 오래된 응답 적용 중단 |
+| 결정 보존 뒤 harness의 명확한 요청 거절 | 같은 계획의 저장된 응답으로 명시 재개; 확인창 중복 생성 생략 |
 
-하위 작업은 총괄 계획의 승인 범위와 현재 리소스 권한으로 수행한다.
-도구·질의·순서·분해·분석·보고 형식은 그 범위에서 자율 선택한다.
-승인 집행은 현재 서버 기록을 확인하는 Lambda lifecycle hook과 Gateway 정책에 연결한다.
-기본 shell·파일 도구는 harness의 도구 호출 hook, Gateway 도구는 해당 정책 경계에서 검사하며 실제 응답의 진위·업무·대상 대응은 DAERI가 확인한다.
-중단·재개·호스트 전환과 각 경계의 동작은 실제 연결에서 검증한다.
+일반 `daeri_work` 입력의 승인 문구는 후속 요청이며, 대기 중의 요청 변경은 수정 계획으로 연결한다.
+새 요청과 새 `confirm_plan`은 이전 실행 허가를 해제하며 실행 전의 저장된 결정도 수정 요청으로 철회할 수 있다.
+승인 결정·원래 사용자 응답은 호출 원본과 함께 보존하고 확인창 뒤에도 로그인 유효 기간과 현재 대기를 검사한다.
+이미 실행을 시작한 호출의 호스트 연결 종료는 원격 취소와 구별하며 상태 조회·원본 복구로 실제 결과를 확인한다.
+
+[사용자 확인창](https://code.claude.com/docs/en/mcp#respond-to-mcp-elicitation-requests)은 인증된 호스트를 응답 전달 주체로 신뢰한다.
+호스트의 응답 자동화·수정 기능도 같은 신뢰 경계에 속하며 서버 단독으로 사람이 수동 입력했는지를 증명하는 프로토콜은 아니다.
+기억·문서·도구 결과는 판단 자료이며 실행 허가는 위 확인 경계의 현재 결정으로 해소한다.
+
+`before_tool_call` Lambda hook은 신뢰한 harness·세션 연결을 조회하고 계획 확인 도구를 허용하며, 나머지 도구는 해당 실행의 보존된 승인 뒤에 허용한다.
+harness 조회로 필수 hook의 ARN·`failureMode: deny`와 확인 도구를 검사하며 조회 실패·잘린 입력·바인딩 불일치는 실행을 중단한다.
+계획 본문의 의미적 범위는 에이전트가 판단하고 실제 리소스·대상 권한은 Gateway·Identity·대상 리소스가 집행한다.
+이 hook의 검사 범위는 승인 순서와 업무·세션 연결이며 자연어 계획을 일반 SQL·shell의 입력 조건으로 변환하는 기능과 구별한다.
 
 ## 공유 기억
 
@@ -137,12 +172,22 @@ harness의 inline function이 승인을 기다리고 접속부가 실제 사용�
 실제 사용자의 `actorId`를 유지하며 프로젝트 구성원은 가입 시점·호스트와 관계없이 같은 기억을 활용한다.
 Memory가 경험 추출·통합·임베딩·색인·의미 검색을 관리한다.
 
+| 전략 | 저장·검색 범위 |
+|---|---|
+| Semantic | `/shared/facts/`; 프로젝트 사실·용어·구조 |
+| Episodic·reflection | `/shared/experiences/`; 성공·실패 절차와 경험에서 도출한 교훈 |
+| Summarization | `/summaries/{actorId}/{sessionId}/`; 사용자·업무 세션의 진행 문맥 |
+
+배포 시 프로젝트 소유 Memory의 활성 전략·namespace·TTL과 harness의 연결을 검증하고 설정이 일치한 프로젝트를 공개한다.
+사용자별 `actorId`는 실제 신원으로 유지하며 공유 검색 범위가 같은 프로젝트의 다른 사용자에게 적용되는지 실제 연동으로 확인한다.
+
 | 보관처 | 역할 |
 |---|---|
 | AgentCore Memory | 업무 대화·재개 문맥과 프로젝트 공유 경험의 비동기 추출·통합·검색 |
 | S3 | 업무 상태와 DAERI가 접수·수신한 불변 원본·파일 참조·산출물 |
 
-Memory의 장기 기억 TTL은 생략하고 S3 원본은 자동 만료 없이 독립된 수명으로 보존한다.
+단기 이벤트는 365일로 설정하고 장기 기억 TTL은 생략한다.
+S3 원본은 자동 만료 없이 독립된 수명으로 보존한다.
 단기 이벤트의 보존 한도와 장기 기억의 통합·삭제, S3 보관 조건은 [기억과 원본의 수명](../architecture/overview.md#기억과-원본의-수명)을 따른다.
 경험 추출·통합은 비동기이므로 응답 보존이 즉시 새 기억의 검색 가능성을 뜻하지 않는다.
 원본 보존 범위는 접수한 요청·실제 승인·피드백, harness 반환 응답·수신한 도구 관찰·파일 참조와 산출물이다.
@@ -151,13 +196,18 @@ Harness 내부 도구 결과·로그의 추가 수집은 실제 반환·이벤�
 기억은 경험 후보로 활용하고 적용 조건·불확실성·실패를 현재 자료와 대조한다.
 미병합 변경·병합 commit·실제 배포 상태를 구별하고 현재 수치·상태는 최신 자료로 확인한다.
 검색 품질·정정·추출 지연·프로젝트 간 격리와 장기 복구는 [실제 연동 검증](../development/dependencies.md#구현과-대표-검증) 대상이다.
+대표 평가 흐름은 A의 경험 축적 → 신규 구성원 B의 재사용 → 프로젝트 C 차단 → 잘못된 지식 정정이다.
+기억 활용 전후의 업무 성공률·기억 오적용률·도구 호출 횟수·완료 시간·비용을 비교하며 관측·평가는 AWS 관리형 기능을 사용한다.
 
 ## 접속부와 리소스
 
 Claude Code·Codex 플러그인은 회사 로그인, 허용된 프로젝트 목록·선택, 업무 요청, 진행 표시, 실제 승인·피드백과 결과·파일 전달을 맡는다.
 회사의 기존 IdP(신원 제공자)와 연결해 사용자 신원·프로젝트 구성원을 확인한다.
 서버 연결부는 선택한 프로젝트와 사용자·업무에 맞는 `InvokeHarness`를 호출한다.
-사용자 PC별 MCP 설정 없이 같은 중앙 연결을 사용하는 것이 목표이며 플러그인·로그인·HTTP 전송·스트리밍은 후속 구현이다.
+공유 Skill·MCP 설정과 호스트별 얇은 manifest로 같은 중앙 서비스에 연결한다.
+운영자가 공개 주소·public OAuth client ID·callback port를 배포물에 지정하고, 사용자는 호스트의 설치·회사 로그인 화면을 사용한다.
+승인 대기를 위해 stateful Streamable HTTP 세션을 사용하며 업무와 기억은 공용 저장소에 연결한다.
+운영 배포는 AgentCore Runtime의 MCP 호스팅·JWT 진입 검사·세션 라우팅을 사용하고 내부 서버는 `/mcp`를 제공한다.
 
 운영자는 프로젝트의 모델·도구와 Gateway·Identity·Memory를 AWS 리소스에 중앙 등록한다.
 구성원은 등록한 프로젝트를 선택하며 DAERI는 [중앙 프로젝트 설정](#중앙-프로젝트-설정)으로 해당 harness를 찾는다.
@@ -169,9 +219,14 @@ Claude Code·Codex 플러그인은 회사 로그인, 허용된 프로젝트 목�
 
 ## 접근과 동시 업무
 
-회사 인증 경계는 현재 사용자가 프로젝트의 자료·대화·도구 결과·과거 기억 전체를 공유할 수 있는 구성원인지 확인한다.
-검증한 `actor_id`·`project_id`를 요청·파일·재개·복구에 전달하며 실제 인증은 HTTP·로그인 경계에서 연결한다.
-일부 자료만 허용되는 구성원은 공유 범위별 프로젝트·Memory로 나눈다.
+OIDC resource server는 고정된 발급자의 discovery·JWKS로 RS256 서명과 `iss`·`aud`·`sub`·`exp`·`scope`·프로젝트 claim을 검사한다.
+프로젝트 claim은 기본 `projects`의 중복 없는 ID 배열이고 `sub`를 업무의 실제 사용자로 사용한다.
+유효한 토큰의 전체 프로젝트 공유 권한으로 `AuthenticatedUser`를 생성하며 매 업무·확인 응답에서 만료와 선택 프로젝트를 다시 검사한다.
+HTTP는 잘못된 bearer 토큰에 401, 필수 scope 부족에 403을 반환하며 IdP 즉시 철회 조회 대신 서명된 토큰의 유효 기간을 적용한다.
+
+MCP 세션은 검증한 사용자·프로젝트 권한·scope에 연결한다.
+같은 권한의 토큰 갱신은 세션을 유지하고 권한 변경은 재연결로 반영하며, 다른 권한으로 제출한 오래된 확인창 응답은 원래 실행을 재개하지 않는다.
+일부 자료만 공유 가능한 구성원은 공유 범위별 프로젝트·Memory로 나눈다.
 
 실제 리소스 접근은 Gateway Policy·Identity·대상 리소스의 권한으로 집행한다.
 프로젝트 서비스 자격·공유 PAT는 운영자가 중앙 등록하고 개인 OAuth가 필요한 리소스는 사용자가 동의한다.
@@ -186,8 +241,8 @@ PC 또는 AWS의 실행 위치·Git 자격·사내망·기존 변경의 처리�
 
 ## 설정과 제공자
 
-`CloudSettings.from_yaml(path)`는 지정한 UTF-8 YAML의 파일·스키마를 검사한다.
-AWS 클라이언트·자격 조회는 `build_cloud(settings)`에서 시작하며 설정은 공용 DAERI 서버가 사용한다.
+`CloudSettings.from_yaml(path)`는 내부 서비스, `ServerSettings.from_yaml(path)`는 공개 MCP 서버의 UTF-8 YAML을 검사한다.
+클라이언트·자격 조회는 `build_cloud()`·`build_server()`에서 시작하며 OIDC discovery·JWKS 조회는 토큰 검증 때 수행한다.
 생성 모델·도구·Gateway·Identity·Memory는 해당 AWS 리소스에서 설정한다.
 
 YAML은 최상위 매핑과 유한한 JSON 호환 값, 2MiB 이내, 중첩 32단계로 받는다.
@@ -199,6 +254,12 @@ YAML은 최상위 매핑과 유한한 JSON 호환 값, 2MiB 이내, 중첩 32단
 | `project_parameter_prefix` | 중앙 프로젝트 경로; 기본 `/daeri/projects/` |
 | `storage.bucket` | 필수 일반 S3 버킷 이름 |
 | `storage.prefix` | 상대 객체 경로; 기본 `daeri/`; 끝 `/` 포함 최대 788바이트; 영문·숫자·`_`·`.`·`-`·`/` 사용; 끝 `/` 생략 시 추가, 빈 구간·중복 `/`·`.`·`..` 구간 거부 |
+| `public_url` | 서버 필수 공개 HTTPS 주소; 직접 호스팅의 `/mcp` 또는 AgentCore Runtime의 운영 endpoint invocation URL |
+| `auth.issuer`·`audience` | 서버 필수 신뢰한 OIDC 발급자·리소스 토큰 audience |
+| `auth.project_claim` | 프로젝트 ID 배열 claim; 기본 `projects` |
+| `auth.required_scopes` | 필수 OAuth scope 목록; 기본 `[daeri/use]` |
+| `approval_hook_arn` | 서버 필수 승인 검사 Lambda ARN |
+
 
 ### 중앙 프로젝트 설정
 
@@ -209,19 +270,26 @@ YAML은 최상위 매핑과 유한한 JSON 호환 값, 2MiB 이내, 중첩 32단
 ```json
 {
   "name": "충전 서비스 운영",
-  "harness_arn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/charging-1234567890"
+  "harness_arn": "arn:aws:bedrock-agentcore:us-east-1:123456789012:harness/charging-1234567890",
+  "harness_endpoint": "RELEASE_V2",
+  "harness_version": "2"
 }
 ```
 
 이 예시는 가상 프로젝트다.
-JSON은 `name`·`harness_arn` 두 필드이며 이름은 앞뒤 공백·제어 문자가 없는 1~256자, harness는 유효한 AgentCore harness ARN으로 받는다.
+JSON은 `name`·`harness_arn`·`harness_endpoint`·`harness_version` 네 필드다.
+이름은 앞뒤 공백·제어 문자가 없는 1~256자, harness는 유효한 AgentCore harness ARN으로 받는다.
+endpoint는 영문으로 시작하는 영문·숫자·`_`의 1~48자 릴리스 이름이며 버전은 1~5자리 양의 정수 문자열이다.
+호출은 저장한 endpoint를 사용하며 endpoint가 다른 버전을 가리키면 `HARNESS_NOT_READY`로 중단한다.
+배포는 `RELEASE_V<버전>` endpoint를 생성·검증한 뒤 SSM을 마지막에 갱신하며 이전 endpoint·독립 Memory·원본은 유지한다.
 어댑터는 `GetParameter`로 설정을 읽으며 미등록 프로젝트는 `PROJECT_UNAVAILABLE`, 그 외 조회 실패는 `STORAGE_UNAVAILABLE`, 잘못된 JSON·필드는 `INVALID_INPUT`으로 반환한다.
 프로젝트 이름·실행 대상을 정하는 설정이며 구성원 권한은 인증 서버가 판단한다.
 
 ### 모델과 인증
 
 운영자는 AWS의 `CreateHarness`·`UpdateHarness`에서 프로젝트의 생성 모델·도구·연결을 설정한다.
-운영자가 프로젝트의 독립 Memory·공유 namespace·장기 전략을 AWS harness에 연결하고 DAERI 라이브러리는 등록한 harness를 호출한다.
+프로젝트 배포 도구는 기존 harness의 모델·도구 설정을 유지하면서 프로젝트 소유의 독립 Memory·공유 전략을 연결하고 릴리스를 공개한다.
+확정된 업무 지침은 Harness Skills, 누적 경험은 Memory, 실행 상태·승인·원본은 S3에서 관리한다.
 외부 모델의 `apiKeyArn`은 AWS 모델 설정이 참조하는 AgentCore Identity API key credential provider ARN이다.
 실제 모델·리전·사내 API의 접근·호환성은 배포 환경에서 확인한다.
 
@@ -232,7 +300,14 @@ JSON은 `name`·`harness_arn` 두 필드이며 이름은 앞뒤 공백·제어 �
 
 ```yaml
 region: us-east-1
+public_url: https://daeri.example.com/mcp
 project_parameter_prefix: /daeri/projects/
+auth:
+  issuer: https://login.example.com/company
+  audience: https://daeri.example.com/mcp
+  project_claim: projects
+  required_scopes: [daeri/use]
+approval_hook_arn: arn:aws:lambda:us-east-1:123456789012:function:daeri-approval
 storage:
   bucket: daeri-example
   prefix: daeri/
@@ -240,4 +315,5 @@ storage:
 
 `build_cloud()`는 저장소 `store`·업무 서비스 `workflow`와 종료 가능한 클라이언트 묶음 `CloudServices`를 반환한다.
 호출자는 `workflow.list_projects()/start()/resume()/recover()`를 사용하고 `close()` 또는 context manager로 자원을 종료한다.
-버킷·Memory·harness 배포와 서버 프로세스 연결은 [배포 조건](../development/dependencies.md#배포와-확장-시-확인할-조건)에 따라 구성한다.
+`build_server()`는 인증 verifier·실행 대상 설정 검사·`AgentService`·HTTP MCP 서버를 조립하며 `daeri --config server.yaml`로 실행한다.
+버킷·Memory·harness·IdP 배포와 호스트 callback 등록은 [배포 조건](../development/dependencies.md#배포와-확장-시-확인할-조건)에 따라 구성한다.
