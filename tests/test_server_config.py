@@ -89,6 +89,29 @@ def test_ready_harness_requires_the_configured_deny_hook_and_inline_plan_schema(
                             {'harnessId': 'charging-1234567890', 'harnessVersion': '2'}]
 
 
+def test_delegated_harness_uses_the_verified_service_token_audience():
+    settings = module().ServerSettings.model_validate({**BASE, 'harness_oauth_audience': BASE['auth']['audience']})
+    assert settings.harness_oauth_audience == settings.auth.audience
+    with pytest.raises(ValidationError):
+        module().ServerSettings.model_validate({**BASE, 'harness_oauth_audience': 'another-resource'})
+
+
+@pytest.mark.parametrize('endpoint,version', [('DEFAULT', '2'), ('RELEASE_V2', '123456')])
+def test_readiness_uses_the_same_release_contract_as_the_project_catalog(endpoint, version):
+    harness = configured_harness()
+    harness['harnessVersion'] = version
+    client = Control(harness)
+    def endpoint_reply(**request):
+        client.calls.append(request)
+        return {'endpoint': {'harnessId': ARN.rsplit('/', 1)[1], 'endpointName': endpoint,
+                             'status': 'READY', 'liveVersion': version, 'targetVersion': version}}
+    client.get_harness_endpoint = endpoint_reply
+    route = SimpleNamespace(harness_arn=ARN, harness_endpoint=endpoint, harness_version=version)
+    with pytest.raises(StoreError, match='HARNESS_NOT_READY'):
+        module().HarnessReadiness(client, HOOK).check(route)
+    assert not client.calls
+
+
 @pytest.mark.parametrize('change', [
     'missing_hook', 'wrong_hook', 'fail_open', 'not_ready', 'wrong_harness',
     'missing_plan', 'non_inline', 'optional_plan', 'non_string_plan',

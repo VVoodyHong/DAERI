@@ -58,14 +58,24 @@ class DecisionForm(BaseModel):
         return value
 
 
-def _user(ctx: Context) -> AuthenticatedUser:
+class RecoveryForm(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reviewed: bool = Field(default=False, title='기존 실행의 종료와 실제 결과를 확인했습니다')
+    observations: str = Field(default='', title='확인한 결과·변경 사항·남은 업무')
+
+
+def _token(ctx: Context) -> ProjectAccessToken:
     # A stateful MCP session can outlive its first token. Read this POST's identity.
     request = ctx.request_context.request
     token = getattr(getattr(request, 'user', None), 'access_token', None)
     if not isinstance(token, ProjectAccessToken):
         raise StoreError('AUTHENTICATION_REQUIRED', 'Sign in through the host MCP connection.')
     token.user.contexts()
-    return token.user
+    return token
+
+
+def _user(ctx: Context) -> AuthenticatedUser:
+    return _token(ctx).user
 
 
 async def _result(operation: Awaitable[Any], *, projects=False) -> CallToolResult:
@@ -92,7 +102,7 @@ async def _result(operation: Awaitable[Any], *, projects=False) -> CallToolResul
 
 
 def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: str,
-              scopes: list[str] | tuple[str, ...]) -> FastMCP:
+              scopes: list[str] | tuple[str, ...], *, harness_audience: str | None = None) -> FastMCP:
     endpoint = urlsplit(mcp_endpoint(resource_url))
     server = FastMCP(
         'DAERI', token_verifier=_SessionVerifier(token_verifier),
@@ -112,29 +122,42 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
     )
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 
+    async def call(ctx, operation, *, projects=False):
+        if harness_audience is None:
+            return await _result(operation, projects=projects)
+        from daeri.infrastructure.harness_oauth import bind_harness_identity
+        async def delegated():
+            try:
+                token = _token(ctx)
+                with bind_harness_identity(token.user, token.token, token.claims.get('aud')):
+                    return await operation
+            finally:
+                operation.close()
+        return await _result(delegated(), projects=projects)
+
     @server.tool(annotations=readonly)
     async def daeri_projects(ctx: Context) -> CallToolResult:
         """현재 회사 로그인으로 접근할 수 있는 프로젝트를 조회한다."""
-        return await _result(anyio.to_thread.run_sync(partial(agent.projects, _user(ctx))), projects=True)
+        return await call(ctx, anyio.to_thread.run_sync(partial(agent.projects, _user(ctx))), projects=True)
 
     @server.tool(annotations=readonly)
     async def daeri_tasks(project_id: str, ctx: Context, cursor: str | None = None,
                           limit: int = 20) -> CallToolResult:
         """선택한 프로젝트의 자신의 기존 업무를 조회한다."""
-        return await _result(anyio.to_thread.run_sync(
+        return await call(ctx, anyio.to_thread.run_sync(
             partial(agent.tasks, _user(ctx), project_id, cursor=cursor, limit=limit)))
 
     @server.tool()
     async def daeri_work(project_id: str, request: str, ctx: Context,
                          task_id: str | None = None) -> CallToolResult:
         """업무를 요청하거나 같은 업무에 후속 요청·피드백을 전달한다."""
-        return await _result(anyio.to_thread.run_sync(
+        return await call(ctx, anyio.to_thread.run_sync(
             partial(agent.work, _user(ctx), project_id, request, task_id=task_id)))
 
     @server.tool(annotations=readonly)
     async def daeri_status(project_id: str, task_id: str, ctx: Context) -> CallToolResult:
         """업무의 현재 계획·실제 확인·대기 상태를 조회한다."""
-        return await _result(anyio.to_thread.run_sync(partial(agent.status, _user(ctx), project_id, task_id)))
+        return await call(ctx, anyio.to_thread.run_sync(partial(agent.status, _user(ctx), project_id, task_id)))
 
     @server.tool()
     async def daeri_confirm(project_id: str, task_id: str, ctx: Context) -> CallToolResult:
@@ -150,11 +173,41 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
                 pass
             return None
 
-        return await _result(agent.confirm(_user(ctx), project_id, task_id, ask))
+        return await call(ctx, agent.confirm(_user(ctx), project_id, task_id, ask))
+
+    @server.tool(annotations=readonly)
+    async def daeri_files(project_id: str, task_id: str, ctx: Context,
+                          cursor: str | None = None, limit: int = 20) -> CallToolResult:
+        """현재 업무에 보관된 산출물과 다음 페이지를 조회한다."""
+        return await call(ctx, anyio.to_thread.run_sync(
+            partial(agent.files, _user(ctx), project_id, task_id, cursor, limit)))
+
+    @server.tool(annotations=readonly)
+    async def daeri_download(project_id: str, task_id: str, artifact_id: str, ctx: Context) -> CallToolResult:
+        """현재 업무의 파일을 짧은 유효 기간의 다운로드 링크로 전달한다."""
+        return await call(ctx, anyio.to_thread.run_sync(
+            partial(agent.download, _user(ctx), project_id, task_id, artifact_id)))
 
     @server.tool()
-    async def daeri_recover(project_id: str, task_id: str, ctx: Context) -> CallToolResult:
-        """이미 보관된 원본 응답을 업무 상태에 반영해 복구한다."""
-        return await _result(anyio.to_thread.run_sync(partial(agent.recover, _user(ctx), project_id, task_id)))
+    async def daeri_recover(project_id: str, task_id: str, ctx: Context,
+                            restart: bool = False) -> CallToolResult:
+        """보관 응답으로 복구하거나 사용자 확인 후 새 세션에서 계획을 다시 수립한다."""
+        if not restart:
+            return await call(ctx, anyio.to_thread.run_sync(partial(agent.recover, _user(ctx), project_id, task_id)))
+
+        async def review(goal, state):
+            try:
+                with anyio.fail_after(300):
+                    result = await ctx.elicit(
+                        message=f'업무 복구: {goal}\n기존 실행의 종료 여부와 실제 변경·결과를 확인해 주세요. '
+                                '확인한 내용을 바탕으로 새 세션에서 계획을 다시 제시합니다.', schema=RecoveryForm)
+                if result.action == 'accept' and result.data.reviewed and result.data.observations.strip():
+                    return result.data.observations
+            except (McpError, ValidationError, TimeoutError, ValueError,
+                    anyio.EndOfStream, anyio.BrokenResourceError, anyio.ClosedResourceError):
+                pass
+            return None
+
+        return await call(ctx, agent.restart(_user(ctx), project_id, task_id, review))
 
     return server

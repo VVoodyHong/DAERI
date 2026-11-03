@@ -54,19 +54,6 @@ def test_yaml_rejects_legacy_unknown_duplicate_unsafe_or_secret_values(tmp_path,
     assert 'do-not-print-this' not in str(error.value)
 
 
-def test_previously_valid_database_and_model_configuration_requires_migration(tmp_path):
-    path = tmp_path / 'cloud.yaml'
-    path.write_text(safe_dump({
-        'database': {
-            'resource_arn': 'arn:aws:rds:us-east-1:123456789012:cluster:shared',
-            'secret_arn': 'arn:aws:secretsmanager:us-east-1:123456789012:secret:company-key',
-            'name': 'daeri'},
-        'knowledge_model': {'provider': 'bedrock', 'model': 'summary-model'},
-    }))
-    with pytest.raises(StoreError, match='INVALID_INPUT'):
-        cloud().CloudSettings.from_yaml(path)
-
-
 @pytest.mark.parametrize('storage', [
     {}, {'bucket': ''}, {'bucket': 'ab'}, {'bucket': 'Uppercase'},
     {'bucket': '192.168.1.1'}, {'bucket': 'bad..name'}, {'bucket': 'bad_bucket'},

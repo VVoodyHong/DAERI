@@ -1,7 +1,6 @@
 """Check or explicitly publish one managed project from operator YAML."""
 
 import argparse
-from contextlib import ExitStack
 import json
 
 import boto3
@@ -21,14 +20,10 @@ def main(argv=None):
     try:
         settings = ProjectSettings.from_yaml(arguments.config)
         session = boto3.Session()
-        with ExitStack() as resources:
-            def client(service):
-                value = session.client(service, region_name=settings.region,
-                    config=Config(retries={'total_max_attempts': 1}, connect_timeout=10, read_timeout=60))
-                resources.callback(value.close)
-                return value
-
-            control, ssm = client('bedrock-agentcore-control'), client('ssm')
+        options = {'region_name': settings.region,
+                   'config': Config(retries={'total_max_attempts': 1}, connect_timeout=10, read_timeout=60)}
+        with (session.client('bedrock-agentcore-control', **options) as control,
+              session.client('ssm', **options) as ssm):
             readiness = HarnessReadiness(control, settings.approval_hook_arn)
             deployment = ProjectDeployment(control, ssm, readiness.check)
             result = deployment.apply(settings) if arguments.apply else deployment.check(settings)

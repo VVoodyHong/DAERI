@@ -4,7 +4,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
 from daeri.application.cloud import CloudWorkflow
 from daeri.config.yaml import read_yaml
@@ -43,6 +43,7 @@ class CloudSettings(_Settings):
     region: Annotated[str, StringConstraints(pattern=r'^[a-z]{2}(?:-[a-z]+)+-[0-9]+$')] | None = None
     project_parameter_prefix: str = '/daeri/projects/'
     storage: StorageSettings
+    harness_oauth_audience: str | None = Field(default=None, min_length=1)
 
     @field_validator('project_parameter_prefix')
     @classmethod
@@ -51,6 +52,13 @@ class CloudSettings(_Settings):
             return normalize_project_prefix(value)
         except StoreError:
             raise ValueError('Supply an absolute project parameter prefix.') from None
+
+    @field_validator('harness_oauth_audience')
+    @classmethod
+    def accepted_harness_audience(cls, value):
+        if value is not None and (not value.strip() or any(char.isspace() for char in value)):
+            raise ValueError('Supply the accepted user-token audience for the harness.')
+        return value
 
     @classmethod
     def from_yaml(cls, path):
@@ -87,13 +95,21 @@ def build_cloud(settings: CloudSettings, *, session=None) -> CloudServices:
     session = session if session is not None else boto3.Session()
     with ExitStack() as resources:
         def client(service):
+            options = {}
+            if service == 'bedrock-agentcore' and settings.harness_oauth_audience:
+                from botocore import UNSIGNED
+                options['signature_version'] = UNSIGNED
             value = session.client(service, region_name=settings.region, config=Config(
                 retries={'total_max_attempts': 1}, connect_timeout=10,
-                read_timeout=300 if service == 'bedrock-agentcore' else 60))
+                read_timeout=300 if service == 'bedrock-agentcore' else 60, **options))
             resources.callback(value.close)
             return value
 
         store = S3CloudStore(client('s3'), settings.storage.bucket, settings.storage.prefix)
         catalog = SsmProjectCatalog(client('ssm'), settings.project_parameter_prefix)
-        harness = AgentCoreHarness(client('bedrock-agentcore'))
+        harness_client = client('bedrock-agentcore')
+        if settings.harness_oauth_audience:
+            from daeri.infrastructure.harness_oauth import OAuthHarnessClient
+            harness_client = OAuthHarnessClient(harness_client, audience=settings.harness_oauth_audience)
+        harness = AgentCoreHarness(harness_client)
         return CloudServices(store, CloudWorkflow(store, harness, catalog), resources.pop_all())

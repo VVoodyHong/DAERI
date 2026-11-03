@@ -53,6 +53,29 @@ async def answer(plan):
     return ApprovalResponse('approve')
 
 
+def test_plan_revision_checks_its_release_once_before_resuming():
+    checked = []
+    service, user, _, harness = setup(HarnessReply('Confirm', 'tool_use', (PENDING,)),
+        HarnessReply('Revised', 'tool_use', (PENDING,)), checker=checked.append)
+    first = service.work(user, 'project', 'Compare cache')
+    checked.clear()
+    service.work(user, 'project', 'Use staging instead', first['task_id'])
+    assert len(checked) == 1 and len(harness.calls) == 2
+
+
+def test_confirmation_checks_release_before_the_form_and_before_resuming():
+    events = []
+    service, user, _, harness = setup(HarnessReply('Confirm', 'tool_use', (PENDING,)),
+        HarnessReply('Done', 'end_turn'), checker=lambda route: events.append('check'))
+    first = service.work(user, 'project', 'Compare cache')
+    events.clear()
+    async def approve(plan):
+        events.append('form')
+        return ApprovalResponse('approve')
+    asyncio.run(service.confirm(user, 'project', first['task_id'], approve))
+    assert events == ['check', 'form', 'check'] and len(harness.calls) == 2
+
+
 def test_real_user_confirmation_is_saved_before_the_approved_execution():
     service, user, store, harness = setup(HarnessReply('Please confirm', 'tool_use', (PENDING,)),
                                          HarnessReply('Verified result', 'end_turn'))

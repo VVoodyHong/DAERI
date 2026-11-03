@@ -138,7 +138,7 @@ def test_public_tools_exclude_caller_grants_and_decisions_and_use_current_reques
                 tools = {tool.name: tool for tool in (await session.list_tools()).tools}
                 assert set(tools) == {
                     'daeri_projects', 'daeri_tasks', 'daeri_work', 'daeri_status',
-                    'daeri_confirm', 'daeri_recover',
+                    'daeri_confirm', 'daeri_recover', 'daeri_files', 'daeri_download',
                 }
                 for tool in tools.values():
                     assert not {'actor_id', 'user', 'grants', 'tool_results', 'approved', 'decision'} & tool.inputSchema.get('properties', {}).keys()

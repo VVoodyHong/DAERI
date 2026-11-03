@@ -61,8 +61,9 @@ def _tool_results(task: CloudTask, results: tuple[dict[str, Any], ...]) -> list[
 
 
 class CloudWorkflow:
-    def __init__(self, store: CloudStore, harness: Harness, catalog: ProjectCatalog):
+    def __init__(self, store: CloudStore, harness: Harness, catalog: ProjectCatalog, *, output_location=None):
         self.store, self.harness, self.catalog = store, harness, catalog
+        self.output_location = output_location
 
     def list_projects(self, contexts: list[AccessContext] | tuple[AccessContext, ...]) -> list[dict[str, str]]:
         """Display projects whose complete shared scope the identity boundary authorized."""
@@ -105,6 +106,20 @@ class CloudWorkflow:
         self.get_task(context, task_id)
         return self.store.recover_turn(context, task_id)
 
+    def restart(self, context: AccessContext, task_id: str, review: str, *, expected_etag: str) -> CloudTurn:
+        _validate_prompt(review, required=True)
+        task = self.get_task(context, task_id)
+        if task.etag != expected_etag:
+            raise StoreError('STORAGE_CONFLICT', 'The task changed during recovery review.')
+        previous = self.store.read_turn(context, task_id)
+        prompt = ('이전 세션을 복구합니다. 확인되지 않은 과거 작업은 이미 실행됐을 수 있습니다. '
+                  '현재 자료로 실행 결과를 대조하고 남은 업무를 새 계획으로 확인하세요.\n'
+                  f'원래 목표: {task.goal}\n'
+                  f'마지막 보관 응답: {previous.reply.text if previous else "없음"}\n'
+                  f'사용자가 확인한 상태: {review}')
+        restored = self.store.restart_task(task, review)
+        return self._invoke(restored, prompt, (), [])
+
     def get_task(self, context: AccessContext, task_id: str) -> CloudTask:
         _validate_context(context)
         self.catalog.get(context.project_id)
@@ -116,6 +131,13 @@ class CloudWorkflow:
     def _invoke(self, task: CloudTask, prompt: str, tool_results: tuple[dict[str, Any], ...],
                 results: list[dict[str, Any]]) -> CloudTurn:
         content = ([{'text': prompt}] if prompt else []) + results
+        if self.output_location is not None:
+            import json
+            content.append({'text': '서비스가 연결한 업무 문맥입니다. 소스 사본은 이 task_id를 사용하고 '
+                            '생성한 산출물은 artifacts 위치에 업로드하세요: '
+                            + json.dumps({'task_id': task.id, 'project_id': task.context.project_id,
+                                          'session_id': task.session_id, 'artifacts': self.output_location(task)},
+                                         ensure_ascii=False)})
         try:
             turn_id = self.store.begin_turn(task, prompt, tool_results)
         except StoreError as error:

@@ -286,3 +286,63 @@ def test_project_command_validates_input_before_aws_clients(tmp_path, monkeypatc
     output = capsys.readouterr().out
     assert json.loads(output)['error']['code'] == 'INVALID_INPUT'
     assert 'should-stay-private' not in output
+
+
+def restored_memory(control):
+    selected = 'RestoredProject-0123456789'
+    request = {'name': selected.rsplit('-', 1)[0], 'eventExpiryDuration': 365,
+               'memoryStrategies': memory_strategies(),
+               'tags': {'daeri:project': 'payments', 'daeri:catalog': '/daeri/projects/'}}
+    control.create_memory(**request)
+    control.memory['id'] = selected
+    control.memory['arn'] = control.memory['arn'].rsplit('/', 1)[0] + '/' + selected
+    return selected
+
+
+def test_explicit_restored_memory_can_be_verified_and_published_without_creating_another_memory():
+    deployment, control, ssm, _ = deployer()
+    target = restored_memory(control)
+    control.harness['memory'] = {'agentCoreMemoryConfiguration': {'arn':
+        'arn:aws:bedrock-agentcore:us-east-1:123456789012:memory/Original-abcdefghij'}}
+    control.calls.clear()
+    selected = settings(memory_id=target)
+    deployment.apply(selected)
+    assert control.harness['memory']['agentCoreMemoryConfiguration']['arn'] == control.memory['arn']
+    assert ssm.writes
+    assert not any(operation in {'ListMemories', 'CreateMemory', 'UpdateMemory'} for operation, _ in control.calls)
+    control.calls.clear()
+    ssm.writes.clear()
+    deployment.check(selected)
+    assert not ssm.writes
+    assert all(not operation.startswith(('Create', 'Update')) for operation, _ in control.calls)
+
+
+@pytest.mark.parametrize('change', ['owner', 'namespace', 'expiry', 'managed', 'name'])
+def test_invalid_explicit_memory_is_not_attached_or_published(change):
+    deployment, control, ssm, _ = deployer()
+    target = restored_memory(control)
+    if change == 'owner':
+        control.tags['daeri:project'] = 'other'
+    elif change == 'namespace':
+        control.memory['strategies'][0]['namespaces'] = ['/private/{actorId}/']
+    elif change == 'expiry':
+        control.memory['eventExpiryDuration'] = 30
+    elif change == 'managed':
+        control.memory['managedByResourceArn'] = ARN
+    else:
+        control.memory['name'] = 'Unexpected'
+    control.calls.clear()
+    with pytest.raises(StoreError, match='PROJECT_NOT_READY'):
+        deployment.apply(settings(memory_id=target))
+    assert not ssm.writes
+    assert not any(operation.startswith(('Create', 'Update')) for operation, _ in control.calls)
+
+
+def test_memory_override_is_validated_before_aws_initialization(tmp_path, monkeypatch, capsys):
+    from scripts.configure_project import main
+    monkeypatch.setattr('scripts.configure_project.boto3.Session', lambda: pytest.fail('Unexpected AWS client'))
+    config = tmp_path / 'invalid.yaml'
+    config.write_text(f'project_id: payments\nname: Payments\nharness_arn: {ARN}\n'
+                      f'approval_hook_arn: {HOOK}\nmemory_id: invalid/private-value\n')
+    assert main(['--config', str(config), '--apply']) == 2
+    assert json.loads(capsys.readouterr().out)['error']['code'] == 'INVALID_INPUT'

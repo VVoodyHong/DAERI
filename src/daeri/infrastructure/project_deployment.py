@@ -26,8 +26,31 @@ def memory_strategies():
     return result
 
 
-def _missing(error):
-    return getattr(error, 'response', {}).get('Error', {}).get('Code') == 'ResourceNotFoundException'
+def validate_project_memory(memory, tags, project_id, catalog, *, name=None,
+                            execution_role=None, encryption_key=None):
+    """One sharing and retention contract for publication and reconstruction targets."""
+    valid = memory.get('status') == 'ACTIVE' and (name is None or memory.get('name') == name)
+    valid = valid and memory.get('eventExpiryDuration') == 365 and not memory.get('managedByResourceArn')
+    for key, configured in (('memoryExecutionRoleArn', execution_role), ('encryptionKeyArn', encryption_key)):
+        if configured is not None:
+            valid = valid and memory.get(key) == configured
+    valid = valid and tags.get('daeri:project') == project_id and tags.get('daeri:catalog') == catalog
+    strategies = memory.get('strategies', [])
+    valid = valid and len(strategies) == len(_STRATEGIES)
+    for _, strategy_name, kind, namespace in _STRATEGIES:
+        matches = [item for item in strategies if item.get('name') == strategy_name]
+        if len(matches) != 1:
+            valid = False
+            continue
+        strategy = matches[0]
+        valid = valid and strategy.get('type') == kind and strategy.get('status') == 'ACTIVE'
+        valid = valid and strategy.get('namespaces') == [namespace]
+        valid = valid and not strategy.get('recordExpiryDurationDays')
+        if kind == 'EPISODIC':
+            reflection = strategy.get('configuration', {}).get('reflection', {}).get('episodicReflectionConfiguration', {})
+            valid = valid and reflection.get('namespaces') == [namespace]
+    if not valid:
+        raise StoreError('PROJECT_NOT_READY', 'The project memory ownership, shared namespaces or retention are invalid.')
 
 
 def _wait(fetch, field):
@@ -47,6 +70,8 @@ class ProjectDeployment:
         self.control, self.ssm, self.check_harness = control, ssm, check_harness
 
     def _memory(self, settings):
+        if settings.memory_id:
+            return self.control.get_memory(memoryId=settings.memory_id)['memory']
         request = {'maxResults': 100}
         while True:
             result = self.control.list_memories(**request)
@@ -59,32 +84,12 @@ class ProjectDeployment:
             request['nextToken'] = token
 
     def _validate_memory(self, settings, memory):
-        valid = memory.get('status') == 'ACTIVE' and memory.get('name') == settings.memory_name
-        valid = valid and memory.get('eventExpiryDuration') == 365 and not memory.get('managedByResourceArn')
-        for key in ('memoryExecutionRoleArn', 'encryptionKeyArn'):
-            configured = getattr(settings, {'memoryExecutionRoleArn': 'memory_execution_role_arn',
-                                            'encryptionKeyArn': 'encryption_key_arn'}[key])
-            if configured is not None:
-                valid = valid and memory.get(key) == configured
+        if settings.memory_id and memory.get('id') != settings.memory_id:
+            raise StoreError('PROJECT_NOT_READY', 'The selected project Memory identifier does not match its resource.')
         tags = self.control.list_tags_for_resource(resourceArn=memory['arn']).get('tags', {})
-        valid = valid and tags.get('daeri:project') == settings.project_id
-        valid = valid and tags.get('daeri:catalog') == settings.project_parameter_prefix
-        strategies = memory.get('strategies', [])
-        valid = valid and len(strategies) == len(_STRATEGIES)
-        for _, name, kind, namespace in _STRATEGIES:
-            matches = [item for item in strategies if item.get('name') == name]
-            if len(matches) != 1:
-                valid = False
-                continue
-            strategy = matches[0]
-            valid = valid and strategy.get('type') == kind and strategy.get('status') == 'ACTIVE'
-            valid = valid and strategy.get('namespaces') == [namespace]
-            valid = valid and not strategy.get('recordExpiryDurationDays')
-            if kind == 'EPISODIC':
-                reflection = strategy.get('configuration', {}).get('reflection', {}).get('episodicReflectionConfiguration', {})
-                valid = valid and reflection.get('namespaces') == [namespace]
-        if not valid:
-            raise StoreError('PROJECT_NOT_READY', 'The project memory ownership, shared namespaces or retention are invalid.')
+        validate_project_memory(memory, tags, settings.project_id, settings.project_parameter_prefix,
+            name=settings.memory_name, execution_role=settings.memory_execution_role_arn,
+            encryption_key=settings.encryption_key_arn)
 
     @staticmethod
     def _attached(harness, memory):
@@ -126,7 +131,7 @@ class ProjectDeployment:
             harness_id = settings.harness_arn.rsplit('/', 1)[1]
             harness = _wait(lambda: self.control.get_harness(harnessId=harness_id), 'harness')
             existing_arn = harness.get('memory', {}).get('agentCoreMemoryConfiguration', {}).get('arn')
-            if existing_arn and (memory is None or existing_arn != memory['arn']):
+            if not settings.memory_id and existing_arn and (memory is None or existing_arn != memory['arn']):
                 raise StoreError('PROJECT_NOT_READY',
                                  'The existing project memory needs an explicit migration before publishing.')
             if memory is None:
@@ -141,7 +146,6 @@ class ProjectDeployment:
                 memory = self.control.create_memory(**request)['memory']
             memory = _wait(lambda: self.control.get_memory(memoryId=memory['id']), 'memory')
             self._validate_memory(settings, memory)
-            harness = _wait(lambda: self.control.get_harness(harnessId=harness_id), 'harness')
             if not self._attached(harness, memory):
                 updated = self.control.update_harness(harnessId=harness_id,
                     memory={'optionalValue': {'agentCoreMemoryConfiguration': {'arn': memory['arn']}}})['harness']
@@ -155,7 +159,7 @@ class ProjectDeployment:
             try:
                 self.control.get_harness_endpoint(harnessId=harness_id, endpointName=endpoint_name)
             except Exception as error:
-                if not _missing(error):
+                if getattr(error, 'response', {}).get('Error', {}).get('Code') != 'ResourceNotFoundException':
                     raise
                 self.control.create_harness_endpoint(harnessId=harness_id, endpointName=endpoint_name,
                                                      targetVersion=version)

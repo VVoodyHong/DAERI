@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -117,3 +119,15 @@ def test_scans_repository_documentation_without_git(tmp_path):
 
 def test_repository_documentation_links_resolve():
     assert check_docs(Path(__file__).resolve().parents[1]) == []
+
+
+def test_command_reports_broken_links_and_returns_a_failure_exit_status(tmp_path):
+    source = Path(__file__).resolve().parents[1] / 'scripts/check_docs.py'
+    write(tmp_path, 'scripts/check_docs.py', source.read_text(encoding='utf-8'))
+    write(tmp_path, 'README.md', '# 안내\n[문서](missing.md)')
+    command = [sys.executable, str(tmp_path / 'scripts/check_docs.py')]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 1 and 'README.md:2:' in result.stdout
+    write(tmp_path, 'README.md', '# 안내')
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0 and result.stdout == ''

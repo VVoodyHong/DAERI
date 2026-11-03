@@ -10,11 +10,13 @@ from uuid import UUID, uuid4
 from daeri.core.approval import PlanApproval
 from daeri.core.cloud import AccessContext, CloudTask, CloudTurn, HarnessReply
 from daeri.core.errors import StoreError
+from daeri.core.projects import valid_harness_release
 from daeri.core.serialization import validate_storable_json
 
 
 _MAX_BYTES = 8 * 1024 * 1024
 _REJECTED_INVOCATIONS = {
+    'AUTHENTICATION_REQUIRED',
     'HARNESS_ACCESS_DENIED', 'HARNESS_NOT_FOUND', 'HARNESS_THROTTLED',
     'HARNESS_VALIDATION_ERROR', 'HARNESS_QUOTA_EXCEEDED',
 }
@@ -73,10 +75,7 @@ def _error_code(error):
 
 
 def _release_route(endpoint, version):
-    if (endpoint == '' and version == '') or (
-            isinstance(endpoint, str) and endpoint != 'DEFAULT'
-            and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,47}', endpoint)
-            and isinstance(version, str) and re.fullmatch(r'[1-9][0-9]{0,4}', version)):
+    if (endpoint == '' and version == '') or valid_harness_release(endpoint, version):
         return
     raise ValueError('Invalid versioned harness route')
 
@@ -189,6 +188,10 @@ class S3CloudStore:
         task_id = _uuid(task_id)
         root = self._root(context, task_id)
         value, etag = self._get(root + 'manifest.json', 'ACCESS_DENIED')
+        return self._validate_manifest(value, context, task_id, root), etag
+
+    @staticmethod
+    def _validate_manifest(value, context, task_id, root):
         if not isinstance(value, dict):
             raise StoreError('STORAGE_UNAVAILABLE', 'The saved task manifest is invalid.')
         if (value.get('id'), value.get('actor_id'), value.get('project_id')) != (
@@ -199,7 +202,7 @@ class S3CloudStore:
             required = {'id', 'session_id', 'actor_id', 'project_id', 'harness_arn', 'goal',
                         'pending_tools', 'state', 'in_flight', 'last_turn'}
             if (not required <= set(value) or set(value) - required - {
-                    'approval', 'harness_endpoint', 'harness_version'}
+                    'approval', 'harness_endpoint', 'harness_version', 'recovery'}
                     or not isinstance(value['goal'], str) or not isinstance(value['harness_arn'], str)
                     or not value['harness_arn'].strip() or value['state'] not in {'active', 'waiting', 'interrupted'}):
                 raise ValueError
@@ -226,9 +229,13 @@ class S3CloudStore:
             if last is not None and (not isinstance(last, str) or not last.startswith(root + 'turns/')
                     or not last.endswith('.json') or last != root + 'turns/' + _uuid(last.rsplit('/', 1)[-1][:-5]) + '.json'):
                 raise ValueError
+            recovery = value.get('recovery')
+            if recovery is not None and (not isinstance(recovery, str)
+                    or recovery != root + 'reset/' + _uuid(recovery.rsplit('/', 1)[-1][:-5]) + '.json'):
+                raise ValueError
         except (KeyError, TypeError, ValueError, StoreError):
             raise StoreError('STORAGE_UNAVAILABLE', 'The saved task manifest is invalid.') from None
-        return value, etag
+        return value
 
     @staticmethod
     def _task(value, etag):
@@ -482,10 +489,55 @@ class S3CloudStore:
         return CloudTurn(value['id'], turn_id, reply)
 
     def read_turn(self, context, task_id):
-        """Read the last committed result while leaving any current execution untouched."""
+        """Read the last committed result, including reviewed pre-restart snapshots."""
         value, _ = self._manifest(context, task_id)
-        if value['last_turn'] is None:
-            return None
-        turn_id = value['last_turn'].rsplit('/', 1)[-1][:-5]
-        _, reply = self._receipt(value, turn_id, current_execution=False)
-        return CloudTurn(value['id'], turn_id, reply)
+        root = self._root(context, value['id'])
+        visited = set()
+        for _ in range(32):
+            if value['last_turn'] is not None:
+                turn_id = value['last_turn'].rsplit('/', 1)[-1][:-5]
+                try:
+                    _, reply = self._receipt(value, turn_id, current_execution=False)
+                except StoreError:
+                    if not visited:
+                        raise
+                    raise StoreError('STORAGE_UNAVAILABLE', 'The archived task result is invalid or unavailable.') from None
+                return CloudTurn(value['id'], turn_id, reply)
+            key = value.get('recovery')
+            if key is None:
+                return None
+            if key in visited or key != root + 'reset/' + value['session_id'] + '.json':
+                raise StoreError('STORAGE_UNAVAILABLE', 'The saved recovery chain is invalid.')
+            visited.add(key)
+            snapshot, _ = self._get(key)
+            try:
+                if (not isinstance(snapshot, dict) or set(snapshot) != {'previous', 'new_session_id', 'review'}
+                        or snapshot['new_session_id'] != value['session_id']
+                        or not isinstance(snapshot['review'], str) or not snapshot['review'].strip()):
+                    raise ValueError
+                previous = self._validate_manifest(snapshot['previous'], context, value['id'], root)
+                if (previous['session_id'] == value['session_id'] or any(
+                        previous[name] != value[name] for name in (
+                            'harness_arn', 'harness_endpoint', 'harness_version', 'goal'))):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError, StoreError):
+                raise StoreError('STORAGE_UNAVAILABLE', 'The saved recovery chain is invalid.') from None
+            value = previous
+        raise StoreError('STORAGE_UNAVAILABLE', 'The saved recovery chain exceeds the read limit.')
+
+    def restart_task(self, task, review):
+        """Archive reviewed state and rotate the session with all earlier permissions cleared."""
+        value, etag = self._manifest(task.context, task.id)
+        if etag != task.etag or value['session_id'] != task.session_id:
+            raise StoreError('STORAGE_CONFLICT', 'The task changed while recovery was being reviewed.')
+        if not isinstance(review, str) or not review.strip():
+            raise StoreError('INVALID_INPUT', 'Describe the verified previous execution and external effects.')
+        session_id = str(uuid4())
+        key = self._root(task.context, task.id) + 'reset/' + session_id + '.json'
+        self._put(key, {'previous': value, 'new_session_id': session_id, 'review': review}, IfNoneMatch='*')
+        restored = {**value, 'session_id': session_id, 'pending_tools': [], 'approval': None,
+                    'state': 'active', 'in_flight': None, 'last_turn': None, 'recovery': key}
+        snapshot = self._task(restored, '')
+        self._ensure_session(snapshot)
+        etag = self._put(self._root(task.context, task.id) + 'manifest.json', restored, IfMatch=etag)
+        return self._task(restored, etag)

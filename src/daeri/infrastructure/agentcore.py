@@ -1,11 +1,11 @@
 """Translate the AgentCore InvokeHarness event stream into the cloud port."""
 
 import json
-import re
 from dataclasses import replace
 
 from daeri.core.cloud import HarnessReply
 from daeri.core.errors import StoreError
+from daeri.core.projects import valid_harness_release
 from daeri.core.serialization import validate_storable_json
 
 
@@ -125,8 +125,7 @@ class _HarnessStream:
                         json.dumps(data, allow_nan=False)
                         pending.append({**tool, 'input': data})
                         break
-                    if (not pending or self.role != 'assistant'
-                            or len({tool['toolUseId'] for tool in pending}) != len(pending)):
+                    if not pending or self.role != 'assistant':
                         self.error = 'HARNESS_STREAM_INCOMPLETE'
                 except (ValueError, TypeError, RecursionError):
                     self.error = 'HARNESS_INVALID_TOOL_INPUT'
@@ -156,11 +155,7 @@ class AgentCoreHarness:
         self.client = client
 
     def invoke(self, task, messages):
-        if (not task.harness_arn or not isinstance(task.harness_endpoint, str)
-                or task.harness_endpoint == 'DEFAULT'
-                or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,47}', task.harness_endpoint)
-                or not isinstance(task.harness_version, str)
-                or not re.fullmatch(r'[1-9][0-9]{0,4}', task.harness_version)):
+        if not task.harness_arn or not valid_harness_release(task.harness_endpoint, task.harness_version):
             raise StoreError('PROJECT_UNAVAILABLE', 'The saved task needs a versioned project harness route.')
         state, stream, rejected = _HarnessStream(), None, False
         request = {'harnessArn': task.harness_arn, 'runtimeSessionId': task.session_id,
@@ -173,6 +168,9 @@ class AgentCoreHarness:
                 state.consume(event)
                 if state.error:
                     break
+        except StoreError as error:
+            state.error = error.code
+            rejected = stream is None
         except Exception as error:
             response = getattr(error, 'response', None)
             details = response.get('Error') if isinstance(response, dict) else None

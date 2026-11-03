@@ -18,6 +18,7 @@ class ProjectSettings(_Settings):
     name: Annotated[str, StringConstraints(min_length=1, max_length=256)]
     harness_arn: str
     approval_hook_arn: str
+    memory_id: Annotated[str, StringConstraints(pattern=r'^[A-Za-z][A-Za-z0-9_-]{0,99}-[A-Za-z0-9]{10}$')] | None = None
     memory_execution_role_arn: str | None = None
     encryption_key_arn: str | None = None
 
@@ -49,6 +50,8 @@ class ProjectSettings(_Settings):
 
     @property
     def memory_name(self):
+        if self.memory_id:
+            return self.memory_id.rsplit('-', 1)[0]
         # The catalogue and project identify a separately owned, stable Memory resource.
         key = self.project_parameter_prefix + self.project_id
         return 'Daeri_' + sha256(key.encode()).hexdigest()[:24]

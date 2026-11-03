@@ -27,8 +27,9 @@ def _view(task):
 
 
 class AgentService:
-    def __init__(self, workflow, *, check_harness):
+    def __init__(self, workflow, *, check_harness, artifacts=None):
         self.workflow, self.check_harness = workflow, check_harness
+        self.artifacts = artifacts
 
     def projects(self, user):
         return self.workflow.list_projects(user.contexts())
@@ -55,16 +56,36 @@ class AgentService:
             turn = self.workflow.start(context, request, project=project)
         else:
             task = self.workflow.get_task(context, task_id)
-            self.check_harness(task)
             if task.pending_tools:
                 turn = self._decide(user, task, 'revise', request)
             else:
+                self.check_harness(task)
                 turn = self.workflow.resume(context, task_id, request)
         return self._result(user, project_id, turn)
 
     def recover(self, user, project_id, task_id):
         turn = self.workflow.recover(user.context(project_id), task_id)
         return self._result(user, project_id, turn)
+
+    async def restart(self, user, project_id, task_id, ask):
+        task = await asyncio.to_thread(self.workflow.get_task, user.context(project_id), task_id)
+        review = await ask(task.goal, task.state)
+        user.context(project_id)
+        if review is None:
+            return await asyncio.to_thread(self.status, user, project_id, task_id)
+        _validate_prompt(review, required=True)
+        await asyncio.to_thread(self.check_harness, task)
+        turn = await asyncio.to_thread(self.workflow.restart, user.context(project_id), task_id,
+                                       review, expected_etag=task.etag)
+        return await asyncio.to_thread(self._result, user, project_id, turn)
+
+    def files(self, user, project_id, task_id, cursor=None, limit=20):
+        task = self.workflow.get_task(user.context(project_id), task_id)
+        return self.artifacts.list(user, task, cursor, limit)
+
+    def download(self, user, project_id, task_id, artifact_id):
+        task = self.workflow.get_task(user.context(project_id), task_id)
+        return self.artifacts.download(user, task, artifact_id)
 
     async def confirm(self, user, project_id, task_id, ask):
         task = await asyncio.to_thread(self.workflow.get_task, user.context(project_id), task_id)
@@ -90,7 +111,6 @@ class AgentService:
     def _decide(self, user, task, decision, response):
         user.context(task.context.project_id)
         approval = _pending_plan(task)
-        self.check_harness(task)
         task = self.workflow.store.record_decision(task, approval.tool_use_id, approval.plan, decision, response)
         return self._resume_decision(user, task)
 

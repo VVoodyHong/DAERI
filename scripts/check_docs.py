@@ -16,7 +16,7 @@ _LINK = re.compile(
 def _documents(root: Path) -> list[Path]:
     paths = [root / name for name in ('AGENTS.md', 'CLAUDE.md', 'README.md')
              if (root / name).is_file()]
-    for section in ('docs', 'plugins'):
+    for section in ('docs', 'plugins', 'src/daeri/assets'):
         for directory, folders, files in os.walk(root / section):
             folders[:] = [folder for folder in folders
                           if not folder.startswith('.')
@@ -88,3 +88,10 @@ def check_docs(root: Path) -> list[str]:
                 line = text.count('\n', 0, match.start()) + 1
                 issues.append(f'{source.relative_to(root).as_posix()}:{line}: {error}: {destination}')
     return issues
+
+
+if __name__ == '__main__':
+    issues = check_docs(Path(__file__).resolve().parents[1])
+    for issue in issues:
+        print(issue)
+    raise SystemExit(bool(issues))

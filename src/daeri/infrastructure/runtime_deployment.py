@@ -29,8 +29,8 @@ def runtime_request(settings, *, public_url=None):
     return request
 
 
-def _ready(client, runtime_id, *, endpoint=None, timeout=180):
-    deadline = time.monotonic() + timeout
+def _ready(client, runtime_id, *, endpoint=None):
+    deadline = time.monotonic() + 180
     while True:
         result = (client.get_agent_runtime_endpoint(agentRuntimeId=runtime_id, endpointName=endpoint)
                   if endpoint else client.get_agent_runtime(agentRuntimeId=runtime_id))
@@ -70,9 +70,7 @@ def configure_runtime(client, settings):
         return {'runtime_id': runtime_id, 'runtime_arn': deployed['agentRuntimeArn'],
                 'version': deployed['agentRuntimeVersion'], 'public_url': url}
     except Exception as error:
-        if isinstance(error, StoreError):
-            error.runtime_id = runtime_id
-            raise
-        failure = StoreError('DEPLOYMENT_FAILED', 'Runtime configuration could not be confirmed; inspect the deployment before retrying.')
+        failure = error if isinstance(error, StoreError) else StoreError(
+            'DEPLOYMENT_FAILED', 'Runtime configuration could not be confirmed; inspect the deployment before retrying.')
         failure.runtime_id = runtime_id
         raise failure from None

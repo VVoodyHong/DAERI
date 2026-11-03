@@ -4,10 +4,11 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 import re
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from daeri.config.cloud import CloudServices, CloudSettings, _Settings, build_cloud
 from daeri.core.errors import StoreError
+from daeri.core.projects import valid_harness_release
 from daeri.core.endpoints import mcp_endpoint
 from daeri.infrastructure.auth import JwtTokenVerifier, https_url
 
@@ -43,6 +44,12 @@ class ServiceSettings(CloudSettings):
     auth: AuthSettings
     approval_hook_arn: str
 
+    @model_validator(mode='after')
+    def delegated_token_audience(self):
+        if self.harness_oauth_audience is not None and self.harness_oauth_audience != self.auth.audience:
+            raise ValueError('The service and delegated harness must accept the same user-token audience.')
+        return self
+
     @field_validator('approval_hook_arn')
     @classmethod
     def validate_hook_arn(cls, value):
@@ -70,9 +77,7 @@ class HarnessReadiness:
     def check(self, route):
         try:
             arn, endpoint, version = route.harness_arn, route.harness_endpoint, route.harness_version
-            if (not isinstance(arn, str) or ':harness/' not in arn
-                    or not isinstance(endpoint, str) or not endpoint
-                    or not isinstance(version, str) or not re.fullmatch(r'[1-9][0-9]*', version)):
+            if not isinstance(arn, str) or ':harness/' not in arn or not valid_harness_release(endpoint, version):
                 raise ValueError('Invalid saved harness release')
             harness_id = arn.rsplit('/', 1)[1]
             release = self.client.get_harness_endpoint(harnessId=harness_id, endpointName=endpoint)['endpoint']
@@ -124,6 +129,7 @@ def build_server(settings: ServerSettings, *, session=None) -> ServerServices:
     from botocore.config import Config
 
     from daeri.application.agent import AgentService
+    from daeri.infrastructure.artifacts import ArtifactService
     from daeri.infrastructure.mcp_server import build_mcp
 
     session = session if session is not None else boto3.Session()
@@ -134,8 +140,11 @@ def build_server(settings: ServerSettings, *, session=None) -> ServerServices:
                                  config=Config(retries={'total_max_attempts': 1}, connect_timeout=10, read_timeout=60))
         resources.callback(control.close)
         readiness = HarnessReadiness(control, settings.approval_hook_arn)
-        agent = AgentService(cloud.workflow, check_harness=readiness.check)
+        artifacts = ArtifactService(cloud.store.client, settings.storage.bucket, settings.storage.prefix)
+        cloud.workflow.output_location = artifacts.location
+        agent = AgentService(cloud.workflow, check_harness=readiness.check, artifacts=artifacts)
         verifier = JwtTokenVerifier(settings.auth.issuer, settings.auth.audience, settings.public_url,
                                     project_claim=settings.auth.project_claim)
-        mcp = build_mcp(agent, verifier, settings.auth.issuer, settings.public_url, settings.auth.required_scopes)
+        mcp = build_mcp(agent, verifier, settings.auth.issuer, settings.public_url, settings.auth.required_scopes,
+                        harness_audience=settings.harness_oauth_audience)
         return ServerServices(cloud, agent, mcp, verifier, resources.pop_all())

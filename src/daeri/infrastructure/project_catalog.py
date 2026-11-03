@@ -4,7 +4,7 @@ import json
 import re
 
 from daeri.core.errors import StoreError
-from daeri.core.projects import Project
+from daeri.core.projects import Project, valid_harness_release
 from daeri.core.serialization import validate_storable_json
 
 
@@ -50,9 +50,7 @@ class SsmProjectCatalog:
             if (not isinstance(name, str) or not 1 <= len(name) <= 256 or name.strip() != name
                     or any(ord(char) < 32 or ord(char) == 127 for char in name)
                     or not isinstance(arn, str) or not _HARNESS_ARN.fullmatch(arn)
-                    or not isinstance(endpoint, str) or endpoint == 'DEFAULT'
-                    or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,47}', endpoint)
-                    or not isinstance(version, str) or not re.fullmatch(r'[1-9][0-9]{0,4}', version)):
+                    or not valid_harness_release(endpoint, version)):
                 raise ValueError('Invalid project metadata')
             return Project(project_id, name, arn, endpoint, version)
         except (KeyError, TypeError, ValueError, RecursionError):

@@ -83,7 +83,7 @@ class JwtTokenVerifier:
                 return None
             return ProjectAccessToken(token=token, client_id=client_id, scopes=scope.split(),
                                       expires_at=claims['exp'], resource=self.resource_url,
-                                      subject=claims['sub'], claims={'iss': self.issuer}, user=user)
+                                      subject=claims['sub'], claims={'iss': self.issuer, 'aud': self.audience}, user=user)
         except (jwt.PyJWTError, httpx.HTTPError, ValueError, TypeError, KeyError, OSError, StoreError):
             return None
 

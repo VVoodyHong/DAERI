@@ -25,10 +25,10 @@ def build_plugin(endpoint: str, client_id: str, callback_port: int, output: Path
             '.mcp.json', 'skills/daeri/SKILL.md',
         ))
     }
-    connection = {'mcpServers': {'runtime': {
-        'type': 'http', 'url': endpoint,
-        'oauth': {'clientId': client_id, 'callbackPort': callback_port},
-    }}}
+    connection = json.loads(files['plugins/daeri/.mcp.json'])
+    runtime = connection['mcpServers']['runtime']
+    runtime['url'] = endpoint
+    runtime['oauth'].update(clientId=client_id, callbackPort=callback_port)
     files['plugins/daeri/.mcp.json'] = _json(connection)
     for host in ('.claude-plugin', '.codex-plugin'):
         path = 'plugins/daeri/' + host + '/plugin.json'
