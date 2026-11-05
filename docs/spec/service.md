@@ -39,7 +39,7 @@ AWS·회사 로그인·호스트의 실제 연동 경계는 [구현과 검증](.
 
 ## 구성과 책임
 
-![DAERI AWS 서비스 구성도](../assets/daeri-agentcore-architecture.svg)
+![DAERI 아키텍처와 8단계 업무 흐름](../assets/daeri-overview.svg)
 
 | 구성 | 책임 |
 |---|---|
