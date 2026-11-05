@@ -112,6 +112,23 @@ def test_preview_and_capture_include_all_native_pages_and_tool_payload_without_r
     assert {item['event']['payload'][0]['conversational']['role'] for item in stored} == {'USER', 'TOOL'}
 
 
+def test_native_event_above_task_size_limit_roundtrips_without_raising_task_limit():
+    archive, memory, objects, _ = setup()
+    native = event(1)
+    native['payload'] = [{'conversational': {'role': 'USER', 'content': {'text': 'x' * 100000}}}
+                         for _ in range(90)]
+    memory.events = [native]
+    assert archive.capture('project', SOURCE, apply=True)['events'] == 1
+    archive.capture('project', SOURCE, apply=True)
+    assert len(objects.objects) == 1
+    assert archive.replay('project', SOURCE, TARGET, apply=True)['replayed'] == 1
+    assert memory.created[0]['payload'] == native['payload']
+    assert memory.created[0]['eventTimestamp'] == native['eventTimestamp']
+    assert archive.replay('project', SOURCE, TARGET, apply=True)['replayed'] == 0
+    with pytest.raises(StoreError, match='INVALID_INPUT'):
+        archive.objects.create_task(AccessContext('alice', 'project'), 'saved-harness', 'x' * (8 * 1024 * 1024))
+
+
 def test_replay_uses_fresh_memory_original_actor_session_time_and_idempotent_checkpoints():
     archive, memory, objects, _ = setup()
     archive.capture('project', SOURCE, apply=True)
@@ -173,12 +190,13 @@ def test_receipt_fallback_rebuilds_original_requests_tool_evidence_and_result_af
     archive.objects.finish_turn(task, turn, 'Compare the counts',
         HarnessReply('Verified total', 'end_turn', observations=({'count': 42},)), ())
     preview = archive.capture_receipts('project')
-    assert preview['events'] == 3 and not any('/memory/' in key for key in objects.objects)
+    assert preview['events'] == 1 and not any('/memory/' in key for key in objects.objects)
     archive.capture_receipts('project', apply=True)
     archive.replay('project', 'receipts', TARGET, apply=True)
-    assert [item['payload'][0]['conversational']['role'] for item in memory.created] == ['USER', 'TOOL', 'ASSISTANT']
+    messages = [item['conversational'] for event in memory.created for item in event['payload']]
+    assert [message['role'] for message in messages] == ['USER', 'TOOL', 'ASSISTANT']
     assert memory.created[0]['sessionId'] == task.session_id
-    assert '42' in memory.created[1]['payload'][0]['conversational']['content']['text']
+    assert '42' in messages[1]['content']['text']
 
 
 def test_receipt_fallback_rebuilds_the_full_offloaded_response_and_tool_evidence():
@@ -193,11 +211,97 @@ def test_receipt_fallback_rebuilds_the_full_offloaded_response_and_tool_evidence
     archive.capture_receipts('project', apply=True)
     archive.replay('project', 'receipts', TARGET, apply=True)
 
-    messages = [item['payload'][0]['conversational'] for item in memory.created]
+    messages = [item['conversational'] for event in memory.created for item in event['payload']]
     assert messages[0] == {'role': 'USER', 'content': {'text': 'Compare the counts'}}
     assert json.loads(messages[1]['content']['text']) == evidence
     assert ''.join(message['content']['text'] for message in messages if message['role'] == 'ASSISTANT') == text
     assert all(item['actorId'] == 'alice' and item['sessionId'] == task.session_id for item in memory.created)
+
+
+@pytest.mark.parametrize('text', [' \t\n' + '검🙂e\u0301\t' * 20000 + '\n\t ',
+                                'x' * 10000000, '\x00' * 1800000],
+                         ids=['unicode_whitespace', 'message_count', 'encoded_bytes'])
+def test_receipt_payloads_preserve_text_within_native_message_and_event_limits(text):
+    from daeri.infrastructure.memory_archive import receipt_events
+    from daeri.core.serialization import validate_storable_json
+    receipt = {'prompt': 'Review', 'reply': {'text': text, 'observations': []}, 'tool_results': [],
+               'actor_id': 'alice', 'session_id': 'session-1',
+               'turn_id': '00000000-0000-0000-0000-000000000001'}
+    events = list(receipt_events(receipt, NOW))
+    messages = [item['conversational'] for event in events for item in event['payload']]
+    assert all(0 < len(message['content']['text'].encode('utf-8')) <= 100000 for message in messages)
+    assert all(1 <= len(event['payload']) <= 100 and len(validate_storable_json(event)) <= 10000000
+               for event in events)
+    assert {event['eventTimestamp'] for event in events} == {'2026-11-01T00:00:00.000000+00:00'}
+    assert messages[0] == {'role': 'USER', 'content': {'text': 'Review'}}
+    assert ''.join(message['content']['text'] for message in messages if message['role'] == 'ASSISTANT') == text
+
+
+def test_receipt_replay_keeps_tied_timestamp_turns_and_large_batches_together():
+    archive, memory, objects, _ = setup()
+    context = AccessContext('alice', 'project')
+    task = archive.objects.create_task(context, 'saved-harness', 'Review')
+    turns = []
+    for label in ('A', 'B'):
+        turn = archive.objects.begin_turn(task, 'Review ' + label, ())
+        archive.objects.finish_turn(task, turn, 'Review ' + label,
+                                    HarnessReply(label * 10000000, 'end_turn'), ())
+        turns.append(turn)
+        task = archive.objects.get_task(context, task.id)
+    assert archive.capture_receipts('project', apply=True)['events'] == 4
+    snapshot = dict(objects.objects)
+    archive.capture_receipts('project', apply=True)
+    assert objects.objects == snapshot
+    assert archive.replay('project', 'receipts', TARGET, apply=True)['replayed'] == 4
+    groups = [event['metadata']['daeri_turn']['stringValue'] for event in memory.created]
+    assert groups in [[turns[0], turns[0], turns[1], turns[1]], [turns[1], turns[1], turns[0], turns[0]]]
+    for turn, label in zip(turns, ('A', 'B')):
+        messages = [item['conversational'] for event in memory.created
+                    if event['metadata']['daeri_turn']['stringValue'] == turn for item in event['payload']]
+        assert messages[0] == {'role': 'USER', 'content': {'text': 'Review ' + label}}
+        assert ''.join(message['content']['text'] for message in messages[1:]) == label * 10000000
+    assert archive.replay('project', 'receipts', TARGET, apply=True)['replayed'] == 0
+
+
+def test_receipt_collection_does_not_mix_legacy_archives_or_reuse_their_restore_target():
+    archive, memory, objects, _ = setup()
+    native = archive._scope('project', SOURCE, '/daeri/projects/')
+    receipts = archive._scope('project', 'receipts', '/daeri/projects/')
+    assert archive._root(native).endswith('/events/')
+    assert archive._root(receipts).endswith('/receipt-events-v2/')
+    legacy = archive._root(receipts).replace('/receipt-events-v2/', '/events/')
+    objects.put_object(Bucket=BUCKET, Key=legacy + 'old.json', Body=b'{}')
+    with pytest.raises(StoreError, match='ARCHIVE_NOT_FOUND'):
+        archive.replay('project', 'receipts', TARGET, apply=True)
+    task = archive.objects.create_task(AccessContext('alice', 'project'), 'saved-harness', 'Review')
+    turn = archive.objects.begin_turn(task, 'Review', ())
+    archive.objects.finish_turn(task, turn, 'Review', HarnessReply('Done', 'end_turn'), ())
+    archive.capture_receipts('project', apply=True)
+    archive.replay('project', 'receipts', TARGET, apply=True)
+    key = next(key for key in objects.objects if '/restore/' in key and key.endswith('/manifest.json'))
+    binding = archive._read(key)
+    binding.pop('collection')
+    archive.objects._put(key, binding)
+    with pytest.raises(StoreError, match='STORAGE_CONFLICT'):
+        archive.replay('project', 'receipts', TARGET, apply=True)
+    assert len(memory.created) == 1 and objects.objects[legacy + 'old.json'][0] == b'{}'
+
+
+def test_new_receipt_capture_cycle_does_not_resume_a_legacy_collection_cursor():
+    archive, _, objects, _ = setup()
+    task = archive.objects.create_task(AccessContext('alice', 'project'), 'saved-harness', 'Review')
+    turn = archive.objects.begin_turn(task, 'Review', ())
+    archive.objects.finish_turn(task, turn, 'Review', HarnessReply('Done', 'end_turn'), ())
+    scope = archive._scope('project', 'receipts', '/daeri/projects/')
+    legacy = archive._root(scope).replace('/receipt-events-v2/', '/') + 'capture.json'
+    archive.objects._put(legacy, {**scope, 'events': 9, 'pending': [{'kind': 'receipts', 'token': '999'}]})
+    previous = objects.objects[legacy]
+
+    result = archive.capture_batch('project', 'receipts')
+
+    assert result['complete'] and result['events'] == 1
+    assert len(list(archive._keys(archive._root(scope)))) == 1
+    assert objects.objects[legacy] == previous
 
 
 def test_replay_reuses_client_token_when_checkpoint_write_failed_after_event_creation(monkeypatch):
@@ -263,7 +367,8 @@ def test_foreign_archive_body_and_reused_target_binding_stop_without_replaying()
         archive.replay('project', SOURCE, TARGET, apply=True)
     assert not memory.created
     receipts = archive._scope('project', 'receipts', '/daeri/projects/')
-    copy = {**document, **receipts, 'event': {**document['event'], 'memoryId': 'receipts'}}
+    copy = {**document, **receipts, 'event': {**document['event'], 'memoryId': 'receipts',
+            'eventId': '00000000-0000-0000-0000-000000000001-0000000000'}}
     archive._save(receipts, copy, True)
     with pytest.raises(StoreError, match='different reconstruction'):
         archive.replay('project', 'receipts', TARGET, apply=True)
@@ -371,7 +476,7 @@ def test_scheduled_receipt_collection_also_advances_in_bounded_steps():
     archive.objects.finish_turn(task, turn, 'Compare', HarnessReply('Done', 'end_turn'), ())
     assert not archive.capture_batch('project', 'receipts', max_pages=1)['complete']
     result = archive.capture_batch('project', 'receipts')
-    assert result['complete'] and result['events'] == 2
+    assert result['complete'] and result['events'] == 1
 
 
 def test_archive_command_rejects_invalid_memory_id_before_building_clients(tmp_path, monkeypatch, capsys):

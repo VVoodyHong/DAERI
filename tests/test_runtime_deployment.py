@@ -9,6 +9,7 @@ import boto3
 from pydantic import ValidationError
 
 from daeri.config.runtime import RuntimeSettings
+from daeri.config.connections import ProjectConnections
 from daeri.infrastructure.runtime_deployment import configure_runtime, runtime_request
 from daeri.core.errors import StoreError
 
@@ -27,6 +28,7 @@ class Control:
     def __init__(self, existing_endpoint=False):
         self.calls, self.existing_endpoint = [], existing_endpoint
         self.version = '1'
+        self.metadata = None
 
     def create_agent_runtime(self, **request):
         self.calls.append(('create', request))
@@ -34,11 +36,13 @@ class Control:
 
     def get_agent_runtime(self, **request):
         self.calls.append(('get', request))
-        return {'agentRuntimeArn': ARN, 'status': 'READY', 'agentRuntimeVersion': self.version}
+        return {'agentRuntimeArn': ARN, 'status': 'READY', 'agentRuntimeVersion': self.version,
+                'metadataConfiguration': self.metadata}
 
     def update_agent_runtime(self, **request):
         self.calls.append(('update', request))
         self.version = '2'
+        self.metadata = request.get('metadataConfiguration')
         return {}
 
     def get_agent_runtime_endpoint(self, **request):
@@ -61,6 +65,8 @@ def test_create_publishes_only_the_version_with_real_public_url_and_preserves_to
     create = next(request for operation, request in client.calls if operation == 'create')
     assert create['environmentVariables'] == {}
     update = next(request for operation, request in client.calls if operation == 'update')
+    assert 'metadataConfiguration' not in create
+    assert update['metadataConfiguration'] == {'requireMMDSV2': True}
     config = json.loads(update['environmentVariables']['DAERI_SERVER_CONFIG'])
     assert config['public_url'] == result['public_url']
     assert result['public_url'].endswith('/invocations?qualifier=PROD')
@@ -84,12 +90,37 @@ def test_update_reuses_existing_runtime_and_endpoint():
     assert client.calls[-1][0] == 'update_endpoint'
 
 
+@pytest.mark.parametrize('metadata', [None, {'requireMMDSV2': False}])
+def test_runtime_never_publishes_endpoint_without_confirmed_mmdsv2(metadata):
+    client = Control()
+    update = client.update_agent_runtime
+
+    def not_applied(**request):
+        update(**request)
+        client.metadata = metadata
+    client.update_agent_runtime = not_applied
+    with pytest.raises(StoreError, match='RUNTIME_NOT_READY'):
+        configure_runtime(client, RuntimeSettings.model_validate(BASE))
+    assert not any(operation.endswith('_endpoint') for operation, _ in client.calls)
+
+
 def test_failed_existing_runtime_is_not_updated_or_published():
     client = Control()
     client.get_agent_runtime = lambda **request: {'status': 'CREATE_FAILED'}
     with pytest.raises(StoreError, match='RUNTIME_NOT_READY'):
         configure_runtime(client, RuntimeSettings.model_validate(BASE))
     assert [operation for operation, request in client.calls] == ['create']
+
+
+def test_runtime_wait_respects_shared_operation_deadline(monkeypatch):
+    from daeri.infrastructure.runtime_deployment import _ready
+    client = Control()
+    client.get_agent_runtime = lambda **request: {'status': 'CREATING'}
+    monkeypatch.setattr('daeri.infrastructure.runtime_deployment.time.monotonic', lambda: 200)
+    monkeypatch.setattr('daeri.infrastructure.runtime_deployment.time.sleep',
+                        lambda seconds: pytest.fail('An expired operation continued waiting.'))
+    with pytest.raises(StoreError, match='RUNTIME_NOT_READY'):
+        _ready(client, 'daeri-1234567890', deadline=100)
 
 
 def test_configuration_check_does_not_require_aws_clients(monkeypatch):
@@ -129,6 +160,37 @@ def test_native_vpc_network_configuration_is_preserved_in_the_runtime_request():
         'subnets': ['subnet-12345678'], 'securityGroups': ['sg-12345678']}}
     request = runtime_request(RuntimeSettings.model_validate({**BASE, 'network_configuration': network}))
     assert request['networkConfiguration'] == network
+
+
+@pytest.mark.parametrize('target', ['runtime', 'connection'])
+@pytest.mark.parametrize('field', ['subnets', 'securityGroups'])
+@pytest.mark.parametrize('count', [0, 16, 17])
+def test_runtime_and_connection_network_lists_obey_native_limits(target, field, count):
+    network = {'networkMode': 'VPC', 'networkModeConfig': {
+        'subnets': ['subnet-12345678'], 'securityGroups': ['sg-12345678']}}
+    prefix = 'subnet' if field == 'subnets' else 'sg'
+    network['networkModeConfig'][field] = [f'{prefix}-{index:08x}' for index in range(count)]
+    model, data = (RuntimeSettings, BASE) if target == 'runtime' else (ProjectConnections, {
+        'gateway_arn': 'arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/example-abcdefghij',
+        'allowed_connectors': []})
+    if count == 16:
+        assert model.model_validate({**data, 'network_configuration': network}).network_configuration == network
+    else:
+        with pytest.raises(ValidationError):
+            model.model_validate({**data, 'network_configuration': network})
+
+
+@pytest.mark.parametrize('target', ['runtime', 'connection'])
+@pytest.mark.parametrize('legacy_s3_endpoint', [False, True])
+def test_new_runtime_and_connection_deployments_reject_legacy_s3_endpoint_setting(target, legacy_s3_endpoint):
+    network = {'networkMode': 'VPC', 'networkModeConfig': {
+        'subnets': ['subnet-12345678'], 'securityGroups': ['sg-12345678'],
+        'requireServiceS3Endpoint': legacy_s3_endpoint}}
+    model, data = (RuntimeSettings, BASE) if target == 'runtime' else (ProjectConnections, {
+        'gateway_arn': 'arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/example-abcdefghij',
+        'allowed_connectors': []})
+    with pytest.raises(ValidationError):
+        model.model_validate({**data, 'network_configuration': network})
 
 
 @pytest.mark.parametrize('aws_config', ['', 'invalid-without-section'])

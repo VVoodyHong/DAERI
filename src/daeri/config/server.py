@@ -7,6 +7,7 @@ import re
 from pydantic import Field, field_validator, model_validator
 
 from daeri.config.cloud import CloudServices, CloudSettings, _Settings, build_cloud
+from daeri.config.connections import ConnectionSettings
 from daeri.config.validation import ApprovalHookArn
 from daeri.core.errors import StoreError
 from daeri.core.projects import valid_harness_release
@@ -18,6 +19,7 @@ class AuthSettings(_Settings):
     issuer: str
     audience: str = Field(min_length=1)
     project_claim: str = 'projects'
+    management_claim: str = 'managed_projects'
     required_scopes: list[str] = Field(default_factory=lambda: ['daeri/use'])
 
     @field_validator('issuer')
@@ -25,12 +27,18 @@ class AuthSettings(_Settings):
     def validate_issuer(cls, value):
         return https_url(value)
 
-    @field_validator('audience', 'project_claim')
+    @field_validator('audience', 'project_claim', 'management_claim')
     @classmethod
     def validate_claim_settings(cls, value):
         if not value.strip() or any(ord(char) <= 32 or ord(char) == 127 for char in value):
             raise ValueError('Supply an explicit resource audience and project claim.')
         return value
+
+    @model_validator(mode='after')
+    def distinct_project_claims(self):
+        if self.management_claim == self.project_claim:
+            raise ValueError('Use distinct membership and connection management claims.')
+        return self
 
     @field_validator('required_scopes')
     @classmethod
@@ -44,6 +52,7 @@ class AuthSettings(_Settings):
 class ServiceSettings(CloudSettings):
     auth: AuthSettings
     approval_hook_arn: ApprovalHookArn
+    connections: ConnectionSettings | None = None
 
     @model_validator(mode='after')
     def delegated_token_audience(self):
@@ -122,6 +131,7 @@ def build_server(settings: ServerSettings, *, session=None) -> ServerServices:
     from botocore.config import Config
 
     from daeri.application.agent import AgentService
+    from daeri.application.connections import ConnectionService
     from daeri.infrastructure.artifacts import ArtifactService
     from daeri.infrastructure.mcp_server import build_mcp
 
@@ -136,8 +146,15 @@ def build_server(settings: ServerSettings, *, session=None) -> ServerServices:
         artifacts = ArtifactService(cloud.store.client, settings.storage.bucket, settings.storage.prefix)
         cloud.workflow.output_location = artifacts.location
         agent = AgentService(cloud.workflow, check_harness=readiness.check, artifacts=artifacts)
+        connections = None
+        if settings.connections is not None:
+            from daeri.infrastructure.connections import AwsConnections, S3ConnectionLocks
+            connections = ConnectionService(cloud.workflow.catalog, AwsConnections(
+                control, cloud.workflow.catalog.client, cloud.workflow.catalog, prefix=settings.connections.prefix,
+                locks=S3ConnectionLocks(cloud.store.client, settings.storage.bucket, settings.storage.prefix)))
         verifier = JwtTokenVerifier(settings.auth.issuer, settings.auth.audience, settings.public_url,
-                                    project_claim=settings.auth.project_claim)
+                                    project_claim=settings.auth.project_claim,
+                                    management_claim=settings.auth.management_claim)
         mcp = build_mcp(agent, verifier, settings.auth.issuer, settings.public_url, settings.auth.required_scopes,
-                        harness_audience=settings.harness_oauth_audience)
+                        harness_audience=settings.harness_oauth_audience, connections=connections)
         return ServerServices(cloud, agent, mcp, verifier, resources.pop_all())

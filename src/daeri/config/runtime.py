@@ -1,12 +1,12 @@
 """Deployment inputs for the DAERI MCP Runtime; secrets stay in AWS providers."""
 
 from typing import Any
-import re
 
 from pydantic import Field, field_validator
 
 from daeri.config.server import ServiceSettings
 from daeri.config.cloud import _Settings
+from daeri.config.validation import validate_network_configuration
 
 
 class RuntimeSettings(_Settings):
@@ -36,23 +36,4 @@ class RuntimeSettings(_Settings):
     @field_validator('network_configuration')
     @classmethod
     def validate_network(cls, value):
-        from botocore.exceptions import ParamValidationError
-        from botocore.loaders import create_loader
-        from botocore.model import ServiceModel
-        from botocore.validate import validate_parameters
-
-        model = ServiceModel(create_loader().load_service_model('bedrock-agentcore-control', 'service-2'))
-        shape = model.shape_for('NetworkConfiguration')
-        try:
-            validate_parameters(value, shape)
-        except ParamValidationError:
-            raise ValueError('Supply a native PUBLIC or VPC network configuration.') from None
-        mode = value['networkMode']
-        if mode not in {'PUBLIC', 'VPC'} or (mode == 'VPC') != ('networkModeConfig' in value):
-            raise ValueError('Supply a native PUBLIC or VPC network configuration.')
-        for field, items in value.get('networkModeConfig', {}).items():
-            if field in {'securityGroups', 'subnets'}:
-                pattern = shape.members['networkModeConfig'].members[field].member.metadata['pattern']
-                if any(not re.fullmatch(pattern, item) for item in items):
-                    raise ValueError('Supply valid VPC subnet and security group identifiers.')
-        return value
+        return validate_network_configuration(value)

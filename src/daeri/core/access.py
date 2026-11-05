@@ -17,11 +17,14 @@ class AuthenticatedUser:
     actor_id: str
     project_ids: frozenset[str]
     expires_at: int
+    managed_project_ids: frozenset[str] = frozenset()
 
     def __post_init__(self):
         if (not isinstance(self.actor_id, str) or not self.actor_id.strip()
                 or not isinstance(self.project_ids, frozenset)
                 or any(not isinstance(item, str) or not _PROJECT_ID.fullmatch(item) for item in self.project_ids)
+                or not isinstance(self.managed_project_ids, frozenset)
+                or not self.managed_project_ids.issubset(self.project_ids)
                 or type(self.expires_at) is not int):
             raise StoreError('INVALID_INPUT', 'A verified identity, project grants and expiry are required.')
         try:
@@ -42,3 +45,9 @@ class AuthenticatedUser:
     def contexts(self) -> tuple[AccessContext, ...]:
         self._current()
         return tuple(AccessContext(self.actor_id, project) for project in sorted(self.project_ids))
+
+    def manage(self, project_id: str) -> AccessContext:
+        context = self.context(project_id)
+        if project_id not in self.managed_project_ids:
+            raise StoreError('ACCESS_DENIED', 'Only a project manager can change its shared connections.')
+        return context

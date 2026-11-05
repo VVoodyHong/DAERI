@@ -14,7 +14,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.exceptions import McpError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, field_validator
 
 from daeri.core.access import AuthenticatedUser
 from daeri.core.endpoints import mcp_endpoint
@@ -33,7 +33,8 @@ class _SessionVerifier:
         token = await self.verifier.verify_token(raw)
         if not isinstance(token, ProjectAccessToken):
             return None
-        authority = [token.user.actor_id, sorted(token.user.project_ids), sorted(set(token.scopes))]
+        authority = [token.user.actor_id, sorted(token.user.project_ids),
+                     sorted(token.user.managed_project_ids), sorted(set(token.scopes))]
         subject = sha256(json.dumps(authority, separators=(',', ':')).encode()).hexdigest()
         return token.model_copy(update={'subject': subject})
 
@@ -78,6 +79,23 @@ def _user(ctx: Context) -> AuthenticatedUser:
     return _token(ctx).user
 
 
+def _connection_form(description):
+    fields = {}
+    for index, (name, item) in enumerate(description['fields'].items()):
+        annotation = {'string': str, 'integer': int, 'boolean': bool}[item['type']]
+        default = item.get('default', ... if item.get('required', True) else None)
+        options = {'title': item['title'], 'strict': True, 'alias': name}
+        if item.get('secret_ref'):
+            options['description'] = 'AWS 인증 저장소의 참조입니다. 비밀값 대신 준비된 참조를 선택·입력하세요.'
+        if default is None:
+            options['json_schema_extra'] = lambda schema: schema.pop('default', None)
+        fields['field_' + str(index)] = (annotation, Field(default=default, **options))
+    if description.get('credentials'):
+        fields['credential_id'] = (str, Field(title='연결에 사용할 인증',
+            json_schema_extra={'enum': description['credentials']}))
+    return create_model('ProjectConnectionForm', __config__=ConfigDict(extra='forbid', strict=True), **fields)
+
+
 async def _result(operation: Awaitable[Any], *, projects=False) -> CallToolResult:
     try:
         data = await operation
@@ -102,7 +120,8 @@ async def _result(operation: Awaitable[Any], *, projects=False) -> CallToolResul
 
 
 def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: str,
-              scopes: list[str] | tuple[str, ...], *, harness_audience: str | None = None) -> FastMCP:
+              scopes: list[str] | tuple[str, ...], *, harness_audience: str | None = None,
+              connections=None) -> FastMCP:
     endpoint = urlsplit(mcp_endpoint(resource_url))
     server = FastMCP(
         'DAERI', token_verifier=_SessionVerifier(token_verifier),
@@ -209,5 +228,39 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
             return None
 
         return await call(ctx, agent.restart(_user(ctx), project_id, task_id, review))
+
+    if connections is not None:
+        @server.tool(annotations=readonly)
+        async def daeri_connectors(project_id: str, ctx: Context) -> CallToolResult:
+            """프로젝트 담당자가 등록할 수 있는 연결 도구와 준비된 인증을 조회한다."""
+            return await _result(anyio.to_thread.run_sync(
+                partial(connections.connectors, _user(ctx), project_id)))
+
+        @server.tool(annotations=readonly)
+        async def daeri_connections(project_id: str, ctx: Context) -> CallToolResult:
+            """프로젝트 구성원이 함께 사용하는 연결 목록과 도구 등록 상태를 조회한다."""
+            return await _result(anyio.to_thread.run_sync(
+                partial(connections.connections, _user(ctx), project_id)))
+
+        @server.tool()
+        async def daeri_connect(project_id: str, connection_id: str, connector_id: str,
+                                ctx: Context) -> CallToolResult:
+            """프로젝트 담당자의 실제 입력창 응답으로 공용 연결을 등록·수정한다."""
+            async def ask(description):
+                try:
+                    with anyio.fail_after(300):
+                        result = await ctx.elicit(
+                            message=f'{project_id} 프로젝트의 {connection_id} 연결에 사용할 '
+                                    f'{description["name"]} 접속 정보를 입력해 주세요. '
+                                    '확인하면 프로젝트 공용 연결에 적용합니다.',
+                            schema=_connection_form(description))
+                    if result.action == 'accept':
+                        return result.data.model_dump(by_alias=True, exclude_none=True)
+                except (McpError, ValidationError, TimeoutError, ValueError,
+                        anyio.EndOfStream, anyio.BrokenResourceError, anyio.ClosedResourceError):
+                    pass
+                return None
+
+            return await _result(connections.configure(_user(ctx), project_id, connection_id, connector_id, ask))
 
     return server

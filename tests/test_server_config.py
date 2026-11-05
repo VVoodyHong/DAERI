@@ -64,6 +64,22 @@ def test_reading_server_settings_does_not_discover_issuer_or_create_aws_clients(
     assert settings.public_url == 'https://daeri.example.com/mcp'
 
 
+def test_connection_settings_compose_without_network_and_close_reused_clients():
+    settings = module().ServerSettings.model_validate({**BASE, 'connections': {'prefix': '/daeri/connections/'}})
+    assert settings.auth.management_claim == 'managed_projects'
+    session = Session()
+    with module().build_server(settings, session=session) as services:
+        assert services.token_verifier.management_claim == 'managed_projects'
+        assert not any(client.closed for client in session.clients.values())
+    assert all(client.closed for client in session.clients.values())
+
+
+def test_management_and_membership_claims_must_be_distinct():
+    with pytest.raises(ValidationError):
+        module().ServerSettings.model_validate({**BASE, 'auth': {
+            **BASE['auth'], 'project_claim': 'same', 'management_claim': 'same'}})
+
+
 @pytest.mark.parametrize('patch', [
     {'public_url': 'http://daeri.example.com/mcp'}, {'public_url': 'https://daeri.example.com/'},
     {'public_url': 'https://user:secret@daeri.example.com/mcp'},

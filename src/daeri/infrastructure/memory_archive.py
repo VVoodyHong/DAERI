@@ -1,7 +1,7 @@
 """Immutable raw Memory events and resumable re-extraction into a separate Memory."""
 
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from hashlib import sha256
 from itertools import chain
 import json
@@ -18,6 +18,10 @@ from daeri.core.projects import valid_harness_release
 from daeri.infrastructure.cloud_s3 import S3CloudStore
 from daeri.infrastructure.project_catalog import normalize_project_prefix
 from daeri.infrastructure.project_deployment import validate_project_memory
+
+
+_MAX_ARCHIVE_BYTES = 10 * 1024 * 1024 + 2048  # Native event quota plus project/source envelope.
+_RECEIPT_COLLECTION = 'receipt-events-v2'
 
 
 def _hash(value):
@@ -40,7 +44,7 @@ def _timestamp(value):
 
 def receipt_events(receipt, recorded_at):
     """Approximate native-expired conversation from immutable input, evidence and response."""
-    _timestamp(recorded_at)
+    timestamp = _timestamp(recorded_at)
     if (not isinstance(receipt['prompt'], str) or not isinstance(receipt['reply']['text'], str)
             or not isinstance(receipt['tool_results'], list) or not isinstance(receipt['reply']['observations'], list)):
         raise StoreError('MEMORY_ARCHIVE_INVALID', 'The stored turn cannot be converted to Memory events.')
@@ -48,16 +52,28 @@ def receipt_events(receipt, recorded_at):
     messages += [('TOOL', json.dumps(value, ensure_ascii=False, allow_nan=False))
                  for value in receipt['tool_results'] + receipt['reply']['observations']]
     messages.append(('ASSISTANT', receipt['reply']['text']))
-    index = 0
+    event = {'memoryId': 'receipts', 'actorId': receipt['actor_id'], 'sessionId': receipt['session_id'],
+             'eventTimestamp': timestamp,
+             'metadata': {'daeri_source': {'stringValue': 'receipt'},
+                          'daeri_turn': {'stringValue': receipt['turn_id']}}}
+    payload, size, index = [], 0, 0
     for role, text in messages:
-        for start in range(0, len(text), 100000):
-            yield {'memoryId': 'receipts', 'actorId': receipt['actor_id'], 'sessionId': receipt['session_id'],
-                   'eventId': receipt['turn_id'] + '-' + str(index),
-                   'eventTimestamp': _timestamp(recorded_at + timedelta(microseconds=index)),
-                   'payload': [{'conversational': {'role': role, 'content': {'text': text[start:start + 100000]}}}],
-                   'metadata': {'daeri_source': {'stringValue': 'receipt'},
-                                'daeri_turn': {'stringValue': receipt['turn_id']}}}
-            index += 1
+        data, start = text.encode('utf-8'), 0
+        while start < len(data):
+            end = min(start + 100000, len(data))
+            while end < len(data) and data[end] & 0xc0 == 0x80:
+                end -= 1
+            message = {'conversational': {'role': role, 'content': {'text': data[start:end].decode('utf-8')}}}
+            message_size = len(validate_storable_json(message)) + 1
+            # Reserve the event envelope while bounding escaped JSON as well as message count.
+            if payload and (len(payload) == 100 or size + message_size > 10000000 - 2048):
+                yield {**event, 'eventId': receipt['turn_id'] + f'-{index:010d}', 'payload': payload}
+                payload, size, index = [], 0, index + 1
+            payload.append(message)
+            size += message_size
+            start = end
+    if payload:
+        yield {**event, 'eventId': receipt['turn_id'] + f'-{index:010d}', 'payload': payload}
 
 
 class MemoryArchive:
@@ -73,7 +89,8 @@ class MemoryArchive:
         return {'project_id': project_id, 'catalog': normalize_project_prefix(catalog), 'source_memory_id': source}
 
     def _root(self, scope):
-        return self.objects.prefix + 'memory/' + _hash(scope) + '/events/'
+        collection = _RECEIPT_COLLECTION if scope['source_memory_id'] == 'receipts' else 'events'
+        return self.objects.prefix + 'memory/' + _hash(scope) + '/' + collection + '/'
 
     def _owned(self, memory_id, scope, *, target=False):
         resource = self.control.get_memory(memoryId=memory_id)['memory']
@@ -118,19 +135,21 @@ class MemoryArchive:
             tokens.add(token)
             request['ContinuationToken'] = token
 
-    def _read(self, key):
+    def _read(self, key, *, max_bytes=None):
         try:
-            return self.objects._get(key, 'ARCHIVE_NOT_FOUND')[0]
+            options = {} if max_bytes is None else {'max_bytes': max_bytes}
+            return self.objects._get(key, 'ARCHIVE_NOT_FOUND', **options)[0]
         except StoreError as error:
             if error.code == 'ARCHIVE_NOT_FOUND':
                 return None
             raise
 
-    def _immutable(self, key, document):
+    def _immutable(self, key, document, *, max_bytes=None):
+        options = {} if max_bytes is None else {'max_bytes': max_bytes}
         try:
-            self.objects._put(key, document, IfNoneMatch='*')
+            self.objects._put(key, document, IfNoneMatch='*', **options)
         except StoreError as error:
-            if error.code != 'STORAGE_CONFLICT' or self._read(key) != document:
+            if error.code != 'STORAGE_CONFLICT' or self._read(key, max_bytes=max_bytes) != document:
                 raise
 
     def _event(self, scope, event, actor=None, session=None):
@@ -150,11 +169,18 @@ class MemoryArchive:
         event = document['event']
         session = _hash([event['actorId'], event['sessionId']])[:32]
         timestamp = event['eventTimestamp'].replace(':', '').replace('+', '')
-        return self._root(scope) + session + '/' + timestamp + '_' + _hash(event['eventId'])[:32] + '.json'
+        suffix = _hash(event['eventId'])[:32]
+        if scope['source_memory_id'] == 'receipts':
+            turn, _, batch = event['eventId'].rpartition('-')
+            if (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', turn)
+                    or not re.fullmatch(r'[0-9]{10}', batch)):
+                raise StoreError('MEMORY_ARCHIVE_INVALID', 'The receipt batch identity is invalid.')
+            suffix = turn + '_' + batch
+        return self._root(scope) + session + '/' + timestamp + '_' + suffix + '.json'
 
     def _save(self, scope, document, apply):
         if apply:
-            self._immutable(self._event_key(scope, document), document)
+            self._immutable(self._event_key(scope, document), document, max_bytes=_MAX_ARCHIVE_BYTES)
 
     def _session(self, scope, actor_id, session_id, apply):
         count = 0
@@ -283,7 +309,8 @@ class MemoryArchive:
         try:
             if source_memory_id != 'receipts':
                 self._owned(scope['source_memory_id'], scope)
-            key = self.objects.prefix + 'memory/' + _hash(scope) + '/capture.json'
+            filename = 'capture-' + _RECEIPT_COLLECTION + '.json' if source_memory_id == 'receipts' else 'capture.json'
+            key = self.objects.prefix + 'memory/' + _hash(scope) + '/' + filename
             try:
                 state, etag = self.objects._get(key, 'ARCHIVE_NOT_FOUND')
             except StoreError as error:
@@ -321,6 +348,8 @@ class MemoryArchive:
                 raise StoreError('ARCHIVE_NOT_FOUND', 'Archive the available raw events or saved turns before reconstructing Memory.')
             restore = self.objects.prefix + 'restore/' + _hash([project_id, scope['catalog'], target]) + '/'
             binding = {**scope, 'target_memory_id': target}
+            if scope['source_memory_id'] == 'receipts':
+                binding['collection'] = _RECEIPT_COLLECTION
             old = self._read(restore + 'manifest.json')
             if old is not None and old != binding:
                 raise StoreError('STORAGE_CONFLICT', 'The target Memory belongs to a different reconstruction.')
@@ -355,7 +384,7 @@ class MemoryArchive:
             raise StoreError('MEMORY_REBUILD_FAILED', 'Memory reconstruction stopped; retry the same target to resume safely.') from None
 
     def _replay_event(self, scope, binding, restore, key, apply, previewed):
-        document = self._read(key)
+        document = self._read(key, max_bytes=_MAX_ARCHIVE_BYTES)
         if not isinstance(document, dict) or {k: document.get(k) for k in scope} != scope:
             raise StoreError('MEMORY_ARCHIVE_INVALID', 'The archived event belongs to another project or source.')
         event = document['event']

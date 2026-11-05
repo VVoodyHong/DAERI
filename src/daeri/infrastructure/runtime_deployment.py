@@ -29,8 +29,8 @@ def runtime_request(settings, *, public_url=None):
     return request
 
 
-def _ready(client, runtime_id, *, endpoint=None):
-    deadline = time.monotonic() + 180
+def _ready(client, runtime_id, *, endpoint=None, deadline=None):
+    deadline = time.monotonic() + 180 if deadline is None else deadline
     while True:
         result = (client.get_agent_runtime_endpoint(agentRuntimeId=runtime_id, endpointName=endpoint)
                   if endpoint else client.get_agent_runtime(agentRuntimeId=runtime_id))
@@ -51,8 +51,11 @@ def configure_runtime(client, settings):
             runtime_id = created['agentRuntimeId']
         current = _ready(client, runtime_id)
         url = runtime_endpoint(current['agentRuntimeArn'], settings.endpoint)
-        client.update_agent_runtime(agentRuntimeId=runtime_id, **runtime_request(settings, public_url=url))
+        client.update_agent_runtime(agentRuntimeId=runtime_id, metadataConfiguration={'requireMMDSV2': True},
+                                    **runtime_request(settings, public_url=url))
         deployed = _ready(client, runtime_id)
+        if (deployed.get('metadataConfiguration') or {}).get('requireMMDSV2') is not True:
+            raise StoreError('RUNTIME_NOT_READY', 'The Runtime requires confirmed MMDSv2 before publishing its endpoint.')
         try:
             client.get_agent_runtime_endpoint(agentRuntimeId=runtime_id, endpointName=settings.endpoint)
         except Exception as error:

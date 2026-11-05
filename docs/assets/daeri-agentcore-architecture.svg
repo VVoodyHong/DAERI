@@ -1,131 +1,122 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1320" viewBox="0 0 1800 1320" role="img" aria-labelledby="title desc">
-  <title id="title">DAERI AWS AgentCore 아키텍처</title>
-  <desc id="desc">구성원은 Claude Code·Codex 플러그인에서 회사 로그인 뒤 중앙 프로젝트를 선택하고 업무를 요청·승인한다. SSM Parameter Store는 프로젝트 이름·harness 릴리스 endpoint·버전을 보관한다. DAERI MCP 접속부도 AgentCore Runtime에 배포하며 HTTP MCP·토큰 검증·업무 목록과 사용자 확인창을 연결하고 저장한 실제 결정으로 원래 harness에서 재개한다. 승인 Lambda hook은 보호된 세션 연결·현재 승인으로 도구 호출을 검사한다. Managed harness가 모델·도구 반복과 문맥을 관리하며 프로젝트별 독립 BYO Memory가 고정 공유 namespace에서 경험을 비동기로 추출·통합·검색한다. S3는 업무 상태와 DAERI가 접수·수신한 요청·응답·도구 관찰·파일 참조·산출물을 보존한다. DAERI는 불변 응답 원본 보관 뒤 상태를 확정하고 저장된 원본으로만 복구한다. Gateway·Policy·Identity가 DB·AWS·Jira·Confluence 등 중앙 도구의 연결·자격·권한을 관리한다. 생성 모델은 Harness에서 사내·호환 API 또는 Bedrock으로 선택한다. 플러그인 배포 파일·토큰 검증·확인 응답·hook은 구현했으며 실제 호스트 설치·회사 IdP·Memory·도구 연결·AWS 배포는 연동 검증 범위다.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1570" viewBox="0 0 1800 1570" role="img" aria-labelledby="title desc">
+  <title id="title">DAERI AWS 서비스와 프로젝트 연결 아키텍처</title>
+  <desc id="desc">운영자는 SSM에 검증한 MCP 이미지·원격 MCP·OpenAPI 카탈로그와 프로젝트별 Gateway·역할·네트워크·인증 별칭을 고정한다. 관리 권한을 가진 프로젝트 사용자가 호스트 확인창을 제출하면 DAERI 접속부의 연결 관리자가 필요한 연결별 MCP Runtime을 배포하고 프로젝트 Gateway 대상을 등록한다. 서비스 접속부 Runtime과 리소스 MCP Runtime은 별도다. 일반 구성원은 회사 인증 뒤 같은 프로젝트 연결과 Memory를 쓰며 자신의 업무와 계획 승인으로 Harness를 실행한다. 실제 호출은 Harness에서 Gateway를 거쳐 연결별 MCP Runtime에서 DB로, 기존 원격 MCP로, 또는 OpenAPI에서 REST API로 이어진다. 연결별 MCP는 시작 시 Secrets Manager 참조를 해소하고 Gateway의 원격 인증은 Identity가 담당한다. S3는 업무 상태·실제 승인·원본·파일을 보존한다. READY는 Gateway의 도구 발견 상태이며 실제 리소스 접근과 AWS 배포는 별도 검증한다.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#63758a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
-    <marker id="blueArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#306cb5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#687b91" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="greenArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 9 5 1 9" fill="none" stroke="#16776f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
-      text{font-family:"Apple SD Gothic Neo","Noto Sans KR",Arial,sans-serif;fill:#203247}
-      .title{font-size:38px;font-weight:750;letter-spacing:-1px}.subtitle{font-size:22px;fill:#62748a}
-      .group{font-size:23px;font-weight:700}.heading{font-size:26px;font-weight:750;letter-spacing:-.4px}.body{font-size:21px;fill:#506277}.small{font-size:19px;fill:#61738a}.label{font-size:20px;fill:#4d627b}.tag{font-size:18px;font-weight:650}
-      .line{fill:none;stroke:#63758a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
-      .two{marker-start:url(#arrow)}.blue{stroke:#306cb5;marker-end:url(#blueArrow);marker-start:url(#blueArrow)}
-      .providerLine{fill:none;stroke:#8a73b5;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:7 6;marker-end:url(#arrow)}
+      text{font-family:"Apple SD Gothic Neo","Noto Sans KR",Arial,sans-serif;fill:#203247}.title{font-size:38px;font-weight:750}.subtitle{font-size:23px;fill:#5f7187}.heading{font-size:27px;font-weight:700}.body{font-size:22px;fill:#4e6277}.small{font-size:20px;fill:#5f7187}.tag{font-size:23px;font-weight:700}.line{fill:none;stroke:#687b91;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}.two{marker-start:url(#arrow)}.setup{fill:none;stroke:#16776f;stroke-width:2.7;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:7 7;marker-end:url(#greenArrow)}.aws{fill:#414779}.daeri{fill:#16776f}
     </style>
   </defs>
-  <rect width="1800" height="1320" fill="#f7f9fc"/>
-  <text x="55" y="65" class="title">DAERI · AWS AgentCore 아키텍처</text>
-  <text x="56" y="104" class="subtitle">중앙 프로젝트 설정을 공유하고, 선택한 프로젝트의 도구와 기억으로 업무를 수행합니다.</text>
-  <g transform="translate(1215 46)">
-    <rect width="125" height="30" rx="15" fill="#fff0d9"/><text x="62" y="21" text-anchor="middle" class="tag" style="fill:#925313">AWS 관리형</text>
-    <rect x="137" width="105" height="30" rx="15" fill="#e8f0ff"/><text x="189" y="21" text-anchor="middle" class="tag" style="fill:#275b9b">DAERI</text>
-    <rect x="254" width="110" height="30" rx="15" fill="#e5f4eb"/><text x="309" y="21" text-anchor="middle" class="tag" style="fill:#26764f">공유 저장</text>
-    <rect x="376" width="145" height="30" rx="15" fill="#f0eafa"/><text x="448" y="21" text-anchor="middle" class="tag" style="fill:#705497">모델 연결</text>
+  <rect width="1800" height="1570" fill="#f7f9fc"/>
+  <text x="55" y="65" class="title">DAERI · AWS 서비스와 프로젝트 연결</text>
+  <text x="55" y="108" class="subtitle">운영자가 허용 범위를 고정하고, 프로젝트 관리자가 등록한 연결을 구성원이 함께 사용합니다.</text>
+  <g aria-label="범례">
+    <rect x="1330" y="30" width="190" height="40" rx="8" fill="#eef0f8"/><text x="1425" y="58" text-anchor="middle" class="small aws">AWS 관리형</text>
+    <rect x="1540" y="30" width="205" height="40" rx="8" fill="#ebf6f2"/><text x="1642" y="58" text-anchor="middle" class="small daeri">DAERI 구현</text>
   </g>
 
-  <rect x="380" y="155" width="1000" height="1040" rx="23" fill="#fff" stroke="#d7dfe9" stroke-width="2"/>
-  <rect x="380" y="155" width="1000" height="57" rx="23" fill="#fff0d9"/>
-  <rect x="381" y="184" width="998" height="28" fill="#fff0d9"/>
-  <text x="410" y="192" class="group" style="fill:#925313">AWS 공용 플랫폼</text>
-  <text x="1350" y="191" text-anchor="end" class="small">프로젝트별 공용 연결·기억</text>
+  <rect x="370" y="155" width="1020" height="1340" rx="22" fill="#fff" stroke="#d7dfe9" stroke-width="2"/>
+  <text x="400" y="190" class="tag">AWS 공용 플랫폼 · 프로젝트별 연결·공유 기억</text>
 
-  <rect x="50" y="260" width="270" height="190" rx="18" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
-  <text x="77" y="300" class="small">사용자 PC</text>
-  <text x="77" y="341" class="heading">Claude Code</text>
-  <text x="77" y="375" class="heading">Codex 플러그인</text>
-  <text x="77" y="418" class="body">프로젝트 선택·전환</text>
+  <rect x="50" y="220" width="270" height="150" rx="16" fill="#fff" stroke="#cbd5e1"/>
+  <text x="75" y="262" class="heading">운영자</text>
+  <text x="75" y="302" class="body">검증한 패키지·접속 대상</text>
+  <text x="75" y="340" class="small">이미지·권한·망·인증 준비</text>
+  <rect x="410" y="220" width="380" height="165" rx="16" fill="#eef0f8" stroke="#c6cbe1"/>
+  <text x="435" y="262" class="heading aws">SSM Parameter Store</text>
+  <text x="435" y="302" class="body">커넥터 카탈로그·프로젝트 고정값</text>
+  <text x="435" y="339" class="small">harness 릴리스·Gateway·역할·망</text>
+  <text x="435" y="369" class="small">허용 커넥터·비밀 범위·인증 별칭</text>
+  <rect x="880" y="220" width="460" height="165" rx="16" fill="#ebf6f2" stroke="#b7d8d0"/>
+  <text x="905" y="262" class="heading daeri">DAERI 접속부의 연결 관리자</text>
+  <text x="905" y="302" class="body">관리 권한·실제 입력창 응답 재검사</text>
+  <text x="905" y="339" class="small">MCP Runtime 배포·Gateway 대상 등록</text>
+  <text x="905" y="369" class="small">동일 연결 ID로 갱신·실패 재시도</text>
+  <path d="M320 298H410" class="setup"/><path d="M790 298H880" class="setup"/>
 
-  <rect x="430" y="260" width="300" height="175" rx="18" fill="#edf3ff" stroke="#adc6e7" stroke-width="2"/>
-  <text x="455" y="305" class="heading">Runtime · DAERI MCP</text>
-  <text x="455" y="347" class="body">프로젝트·업무·세션 연결</text>
-  <text x="455" y="380" class="body">로그인 검증 · 실제 승인</text>
-  <text x="455" y="413" class="small">S3 상태·원본 보존 · 복구</text>
+  <rect x="50" y="490" width="270" height="220" rx="16" fill="#fff" stroke="#cbd5e1"/>
+  <text x="75" y="533" class="heading">Claude Code · Codex</text>
+  <text x="75" y="573" class="body">회사 로그인·프로젝트 선택</text>
+  <text x="75" y="613" class="body">업무 요청·계획 확인·결과</text>
+  <text x="75" y="653" class="small">관리자: 연결 정보를 한 번 등록</text>
+  <text x="75" y="686" class="small">구성원: 등록된 연결 재사용</text>
+  <rect x="410" y="490" width="380" height="220" rx="16" fill="#ebf6f2" stroke="#b7d8d0"/>
+  <text x="435" y="533" class="heading daeri">Runtime · DAERI MCP</text>
+  <text x="435" y="573" class="body">회사 JWT·구성원/관리 권한 검사</text>
+  <text x="435" y="613" class="body">프로젝트·업무·승인·복구</text>
+  <text x="435" y="653" class="small">접속부·연결 관리자의 실행 위치</text>
+  <text x="435" y="686" class="small">프로젝트별 공용 서비스 사용</text>
+  <rect x="880" y="490" width="460" height="220" rx="16" fill="#eef0f8" stroke="#c6cbe1"/>
+  <text x="905" y="533" class="heading aws">AgentCore managed harness</text>
+  <text x="905" y="573" class="body">총괄·하위 에이전트·모델·도구 반복</text>
+  <text x="905" y="613" class="body">업무별 고정 릴리스·세션·문맥</text>
+  <text x="905" y="653" class="small">실제 승인 hook 통과 뒤 도구 호출</text>
+  <text x="905" y="686" class="small">프로젝트 Gateway를 연결한 게시 릴리스</text>
+  <path d="M320 590H410" class="line two"/><path d="M790 590H880" class="line two"/>
+  <path d="M600 490V440H1110V385" class="setup"/>
+  <text x="620" y="429" class="small daeri">관리자의 입력창 응답</text>
 
-  <rect x="800" y="240" width="530" height="225" rx="19" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
-  <text x="826" y="276" class="group" style="fill:#925313">AgentCore Runtime</text>
-  <rect x="822" y="298" width="486" height="145" rx="13" fill="#fff0d9" stroke="#edce9f"/>
-  <text x="845" y="339" class="heading">Managed harness</text>
-  <text x="845" y="378" class="body">모델·도구 호출 루프 · 문맥 관리</text>
-  <text x="845" y="414" class="small">orchestrator 실행 · 하위 에이전트 도구 호출</text>
+  <rect x="410" y="795" width="380" height="150" rx="16" fill="#eef7f2" stroke="#b6d8c4"/>
+  <text x="435" y="838" class="heading">S3 업무·원본·산출물</text>
+  <text x="435" y="878" class="body">실제 승인·요청·수신 응답·파일</text>
+  <text x="435" y="916" class="small">조건부 상태 저장·불변 원본·복구</text>
+  <rect x="880" y="795" width="460" height="150" rx="16" fill="#eef0f8" stroke="#c6cbe1"/>
+  <text x="905" y="838" class="heading aws">AgentCore Memory · BYO</text>
+  <text x="905" y="878" class="body">프로젝트 경험 추출·통합·검색</text>
+  <text x="905" y="916" class="small">구성원의 첫 업무부터 같은 공유 기억 활용</text>
+  <path d="M600 710V795" class="line two"/><path d="M1110 710V795" class="line two"/>
 
-  <rect x="840" y="515" width="490" height="105" rx="16" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
-  <text x="866" y="555" class="heading">AgentCore Memory · BYO</text>
-  <text x="866" y="592" class="body">프로젝트 대화·경험 추출·검색</text>
+  <rect x="1450" y="490" width="300" height="150" rx="16" fill="#f4f0fa" stroke="#c5b5db"/>
+  <text x="1475" y="533" class="heading">프로젝트 생성 모델</text>
+  <text x="1475" y="573" class="body">사내·호환 API / Bedrock</text>
+  <text x="1475" y="611" class="small">Harness에서 모델 선택</text>
+  <path d="M1340 565H1450" class="line two"/>
 
-  <rect x="430" y="700" width="390" height="175" rx="18" fill="#edf3ff" stroke="#adc6e7" stroke-width="2"/>
-  <text x="456" y="744" class="heading">DAERI 업무·보존 서비스</text>
-  <text x="456" y="785" class="body">업무 상태 · 실제 승인 근거</text>
-  <text x="456" y="819" class="body">수신 원본·응답 보존 · 복구</text>
-  <text x="456" y="852" class="small">불변 기록 확인 후 상태 확정</text>
+  <rect x="880" y="1030" width="460" height="195" rx="16" fill="#eef0f8" stroke="#c6cbe1"/>
+  <text x="905" y="1073" class="heading aws">프로젝트 AgentCore Gateway</text>
+  <text x="905" y="1115" class="body">연결별 MCP·OpenAPI·하위 도구 대상</text>
+  <text x="905" y="1155" class="body">Policy·Identity·대상 인증 집행</text>
+  <text x="905" y="1193" class="small">READY = 마지막 등록 때 도구 발견</text>
+  <path d="M1340 675H1370V1068H1340" class="line"/>
+  <text x="1355" y="1007" text-anchor="end" class="small">승인된 업무의 실제 도구 호출</text>
+  <path d="M1340 300H1410V1100H1340" class="setup"/>
 
-  <rect x="950" y="700" width="380" height="175" rx="18" fill="#fff8ed" stroke="#e8b972" stroke-width="2"/>
-  <text x="976" y="744" class="heading">AgentCore Gateway</text>
-  <text x="976" y="785" class="body">Policy · Identity</text>
-  <text x="976" y="819" class="body">도구 연결 · 인증 · 정책 집행</text>
-  <text x="976" y="852" class="small">프로젝트의 MCP·API 연결</text>
+  <rect x="410" y="1030" width="380" height="215" rx="16" fill="#eef0f8" stroke="#c6cbe1"/>
+  <text x="435" y="1073" class="heading aws">Runtime · 리소스 MCP</text>
+  <text x="435" y="1115" class="body">프로젝트·연결별 실행 설정</text>
+  <text x="435" y="1155" class="body">검증한 같은 이미지를 재사용</text>
+  <text x="435" y="1193" class="small">런처 → HTTP MCP 0.0.0.0:8000/mcp</text>
+  <text x="435" y="1223" class="small">DAERI 접속부 Runtime과 별도 배포</text>
+  <path d="M880 1128H790" class="line"/>
+  <text x="835" y="1110" text-anchor="middle" class="small">IAM</text>
+  <path d="M1110 385V410H835V1020H600V1030" class="setup"/>
 
-  <rect x="430" y="955" width="390" height="108" rx="16" fill="#eaf6ef" stroke="#a2cfb5" stroke-width="2"/>
-  <text x="456" y="996" class="heading">S3 업무 상태·원본</text>
-  <text x="456" y="1033" class="body">업무 manifest · 요청·수신 응답</text>
-  <rect x="950" y="955" width="380" height="108" rx="16" fill="#eaf6ef" stroke="#a2cfb5" stroke-width="2"/>
-  <text x="976" y="996" class="heading">Amazon S3 산출물</text>
-  <text x="976" y="1033" class="body">근거 자료 · CSV 등 산출물 파일</text>
+  <rect x="50" y="1030" width="270" height="180" rx="16" fill="#fff" stroke="#cbd5e1"/>
+  <text x="75" y="1073" class="heading">DB·내부 리소스</text>
+  <text x="75" y="1115" class="body">프로젝트 공용 자격</text>
+  <text x="75" y="1155" class="small">VPC·DNS·CA·대상 권한</text>
+  <text x="75" y="1187" class="small">실제 접근 성공은 업무로 확인</text>
+  <path d="M410 1128H320" class="line"/>
 
-  <rect x="1450" y="180" width="300" height="300" rx="18" fill="#f4f0fa" stroke="#c5b5db" stroke-width="2"/>
-  <text x="1475" y="222" class="group" style="fill:#705497">생성 모델 연결</text>
-  <text x="1475" y="254" class="small">프로젝트 Harness에서 선택</text>
-  <rect x="1470" y="278" width="260" height="105" rx="12" fill="#fff" stroke="#d8cce6"/>
-  <text x="1490" y="314" class="heading">모델 API</text>
-  <text x="1490" y="348" class="body">사내·호환 API / Bedrock</text>
-  <text x="1475" y="430" class="small">Amazon Bedrock은 AWS 서비스</text>
+  <rect x="1450" y="1030" width="300" height="160" rx="16" fill="#fff" stroke="#cbd5e1"/>
+  <text x="1475" y="1073" class="heading">기존 원격 MCP</text>
+  <text x="1475" y="1115" class="body">운영자가 검증한 endpoint</text>
+  <text x="1475" y="1155" class="small">기존 endpoint를 그대로 사용</text>
+  <rect x="1450" y="1260" width="300" height="135" rx="16" fill="#fff" stroke="#cbd5e1"/>
+  <text x="1475" y="1303" class="heading">REST API</text>
+  <text x="1475" y="1345" class="body">OpenAPI 대상으로 직접 연결</text>
+  <path d="M1340 1145H1450" class="line"/>
+  <path d="M1340 1190H1410V1327H1450" class="line"/>
 
-  <rect x="1450" y="700" width="300" height="175" rx="18" fill="#fff" stroke="#cbd5e1" stroke-width="2"/>
-  <text x="1475" y="741" class="heading" style="font-size:23px">리소스·에이전트 도구</text>
-  <text x="1475" y="782" class="body">DB · AWS · Jira · Confluence</text>
-  <text x="1475" y="819" class="small">하위 harness: MCP 도구 연결</text>
-  <text x="1475" y="851" class="small">직접 연결 · 필요한 변환</text>
-
-  <path d="M320 347H430" class="line two"/>
-  <rect x="332" y="296" width="86" height="36" rx="8" fill="#f7f9fc"/>
-  <text x="375" y="321" text-anchor="middle" class="label">요청·승인</text>
-  <text x="375" y="381" text-anchor="middle" class="label">진행·결과</text>
-  <path d="M730 347H800" class="line two"/>
-  <text x="765" y="246" text-anchor="middle" class="small">InvokeHarness</text>
-  <path d="M1085 465V515" class="line two"/>
-  <text x="1105" y="497" class="label">대화·경험 저장·검색</text>
-  <path d="M580 435V700" class="line blue"/>
-  <rect x="455" y="539" width="250" height="74" rx="11" fill="#fff"/>
-  <text x="580" y="568" text-anchor="middle" class="label" style="fill:#306cb5">업무 실행·상태 연결</text>
-  <text x="580" y="597" text-anchor="middle" class="label" style="fill:#306cb5">요청·수신 원본 보존</text>
-  <path d="M1330 417H1360V753H1330" class="line"/>
-  <text x="1317" y="663" text-anchor="end" class="label">승인 hook 확인 후 호출</text>
-  <path d="M1330 788H1450" class="line"/>
-  <text x="1390" y="766" text-anchor="middle" class="label">직접 호출</text>
-  <path d="M620 875V955" class="line two"/>
-  <text x="643" y="925" class="label">조건부 저장</text>
-  <path d="M820 837H892V1009H950" class="line two"/>
-  <rect x="859" y="890" width="67" height="54" rx="8" fill="#fff"/>
-  <text x="893" y="914" text-anchor="middle" class="small">파일</text>
-  <text x="893" y="938" text-anchor="middle" class="small">보관</text>
-  <path d="M1330 330H1470" class="providerLine"/>
-  <text x="1398" y="307" text-anchor="middle" class="label">추론·판단</text>
-
-  <rect x="430" y="1090" width="900" height="77" rx="14" fill="#f6f8fb" stroke="#e0e6ef"/>
-  <text x="451" y="1121" class="small">중앙 프로젝트 설정 · 인증</text>
-  <text x="451" y="1149" class="body">SSM 프로젝트 설정 · IAM · Identity · Secrets Manager</text>
-  <line x1="1015" y1="1104" x2="1015" y2="1154" stroke="#dce3ec"/>
-  <text x="1036" y="1121" class="small">실행 추적 · 품질 평가</text>
-  <text x="1036" y="1149" class="body">Observability · Evaluations</text>
-
-  <rect x="50" y="615" width="270" height="260" rx="17" fill="#edf3ff"/>
-  <text x="73" y="656" class="group" style="fill:#275b9b">다음 구성원의 첫 업무</text>
-  <text x="73" y="699" class="body">같은 프로젝트를 선택해</text>
-  <text x="73" y="732" class="body">도구·누적 경험을 활용</text>
-  <line x1="73" y1="756" x2="295" y2="756" stroke="#ccdcef"/>
-  <text x="73" y="789" class="body">계획·승인·실행 문맥은</text>
-  <text x="73" y="823" class="body">각자의 업무에 연결</text>
-  <text x="73" y="854" class="small">프로젝트는 자료·대화 전체 공유</text>
-
-  <text x="55" y="1244" class="small">채택 구조 · Python 핵심 구현과 후속 AWS 연동·배포를 함께 표시</text>
-  <text x="55" y="1278" class="small">프로젝트별 독립 Memory · S3 업무 상태·원본  |  프로젝트 전체 자료·대화 공유  |  실제 AWS 연동·장기 복구는 검증 대상</text>
+  <rect x="410" y="1320" width="930" height="140" rx="16" fill="#f5f7fb" stroke="#dce3eb"/>
+  <text x="435" y="1362" class="heading">Secrets Manager</text>
+  <text x="435" y="1403" class="body">MCP → DB 비밀 참조를 시작 시 해소</text>
+  <text x="435" y="1435" class="small">비밀값은 프로그램 시작 시 해소</text>
+  <line x1="865" y1="1340" x2="865" y2="1442" stroke="#dce3eb"/>
+  <text x="890" y="1362" class="heading aws">AgentCore Identity</text>
+  <text x="890" y="1403" class="body">Gateway → 원격 MCP·API 인증</text>
+  <text x="890" y="1435" class="small">운영자가 연결한 제공자·선택 별칭</text>
+  <path d="M600 1320V1245" class="line"/><path d="M1110 1225V1320" class="line two"/>
+  <text x="55" y="1535" class="small">실선: 실제 실행·자료 경로 · 점선: 준비·등록  |  채택 구조 · 실제 AWS 배포·호스트 입력창·리소스 접근은 별도 검증 대상</text>
 </svg>

@@ -56,7 +56,7 @@ class GitWorkspaces:
         source, cache, path, record = self._paths(task_id, repository)
         try:
             saved = json.loads(record.read_text())
-            if (saved.get('source') != source or saved.get('path') != str(path)
+            if (not isinstance(saved, dict) or saved.get('source') != source or saved.get('path') != str(path)
                     or _git(path, 'branch', '--show-current').stdout.strip() != saved['branch']
                     or _git(path, 'rev-parse', '--show-toplevel').stdout.strip() != str(path)):
                 raise ValueError

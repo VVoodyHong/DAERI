@@ -77,6 +77,18 @@ def test_invalid_workspace_scope_is_rejected_without_git_execution(tmp_path, tas
         GitWorkspaces(tmp_path / 'work', {'api': '/unused'}).prepare(task, repo)
 
 
+@pytest.mark.parametrize('record', ['null', '[]', '0', '"invalid"'])
+def test_non_object_workspace_record_is_reported_as_unavailable(tmp_path, record):
+    from daeri.infrastructure.workspaces import GitWorkspaces
+    source = repository(tmp_path / 'source')
+    workspaces = GitWorkspaces(tmp_path / 'work', {'api': str(source)})
+    task_id = str(uuid4())
+    task = workspaces.prepare(task_id, 'api')
+    Path(task['path']).with_suffix('.json').write_text(record, encoding='utf-8')
+    with pytest.raises(StoreError, match='SOURCE_WORKSPACE_UNAVAILABLE'):
+        workspaces.status(task_id, 'api')
+
+
 def test_simultaneous_tasks_share_the_cache_and_push_their_own_branches(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from daeri.infrastructure.workspaces import GitWorkspaces

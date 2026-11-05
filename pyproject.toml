@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 daeri = "daeri.__main__:main"
 daeri-workspace = "daeri.infrastructure.workspace_cli:main"
+daeri-connector = "daeri.infrastructure.connector_cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8,<10"]

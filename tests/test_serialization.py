@@ -5,7 +5,7 @@ import pytest
 from daeri.core.serialization import validate_storable_json
 
 
-def test_json_escaped_nul_is_storable_without_a_postgres_text_restriction():
+def test_json_escaped_nul_is_storable():
     validate_storable_json({'message': 'before\x00after'})
 
 

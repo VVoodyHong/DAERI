@@ -139,3 +139,24 @@ def test_identity_and_project_membership_are_rechecked_after_token_expiry():
         user.context('charging')
     with pytest.raises(StoreError, match='AUTHENTICATION_REQUIRED'):
         user.contexts()
+
+
+def test_signed_project_management_grants_are_distinct_from_normal_membership(issuer):
+    manager = asyncio.run(verifier().verify_token(issuer['token']({'managed_projects': ['charging']})))
+    assert manager.user.manage('charging') == AccessContext('alice', 'charging')
+    with pytest.raises(StoreError, match='ACCESS_DENIED'):
+        manager.user.manage('reporting')
+    member = asyncio.run(verifier().verify_token(issuer['token']()))
+    with pytest.raises(StoreError, match='ACCESS_DENIED'):
+        member.user.manage('charging')
+
+
+@pytest.mark.parametrize('management', ['charging', None, [3], ['charging', 'charging'], ['not-granted']])
+def test_invalid_management_grants_never_become_connection_permissions(issuer, management):
+    assert asyncio.run(verifier().verify_token(issuer['token']({'managed_projects': management}))) is None
+
+
+def test_identity_provider_can_configure_management_claim_name(issuer):
+    token = issuer['token']({'connection_owners': ['charging']})
+    result = asyncio.run(verifier(management_claim='connection_owners').verify_token(token))
+    assert result.user.manage('charging').project_id == 'charging'

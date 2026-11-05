@@ -34,13 +34,18 @@ class ProjectAccessToken(AccessToken):
 
 
 class JwtTokenVerifier:
-    def __init__(self, issuer: str, audience: str, resource_url: str, *, project_claim='projects'):
+    def __init__(self, issuer: str, audience: str, resource_url: str, *, project_claim='projects',
+                 management_claim='managed_projects'):
         self.issuer, self.resource_url = https_url(issuer), mcp_endpoint(resource_url)
         if not isinstance(audience, str) or not audience.strip():
             raise ValueError('An explicit resource token audience is required.')
         if not isinstance(project_claim, str) or not project_claim.strip():
             raise ValueError('A project grant claim is required.')
+        if (not isinstance(management_claim, str) or not management_claim.strip()
+                or management_claim == project_claim):
+            raise ValueError('Supply a distinct project management claim.')
         self.audience, self.project_claim = audience, project_claim
+        self.management_claim = management_claim
         self._jwks, self._lock = None, Lock()
 
     def _keys(self):
@@ -71,12 +76,15 @@ class JwtTokenVerifier:
                     or claims.get('token_use', 'access') != 'access'):
                 return None
             scope, projects = claims['scope'], claims[self.project_claim]
+            managed = claims.get(self.management_claim, [])
             if (not isinstance(scope, str) or any(ord(char) < 32 or ord(char) > 126 for char in scope)
                     or any(not _SCOPE.fullmatch(item) for item in scope.split())
                     or not isinstance(projects, list) or any(not isinstance(item, str) for item in projects)
-                    or len(set(projects)) != len(projects)):
+                    or len(set(projects)) != len(projects)
+                    or not isinstance(managed, list) or any(not isinstance(item, str) for item in managed)
+                    or len(set(managed)) != len(managed)):
                 return None
-            user = AuthenticatedUser(claims['sub'], frozenset(projects), claims['exp'])
+            user = AuthenticatedUser(claims['sub'], frozenset(projects), claims['exp'], frozenset(managed))
             user.contexts()
             client_id = claims.get('client_id', claims.get('azp', self.audience))
             if not isinstance(client_id, str) or not client_id.strip():

@@ -8,6 +8,7 @@
 ## 개발 환경
 
 지원 Python·의존성 버전은 [pyproject.toml](../../pyproject.toml)·[uv.lock](../../uv.lock)이 소유한다.
+Git 작업 환경 검증에는 POSIX 파일 잠금이 필요하므로 macOS·Linux 또는 Windows WSL2를 사용한다.
 
 ```sh
 uv sync --frozen
@@ -30,6 +31,7 @@ uv build
 | [auth.py](../../src/daeri/infrastructure/auth.py)·[mcp_server.py](../../src/daeri/infrastructure/mcp_server.py) | OIDC·HTTP MCP·사용자 확인창 |
 | [approval_hook.py](../../src/daeri/infrastructure/approval_hook.py)·[delegation.py](../../src/daeri/infrastructure/delegation.py)·[memory_archive.py](../../src/daeri/infrastructure/memory_archive.py) | 승인·위임·Memory 수집 Lambda와 설정·복원 |
 | [workspaces.py](../../src/daeri/infrastructure/workspaces.py)·[workspace_cli.py](../../src/daeri/infrastructure/workspace_cli.py) | 업무별 Git 사본·통합 검사와 실행 명령 |
+| [연결 서비스](../../src/daeri/application/connections.py)·[연결 설정](../../src/daeri/config/connections.py)·[AWS 연결](../../src/daeri/infrastructure/connections.py)·[MCP 런처](../../src/daeri/infrastructure/connector_cli.py) | 프로젝트 연결 권한·확인·배포·등록·프로그램 시작 |
 | [project_deployment.py](../../src/daeri/infrastructure/project_deployment.py)·[runtime_deployment.py](../../src/daeri/infrastructure/runtime_deployment.py)·[workspace_deployment.py](../../src/daeri/infrastructure/workspace_deployment.py) | Memory·릴리스·SSM, MCP Runtime, Git Skill 배포 |
 | [config](../../src/daeri/config/)·[서버 진입점](../../src/daeri/__main__.py)·[scripts](../../scripts/) | YAML·AWS·인증 조립·종료, 서버·배포물 생성 |
 
@@ -52,12 +54,17 @@ uv build
 | `public_url` | 공개 서버의 필수 HTTPS `/mcp` 또는 Runtime 운영 endpoint invocation URL |
 | `auth.issuer`·`auth.audience` | 서버 필수 신뢰한 OIDC 발급자·리소스 토큰 audience |
 | `auth.project_claim` | 프로젝트 ID 배열 claim; 기본 `projects` |
+| `auth.management_claim` | 연결 관리 프로젝트 ID 배열 claim; 기본 `managed_projects` |
 | `auth.required_scopes` | 필수 OAuth scope 목록; 기본 `[daeri/use]` |
 | `approval_hook_arn` | 서버 필수 승인 검사 Lambda ARN |
 | `harness_oauth_audience` | 선택 inbound OAuth audience; 생략 시 IAM; 지정 시 `auth.audience`와 동일 |
+| `connections.prefix` | 연결 기능을 켜는 선택 매핑의 SSM 경로; 기본 `/daeri/connections/` |
 
 고정된 issuer의 discovery·JWKS로 RS256 서명과 `iss`·`aud`·`sub`·`exp`·`scope`·프로젝트 claim을 검사한다.
-프로젝트 claim은 중복 없는 ID 배열, `sub`는 실제 사용자이며 권한 유효성은 서명된 토큰의 만료 시각을 기준으로 판단한다.
+프로젝트·관리 claim은 중복 없는 ID 배열, `sub`는 실제 사용자이며 권한 유효성은 서명된 토큰의 만료 시각을 기준으로 판단한다.
+관리 권한은 구성원 권한에 추가하며 관리 claim을 생략한 사용자는 연결 요약만 조회한다.
+관리 프로젝트 배열은 구성원 프로젝트 배열의 부분 집합이어야 한다.
+`connections`를 생략하면 연결 기능을 끄고 기존 서버 설정을 그대로 사용한다.
 
 `storage.prefix`는 영문·숫자·`_`·`.`·`-`·`/`로 구성하고 생략한 끝 `/`는 추가한다.
 빈 구간·중복 `/`·`.`·`..` 구간은 입력 오류로 처리한다.
@@ -69,6 +76,9 @@ public_url: https://daeri.example.com/mcp
 auth:
   issuer: https://login.example.com/company
   audience: https://daeri.example.com/mcp
+  management_claim: managed_projects
+connections:
+  prefix: /daeri/connections/
 approval_hook_arn: arn:aws:lambda:us-east-1:123456789012:function:daeri-approval
 storage:
   bucket: daeri-example
@@ -101,13 +111,14 @@ SSM의 `<project_parameter_prefix><project_id>`에 프로젝트별 JSON을 등�
 
 ## 배포와 운영
 
-인프라 생성·변경은 클라우드서비스팀의 승인된 배포 체계에서 진행한다.
-아래 명령의 설정·주소는 가상 값이며 자격·계정·리전·역할은 배포 환경에서 지정한다.
+인프라 생성·변경은 인프라 운영 담당자의 승인된 배포 체계에서 진행한다.
+실제 배포 설정은 Git에서 제외되는 `.local/deploy/`에 보관한다.
+아래 예시의 계정·주소·리전·역할은 배포 환경의 값으로 지정한다.
 
 ### 서버와 플러그인
 
 1. 모델·도구·승인 hook·`confirm_plan`을 갖춘 managed harness, 서비스 역할·S3·회사 IdP를 준비한다.
-2. `uv run daeri --config server.yaml --host 0.0.0.0 --port 8000`으로 ASGI 서버를 시작한다.
+2. `uv run daeri --config .local/deploy/server.yaml --host 0.0.0.0 --port 8000`으로 ASGI 서버를 시작한다.
 3. 운영 환경은 AgentCore Runtime의 MCP 프로토콜로 배포하고 내부 서버는 `0.0.0.0:8000/mcp`를 제공한다.
 4. 공개 endpoint로 플러그인 ZIP을 생성해 배포 저장소에 게시한다.
 
@@ -134,21 +145,25 @@ inline `confirm_plan`은 필수 문자열 `plan`을 받는 객체이며 system p
 | [Runtime](../../src/daeri/config/runtime.py) | `name`·`image_uri`·`role_arn`·`client_ids`·`server` 매핑 | 갱신할 `runtime_id`·`endpoint=PROD`·`network_configuration`의 기본 PUBLIC 또는 native VPC 설정 |
 
 Runtime의 `server`는 자동 생성하는 `public_url`을 제외한 서버 필드다.
-`network_configuration`은 native 필드·타입·식별자 문법을 검사한다.
-`networkMode`가 `VPC`이면 `networkModeConfig`의 `subnets`·`securityGroups`가 필수이며 `PUBLIC`은 기본 네트워크 설정만 사용한다.
+`network_configuration`은 `networkMode: PUBLIC` 또는 `VPC`를 받는다.
+VPC의 `networkModeConfig`는 native 문법의 `subnets`·`securityGroups` 두 목록(각각 1~16개)으로 구성하며 PUBLIC은 이를 생략한다.
+
 생성 모델·도구는 `CreateHarness`·`UpdateHarness`로 구성하고 프로젝트 배포는 이를 유지하며 Memory 연결·릴리스를 공개한다.
 외부 모델의 `apiKeyArn`은 AgentCore Identity API key credential provider ARN을 참조한다.
+
+접속부·리소스 MCP Runtime은 [MMDSv2 필수 조건](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-troubleshooting.html)에 맞춰 `UpdateAgentRuntime`으로 `metadataConfiguration.requireMMDSV2=true`를 적용한다.
+`GetAgentRuntime`에서 이를 확인한 뒤 endpoint를 공개한다.
 
 [Gateway](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-target-MCPservers.html)에 remote MCP·OpenAPI·Lambda를 연결한다.
 stdio MCP는 HTTP MCP로 호스팅·변환하고 사내 리소스의 실행 위치에 [VPC](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-vpc-egress.html)·DNS·CA·자격을 준비한다.
 분석·파일 생성에는 기본 shell·파일 도구 또는 [Code Interpreter·S3](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-s3-integration.html)를 연결한다.
 
 ```sh
-uv run python scripts/configure_project.py --config project.yaml
-uv run python scripts/configure_project.py --config project.yaml --apply
+uv run python scripts/configure_project.py --config .local/deploy/project.yaml
+uv run python scripts/configure_project.py --config .local/deploy/project.yaml --apply
 docker buildx build --platform linux/arm64 -t 123456789012.dkr.ecr.us-east-1.amazonaws.com/daeri:example --push .
-uv run python scripts/configure_runtime.py --config runtime.yaml
-uv run python scripts/configure_runtime.py --config runtime.yaml --apply
+uv run python scripts/configure_runtime.py --config .local/deploy/runtime.yaml
+uv run python scripts/configure_runtime.py --config .local/deploy/runtime.yaml --apply
 ```
 
 프로젝트 기본 실행은 게시된 리소스의 읽기 전용 검사이고 Runtime 기본 실행은 요청 구성 검사다.
@@ -160,6 +175,97 @@ uv run python scripts/configure_runtime.py --config runtime.yaml --apply
 
 Runtime의 공개 주소를 서비스 설정에 연결하고 준비된 버전의 endpoint를 공개한 뒤 반환한 `public_url`로 플러그인을 생성한다.
 서비스 코드의 Runtime endpoint와 개별 업무의 harness 릴리스 endpoint는 각각의 배포 단위다.
+
+### 프로젝트 연결 운영
+
+연결의 사용자 흐름·공유 범위는 [프로젝트 연결](../spec/service.md#프로젝트-연결)이 소유한다.
+운영자는 다음 SSM JSON을 준비하고 DAERI 서비스 역할에 카탈로그·프로젝트 조회와 등록 상태 쓰기, S3 등록 잠금, 필요한 Runtime·Gateway 제어·역할 전달 권한을 부여한다.
+접속 값·역할·이미지·비밀 ARN의 실제 설정 파일은 `.local/deploy/`에 보관한다.
+
+| `<connections.prefix>` 아래 경로 | 소유하는 값 |
+|---|---|
+| `catalog/<connector_id>` | 검증한 커넥터 템플릿 |
+| `projects/<project_id>` | 허용 커넥터·Gateway·역할·네트워크·비밀 범위·인증 별칭 |
+| `registered/<project_id>/<connection_id>` | 연결 관리자가 보관하는 등록 상태·Runtime·Gateway 대상 |
+
+| 커넥터 값 | 조건·기본값 |
+|---|---|
+| `name`·`description` | 필수 표시 이름·선택 설명 |
+| `inputs` | 키별 필드 정의; 기본 빈 매핑 |
+| `kind: runtime` | 필수 `image_uri`·`command` 배열, 선택 `environment` |
+| `kind: mcp` | 필수 HTTPS `endpoint`; 선언한 입력 치환 허용 |
+| `kind: openapi` | 필수 `openapi_schema` 매핑; 설정 치환은 `servers[].url` |
+
+입력 필드는 필수 `title`에 `type=string`(`string`·`integer`·`boolean`)·`required=true`·선택 `default`·`env`·`secret_ref=false`를 지정한다.
+`runtime`의 필드는 서로 다른 `env`를 지정하며 비밀 필드는 기본값 없는 문자열 참조다.
+원격 MCP·OpenAPI의 인증은 프로젝트 `credentials` 별칭으로 선택한다.
+MCP endpoint는 HTTPS 전체 주소 입력 또는 URL 구성 요소의 치환을 지원하며 OpenAPI 경로의 `{itemId}` 같은 도구 인자는 유지한다.
+
+다음 가상 `.local/deploy/connections.yaml`은 운영자가 별도로 제작·검증한 일반 MCP 이미지를 등록한다.
+개별 DB·Redis MCP 프로그램과 이미지는 운영자가 준비한다.
+
+```yaml
+region: us-east-1
+prefix: /daeri/connections/
+connectors:
+  resource-mcp:
+    name: 운영 리소스 MCP
+    kind: runtime
+    image_uri: 123456789012.dkr.ecr.us-east-1.amazonaws.com/approved-resource-mcp:example
+    command: [/opt/approved-mcp/server]
+    inputs:
+      host: {title: 리소스 주소, env: RESOURCE_HOST}
+      port: {title: 포트, type: integer, default: 5432, env: RESOURCE_PORT}
+      secret: {title: 기존 Secrets Manager ARN, env: RESOURCE_PASSWORD, secret_ref: true}
+projects:
+  example:
+    gateway_arn: arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/project-example123
+    allowed_connectors: [resource-mcp]
+    runtime_role_arn: arn:aws:iam::123456789012:role/daeri-connector-example
+    secret_arn_prefix: "arn:aws:secretsmanager:us-east-1:123456789012:secret:daeri/example/"
+```
+
+```sh
+uv run python scripts/configure_connections.py --config .local/deploy/connections.yaml
+uv run python scripts/configure_connections.py --config .local/deploy/connections.yaml --apply
+```
+
+기본 실행은 AWS 클라이언트 없이 스키마·소유 범위·문서별 8KiB 한도를 검사하고 선택한 ID만 반환한다.
+`--apply`는 기존 프로젝트의 Gateway·비밀 범위와 대조한 뒤 SSM에 카탈로그·고정 설정을 게시한다.
+
+프로젝트 고정 설정은 `gateway_arn`·`allowed_connectors`를 필수로 받는다.
+`runtime`을 허용할 때는 `runtime_role_arn`을, 비밀 참조를 허용할 때는 `secret_arn_prefix`를 지정한다.
+선택 `network_configuration`은 [Runtime 네트워크 규격](#프로젝트와-runtime)을 따르며 DB·사내망의 DNS·CA·접근 경로를 운영자가 준비한다.
+
+선택 `credentials`는 별칭을 native Gateway `CredentialProviderConfiguration` 배열에 매핑한다.
+원격 MCP·API의 Gateway outbound 인증은 사용자가 `credential_id` 별칭을 선택하면 운영자가 연결한 Identity 제공자를 사용한다.
+프로젝트 공유 별칭은 API key·Gateway IAM 역할·OAuth `CLIENT_CREDENTIALS`를 지원하며 개인 OAuth는 [개인 위임](#하위-에이전트와-개인-위임) 경로를 사용한다.
+이 자격은 MCP 프로그램이 DB에 접근할 때 사용하는 `secret_ref`와 별개다.
+비밀 참조는 프로젝트 `secret_arn_prefix` 아래의 Secrets Manager ARN만 허용한다.
+`runtime` 대상은 Gateway IAM 역할의 SigV4 인증을 사용한다.
+
+`runtime` 이미지는 ARM64 Linux에서 `daeri-connector`를 entrypoint로 실행하고 검증한 MCP 프로그램을 포함한다.
+프로그램은 Streamable HTTP `0.0.0.0:8000/mcp`를 제공해야 한다.
+연결 관리자는 `DAERI_CONNECTOR_CONFIG` JSON에 `command` 배열·문자열 `environment`·환경 변수명별 비밀 ARN인 `secrets`를 넣는다.
+런처는 실제 시작 때 Secrets Manager의 `SecretString`을 해소해 자식 프로그램 환경에 전달한다.
+비밀 조회는 MCP 프로그램 시작 시에만 수행한다.
+Runtime 역할에는 해당 비밀 조회와 네트워크 접근 권한을 부여한다.
+
+연결 적용 전에 프로젝트 카탈로그의 게시된 harness 릴리스·버전과 Gateway 연결을 검사한다.
+운영자가 프로젝트 전용 Gateway를 붙여 릴리스를 먼저 공개하고 연결 등록은 그 고정 릴리스를 사용한다.
+프로젝트 사이 Gateway와 비밀 ARN 접두사 범위가 겹치면 설정 오류로 처리한다.
+DAERI 접속부를 호스팅하는 Runtime과 리소스 MCP를 호스팅하는 Runtime은 별도의 배포 단위다.
+
+연결 상태는 `PROVISIONING`·`FAILED`·`READY`이며 공개 요약은 `id`·`connector_id`·`name`·`state`·`resource_access: not_checked`를 반환한다.
+상태의 의미와 실제 접근 확인은 [프로젝트 연결](../spec/service.md#프로젝트-연결)을 따른다.
+명시적으로 연결을 갱신하면 endpoint가 같아도 Gateway 대상을 갱신해 도구를 다시 발견한다.
+[Runtime 세션 수명](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-lifecycle-settings.html)에 따라 새 MCP 세션은 갱신한 코드·설정과 시작 시 해소한 비밀을 사용하고, 실행 중인 MCP 세션은 시작 때의 코드·설정·비밀을 유지한다.
+일부 적용 실패에는 원격 상태를 확인하고 같은 연결 ID·커넥터로 재시도한다.
+현재 공개 도구는 등록·갱신·조회이며 연결 삭제는 운영자가 별도 절차로 관리한다.
+동시 등록은 `CONNECTION_BUSY`로 중단하고 일반 종료 시 잠금을 해제한다.
+잠금은 S3의 `<storage.prefix>connection-locks/<등록 원본 owner>.json`을 조건부 작성·삭제한다.
+잠금 객체는 `project-id`·`connection-id` 메타데이터를 보관하므로 첫 SSM 등록 원본을 쓰기 전에 중단돼도 대상을 식별할 수 있다.
+프로세스 중단으로 잠금이 남으면 운영자가 잠금 메타데이터·SSM 등록 원본·원격 Runtime/대상·실행 종료를 확인하고 해당 S3 객체의 현재 ETag로 조건부 삭제한 뒤 같은 ID로 재시도한다.
 
 ### 하위 에이전트와 개인 위임
 
@@ -173,7 +279,7 @@ Memory·자격·도구 범위는 [멀티 에이전트와 도구](../spec/service
 등록은 Gateway ID로 대상을 생성·갱신하고 고정 설정을 Lambda 환경에 연결하며, 총괄 harness에는 Gateway ARN을 연결해 프로젝트 릴리스를 공개한다.
 
 ```sh
-uv run python scripts/configure_subagents.py --config subagents.yaml --project-config project.yaml --apply
+uv run python scripts/configure_subagents.py --config .local/deploy/subagents.yaml --project-config .local/deploy/project.yaml --apply
 ```
 
 `--apply`를 생략하면 Gateway 요청 구성을 검사한다.
@@ -194,11 +300,16 @@ S3·SSM·제어 API는 서비스 IAM, 하위 위임 Lambda는 프로젝트 서�
 
 [수집 설정](../../src/daeri/config/memory.py)은 서비스 리전·S3·카탈로그 경로에 `project_id`·`source_memory_id`를 추가한다.
 실제 Memory ID는 네이티브 이벤트, 기본 `receipts`는 S3 업무 호출 원본을 수집한다.
+보관 위치는 `<storage.prefix>memory/<scope hash>/` 아래의 네이티브 `events/`와 업무 원본 기반 `receipt-events-v2/`로 나눈다.
+
+업무 원본은 [Memory 한도](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html)에 맞춰 메시지당 UTF-8 100,000바이트·이벤트당 100항목/직렬화 10,000,000바이트 이내로 나눠 USER→TOOL→ASSISTANT 순서를 보존한다.
+같은 호출의 배치는 순서대로 재생하며 S3 보관 시각이 같은 호출 사이의 순서는 근사값으로 취급한다.
+이벤트 보관 JSON은 10MiB+2KiB까지 허용하며 업무 상태·호출 요약은 [입력과 응답 보관](#입력과-응답-보관)의 한도를 따른다.
 
 ```sh
-uv run python scripts/archive_memory.py --config memory.yaml
-uv run python scripts/archive_memory.py --config memory.yaml --apply
-uv run python scripts/archive_memory.py --config memory.yaml --restore-to Restored_Example-0123456789 --apply
+uv run python scripts/archive_memory.py --config .local/deploy/memory.yaml
+uv run python scripts/archive_memory.py --config .local/deploy/memory.yaml --apply
+uv run python scripts/archive_memory.py --config .local/deploy/memory.yaml --restore-to Restored_Example-0123456789 --apply
 ```
 
 기본 실행은 읽기 전용 검사이며 `--apply`가 불변 원본·진행 기록 또는 별도 대상 이벤트를 작성한다.
@@ -208,6 +319,8 @@ uv run python scripts/archive_memory.py --config memory.yaml --restore-to Restor
 EventBridge Scheduler·권한·실패 알림을 연결하고 원본 이벤트의 보존 기간 안에 수집을 완료한다.
 동일 프로젝트 소유의 비어 있는 독립 Memory에 재생하고 비동기 추출·검색을 검증한 뒤 프로젝트의 `memory_id`를 지정해 공개한다.
 재생은 원본별 고정 `clientToken`과 S3 진행 기록으로 중복 처리를 대조하고 중단 지점에서 이어간다.
+
+이전 업무 원본 수집 자료는 유지하고 원본을 `receipt-events-v2/`로 재수집하며, 이전 형식에 연결한 복원 대상은 새 빈 프로젝트 Memory로 교체한다.
 
 ### Git 작업 환경
 
@@ -222,12 +335,12 @@ repositories:
 ```
 
 ```sh
-uv run python scripts/configure_workspaces.py --project-config project.yaml --config workspaces.yaml --skill-uri s3://daeri-example/skills/ --apply
+uv run python scripts/configure_workspaces.py --project-config .local/deploy/project.yaml --config .local/deploy/workspaces.yaml --skill-uri s3://daeri-example/skills/ --apply
 ```
 
 기본 실행은 배포 파일 구성을 검사하며 `--apply`는 내용 해시별 S3 Skill·실행 묶음·설정을 게시하고 세션 저장소·harness·SSM을 갱신한다.
 `root`는 `/mnt` 아래에 두고 Git·네트워크·표준 자격은 프로젝트 실행 환경에서 준비한다.
-설치된 개발 환경에서는 생성한 JSON 설정으로 `daeri-workspace --config workspaces.json prepare TASK_UUID REPOSITORY`를 사용한다.
+설치된 개발 환경에서는 생성한 JSON 설정으로 `daeri-workspace --config .local/deploy/workspaces.json prepare TASK_UUID REPOSITORY`를 사용한다.
 재개·통합 조건은 [소스와 산출물](../spec/service.md#소스와-산출물)을 따른다.
 `prepare`는 기준 ref를 fetch해 commit과 `daeri/<task UUID>/<repository>` 브랜치·사본을 고정하며 재호출은 저장한 기준을 유지한다.
 새 환경의 재개는 선택한 기준 ref와 원격 업무 브랜치의 공통 조상을 기록하고, `prepare`·`verify`의 `--reference` 기본값은 `HEAD`다.
@@ -236,11 +349,15 @@ uv run python scripts/configure_workspaces.py --project-config project.yaml --co
 
 ### 공개 MCP 도구
 
-모든 도구는 현재 요청의 검증된 사용자로 `AgentService`를 호출하고 선택한 `project_id`·`task_id`를 전달한다.
+모든 도구는 현재 요청의 검증된 사용자와 선택한 프로젝트로 호출한다.
+업무 도구는 `AgentService`, 연결 도구는 `ConnectionService`가 권한과 흐름을 검사한다.
 
 | 도구 | 입력·결과 |
 |---|---|
 | `daeri_projects` | 허용된 프로젝트 목록 |
+| `daeri_connectors` | `project_id`; 관리자가 선택할 허용 커넥터·인증 별칭 목록 |
+| `daeri_connections` | `project_id`; 구성원이 공유하는 연결 요약 |
+| `daeri_connect` | `project_id`·`connection_id`·`connector_id`; 관리자의 실제 호스트 입력·확인 뒤 등록·갱신 |
 | `daeri_tasks` | `project_id`, 선택 `cursor`·`limit=20`; 자신의 업무·다음 커서 |
 | `daeri_work` | `project_id`·`request`, 선택 `task_id`; 새 업무·후속 요청·피드백 |
 | `daeri_status` | `project_id`·`task_id`; 목표·진행·계획·확인 상태·마지막 보관 응답 |
@@ -250,11 +367,17 @@ uv run python scripts/configure_workspaces.py --project-config project.yaml --co
 | `daeri_download` | `project_id`·`task_id`·`artifact_id`; 선택 버전의 임시 다운로드 링크 |
 
 업무·파일 페이지 크기는 1~100이며 커서는 사용자·프로젝트·페이지 크기에, 파일은 업무에도 연결한다.
-확인창의 결정·대기·취소·만료 처리는 [계획과 승인](../spec/service.md#계획과-승인), 세션 전환은 [실패와 복구](../spec/service.md#실패와-복구)를 따른다.
+커넥터·연결 ID는 `project_id`와 같은 1~128자 문법을 사용한다.
+`daeri_connect`의 모델 입력은 식별자 세 개이며 접속 필드는 서버가 생성한 호스트 확인창에서만 받는다.
+확인 응답 뒤 현재 신원·관리 권한·카탈로그·프로젝트 고정 설정을 다시 대조한다.
+확인창 취소·미지원·300초 초과에는 기존 연결을 유지하고 `state: cancelled`를 반환한다.
+세 연결 도구는 서버의 `connections` 설정을 켰을 때 공개한다.
+
+계획 확인창의 결정·대기·취소·만료 처리는 [계획과 승인](../spec/service.md#계획과-승인), 세션 전환은 [실패와 복구](../spec/service.md#실패와-복구)를 따른다.
 
 ### 내부 업무 호출
 
-`build_cloud()`는 `store`·`workflow`·클라이언트의 `CloudServices`, `build_server()`는 verifier·실행 대상 검사·`AgentService`·HTTP MCP를 조립한다.
+`build_cloud()`는 `store`·`workflow`·클라이언트의 `CloudServices`, `build_server()`는 verifier·실행 대상 검사·`AgentService`·선택 `ConnectionService`·HTTP MCP를 조립한다.
 호출자는 `close()` 또는 context manager로 자원을 종료한다.
 OIDC discovery·JWKS는 토큰 검증 때 조회한다.
 
@@ -298,8 +421,13 @@ S3 업무 상태·호출 요약 JSON은 객체당 8MiB 이내로 받고 산출�
 | 현재 확인할 계획 없음·승인 설정 미비 | `PLAN_UNAVAILABLE`·`HARNESS_NOT_READY` |
 | 입력·도구 대기 대응 오류 | `INVALID_INPUT`; 현재 대기 확인 |
 | 미등록 프로젝트 | `PROJECT_UNAVAILABLE` |
+| 연결 설정·Gateway·Runtime·도구 발견 미준비 | `CONNECTION_NOT_READY`; 고정 설정·원격 상태 확인 후 같은 연결 재시도 |
+| 연결 제어·저장 실패 | `CONNECTION_UNAVAILABLE`; 민감 원문을 제외한 오류와 연결 상태 확인 |
+| 확인 중 연결 설정 변경 | `CONNECTION_CHANGED`; 현재 설정으로 확인창 다시 열기 |
+| 동일 연결 등록 중·중단 후 잠금 유지 | `CONNECTION_BUSY`; 실행·원격 상태와 등록 잠금 확인 |
 | 파일 버전 관리 없음·객체 조회 실패 | `ARTIFACT_UNAVAILABLE`; 현재 업무의 파일·버전 확인 |
 | Git 업무 브랜치의 로컬·원격 이력 분기 | `SOURCE_WORKSPACE_CONFLICT`; 양쪽 commit 비교·통합 |
+| Git 업무 사본·기록 접근 실패·내용 불일치 | `SOURCE_WORKSPACE_UNAVAILABLE`; 기존 사본·브랜치·기록 확인 |
 | 저장 객체 변경·원본 불일치 | `STORAGE_CONFLICT`; 현재 상태 확인 |
 | 저장 접근 실패·손상된 자료 | `STORAGE_UNAVAILABLE`; 보관 상태 확인 |
 | 응답 원본이 없는 진행 업무 | `EXECUTION_UNCERTAIN`; 실제 세션·외부 효과 확인 |
@@ -329,6 +457,7 @@ S3 상태 확정 실패는 보관 응답으로 복구하고, 오류 응답이 �
 | 설정·프로젝트 | [YAML](../../tests/test_yaml.py)·[카탈로그](../../tests/test_project_catalog.py)·[서버 조립](../../tests/test_server_config.py) |
 | 인증·공개 도구 | [JWT](../../tests/test_auth.py)·[localhost MCP](../../tests/test_mcp_server.py)·[서비스 통합](../../tests/test_service_capabilities.py) |
 | 배포·플러그인 | [프로젝트](../../tests/test_project_deployment.py)·[Runtime](../../tests/test_runtime_deployment.py)·[입력 오류](../../tests/test_deployment_cli_errors.py)·[플러그인](../../tests/test_plugin_bundle.py) |
+| 프로젝트 연결 | [AWS 등록](../../tests/test_connections.py)·[입력창·권한](../../tests/test_connection_service.py)·[공개 MCP](../../tests/test_connection_mcp.py)·[카탈로그 게시](../../tests/test_connection_catalog_cli.py)·[런처](../../tests/test_connector_cli.py) |
 | 위임·Git | [위임](../../tests/test_delegation.py)·[실제 Git](../../tests/test_workspaces.py)·[Git Skill 배포](../../tests/test_workspace_deployment.py) |
 | Memory 재구성 | [이벤트·분기·재생·격리](../../tests/test_memory_archive.py) |
 | 문서 링크·계층 경계 | [문서](../../tests/test_documentation_links.py)·[패키지](../../tests/test_package_boundaries.py) |
@@ -343,6 +472,7 @@ AWS 요청은 native SDK 형식의 모의 연결, MCP는 localhost의 실제 HTT
 | AWS 기반 | 계정·리전·IAM·S3 버전 관리/수명·ECR/ARM64 이미지·승인/위임/수집 Lambda·Runtime |
 | 회사 로그인·호스트 | IdP audience/scope/프로젝트 claim·public client/callback·두 호스트 설치/확인창/업무 이어가기 |
 | 업무 도구 | Gateway·Identity·inbound OAuth·모델·중앙 MCP/API·하위 harness·사내망·DNS·CA·대상 권한 |
+| 프로젝트 연결 | 검증한 패키지·런처 이미지·SSM/IAM·관리 claim·호스트 입력창·연결별 Runtime·원격 MCP/OpenAPI·도구 발견·실제 리소스 접근 |
 | 소스·산출물 | 실행 환경 Git/자격/작업 보존·실제 S3 업로드·두 호스트 다운로드 |
 | 공유 기억 | 예약 수집/실패 알림·A→B 재사용·프로젝트 차단·추출 지연/정정·재구성 품질 |
 | 운영 품질 | 실제 S3 동시 쓰기/장애 복구·추적·평가·비용·처리 리전 |

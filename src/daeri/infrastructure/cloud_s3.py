@@ -185,11 +185,11 @@ class S3CloudStore:
                 except Exception:
                     pass
 
-    def _put(self, key, document, **condition):
+    def _put(self, key, document, *, max_bytes=_MAX_BYTES, **condition):
         try:
-            data = _encode(document)
+            data = _encode(document, max_bytes)
         except (TypeError, ValueError, RecursionError):
-            raise StoreError('INVALID_INPUT', 'The JSON document must be finite UTF-8 data within 8 MiB.') from None
+            raise StoreError('INVALID_INPUT', f'The JSON document must be finite UTF-8 data within {max_bytes} bytes.') from None
         return self._put_encoded(key, data, **condition)
 
     def _put_encoded(self, key, data, *, return_version=False, **condition):
