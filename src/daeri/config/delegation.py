@@ -3,8 +3,7 @@
 from pydantic import Field, model_validator
 
 from daeri.config.cloud import _Settings
-from daeri.core.projects import valid_harness_release
-from daeri.infrastructure.project_catalog import _HARNESS_ARN
+from daeri.core.projects import PROJECT_KEY_PATTERN, valid_harness_arn, valid_harness_release
 
 
 class SubagentSettings(_Settings):
@@ -15,14 +14,14 @@ class SubagentSettings(_Settings):
 
     @model_validator(mode='after')
     def release(self):
-        if (not _HARNESS_ARN.fullmatch(self.harness_arn)
+        if (not valid_harness_arn(self.harness_arn)
                 or not valid_harness_release(self.harness_endpoint, self.harness_version)):
             raise ValueError('Supply a named immutable managed harness release.')
         return self
 
 
 class DelegationSettings(_Settings):
-    project_id: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
+    project_id: str = Field(pattern=PROJECT_KEY_PATTERN)
     gateway_arn: str = Field(pattern=r'^arn:[a-z0-9-]+:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:gateway/[A-Za-z0-9_-]+$')
     target_name: str = Field(default='subagents', pattern=r'^([0-9a-zA-Z][-]?){1,100}$')
     lambda_arn: str = Field(pattern=r'^arn:[a-z0-9-]+:lambda:[a-z0-9-]+:[0-9]{12}:function:[A-Za-z0-9_-]+$')

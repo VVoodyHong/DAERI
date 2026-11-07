@@ -425,6 +425,13 @@ class S3CloudStore:
         actual = [item.get('toolUseId') for item in tool_results]
         if any(not isinstance(item, str) for item in actual) or len(set(actual)) != len(actual) or set(actual) != expected:
             raise StoreError('INVALID_INPUT', 'Actual responses must match the current pending tool calls.')
+        if value['state'] == 'interrupted' and not expected and value['last_turn'] is not None:
+            # Offloading clears the pending calls, but the old session still needs review before recovery.
+            previous_id = value['last_turn'].rsplit('/', 1)[-1][:-5]
+            _, _, offloaded = self._receipt(value, previous_id, current_execution=False)
+            if offloaded:
+                raise StoreError('HARNESS_INVALID_OUTPUT', 'Review the archived response and confirm recovery in a new session.',
+                                 task_id=task.id, turn_id=previous_id)
         self._ensure_session(task)
         turn_id = str(uuid4())
         value['in_flight'] = {'turn_id': turn_id, 'prompt': prompt, 'tool_results': tool_results}
@@ -578,14 +585,15 @@ class S3CloudStore:
             reply = self._checked_receipt(receipt)
         except (KeyError, TypeError, ValueError):
             raise StoreError('STORAGE_UNAVAILABLE', 'The saved receipt is invalid.') from None
+        offloaded = 'original_receipt' in receipt
         flight = value['in_flight'] if current_execution else None
         if flight is not None:
-            saved_input = (receipt['original_receipt']['input_sha256'] if 'original_receipt' in receipt
+            saved_input = (receipt['original_receipt']['input_sha256'] if offloaded
                            else self._input_hash(receipt['prompt'], receipt['tool_results']))
             if (flight['turn_id'] != turn_id
                     or saved_input != self._input_hash(flight['prompt'], flight['tool_results'])):
                 raise StoreError('STORAGE_CONFLICT', 'The saved receipt does not match the pending execution.')
-        return key, reply
+        return key, reply, offloaded
 
     def _finalize(self, context, value, etag, key, reply):
         state = 'interrupted' if reply.error else 'waiting' if reply.pending_tools else 'active'
@@ -622,7 +630,7 @@ class S3CloudStore:
                    'harness_version': task.harness_version, 'prompt': prompt,
                    'tool_results': tool_results, 'reply': asdict(reply)}
         self._write_receipt(key, receipt)
-        _, saved_reply = self._receipt(value, turn_id)
+        _, saved_reply, _ = self._receipt(value, turn_id)
         self._finalize(task.context, value, etag, key, saved_reply)
         return saved_reply
 
@@ -632,7 +640,7 @@ class S3CloudStore:
         if flight is None and value['last_turn'] is None:
             raise StoreError('EXECUTION_UNCERTAIN', 'There is no saved execution receipt to recover.')
         turn_id = flight['turn_id'] if flight is not None else value['last_turn'].rsplit('/', 1)[-1][:-5]
-        key, reply = self._receipt(value, turn_id)
+        key, reply, _ = self._receipt(value, turn_id)
         self._finalize(context, value, etag, key, reply)
         return CloudTurn(value['id'], turn_id, reply)
 
@@ -645,7 +653,7 @@ class S3CloudStore:
             if value['last_turn'] is not None:
                 turn_id = value['last_turn'].rsplit('/', 1)[-1][:-5]
                 try:
-                    _, reply = self._receipt(value, turn_id, current_execution=False)
+                    _, reply, _ = self._receipt(value, turn_id, current_execution=False)
                 except StoreError:
                     if not visited:
                         raise

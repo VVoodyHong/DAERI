@@ -1,4 +1,4 @@
-"""Check or explicitly publish one managed project from operator YAML."""
+"""Check or publish one project from CloudFormation deployment outputs."""
 
 import argparse
 import json
@@ -13,9 +13,9 @@ from daeri.infrastructure.project_deployment import ProjectDeployment
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Verify shared project memory and publish a verified harness release.')
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
-    parser.add_argument('--apply', action='store_true', help='Create missing project memory and publish the configured release.')
+    parser.add_argument('--apply', action='store_true', help='Publish the verified release in the project catalog.')
     arguments = parser.parse_args(argv)
     try:
         settings = ProjectSettings.from_yaml(arguments.config)

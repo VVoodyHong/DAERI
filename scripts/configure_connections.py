@@ -5,6 +5,7 @@ import json
 import sys
 from typing import Annotated
 
+from botocore.exceptions import ClientError, PaginationError
 from pydantic import Field, StringConstraints, TypeAdapter, ValidationError
 
 from daeri.config.connections import (
@@ -13,6 +14,7 @@ from daeri.config.connections import (
 from daeri.config.yaml import read_yaml
 from daeri.core.errors import StoreError
 from daeri.core.serialization import validate_storable_json
+from daeri.infrastructure.aws_pagination import pages
 
 
 class CatalogSettings(ConnectionSettings):
@@ -35,25 +37,39 @@ def _documents(settings):
 
 
 def _stored_projects(client, prefix, replacements):
-    projects, tokens = {}, set()
-    request = {'Path': prefix + 'projects/', 'Recursive': False, 'WithDecryption': False, 'MaxResults': 10}
+    projects, path = {}, prefix + 'projects/'
     identifier = TypeAdapter(ConnectionId)
-    while True:
-        response = client.get_parameters_by_path(**request)
+    for response in pages(client, 'get_parameters_by_path', token_field='NextToken',
+                          Path=path, Recursive=False, WithDecryption=False, MaxResults=10):
         for parameter in response.get('Parameters', []):
             name = parameter['Name']
-            if not name.startswith(request['Path']):
+            if not name.startswith(path):
                 raise ValueError('Unexpected project parameter path.')
-            project_id = identifier.validate_python(name[len(request['Path']):])
+            project_id = identifier.validate_python(name[len(path):])
             if project_id not in replacements:
                 projects[project_id] = ProjectConnections.model_validate_json(parameter['Value'])
-        token = response.get('NextToken')
-        if not token:
-            return projects
-        if not isinstance(token, str) or token in tokens:
-            raise ValueError('Project pagination did not advance.')
-        tokens.add(token)
-        request['NextToken'] = token
+    return projects
+
+
+def _stored_connector(client, prefix, connector_id):
+    try:
+        response = client.get_parameter(Name=prefix + 'catalog/' + connector_id, WithDecryption=False)
+    except ClientError as error:
+        if error.response['Error']['Code'] == 'ParameterNotFound':
+            return None
+        raise
+    return ConnectorTemplate.model_validate_json(response['Parameter']['Value'])
+
+
+def _validate_runtime_roles(projects, connectors, *, read_connector=None):
+    unbound = {connector_id for project in projects.values() if project.runtime_role_arn is None
+               for connector_id in project.allowed_connectors}
+    for connector_id in sorted(unbound):
+        template = connectors.get(connector_id)
+        if template is None and read_connector is not None:
+            template = read_connector(connector_id)
+        if template is not None and template.kind == 'runtime':
+            raise ValueError('Projects allowing Runtime connectors require an execution role.')
 
 
 def main(argv=None):
@@ -64,6 +80,7 @@ def main(argv=None):
     try:
         settings = CatalogSettings.model_validate(read_yaml(arguments.config))
         validate_project_bindings(settings.projects)
+        _validate_runtime_roles(settings.projects, settings.connectors)
         documents = _documents(settings)
         if arguments.apply:
             import boto3
@@ -72,6 +89,9 @@ def main(argv=None):
             with boto3.client('ssm', region_name=settings.region, config=Config(
                     retries={'total_max_attempts': 1}, connect_timeout=10, read_timeout=60)) as ssm:
                 projects = _stored_projects(ssm, settings.prefix, settings.projects)
+                _validate_runtime_roles(projects, settings.connectors)
+                _validate_runtime_roles(settings.projects, settings.connectors,
+                                        read_connector=lambda identifier: _stored_connector(ssm, settings.prefix, identifier))
                 projects.update(settings.projects)
                 validate_project_bindings(projects)
                 for document in documents:
@@ -79,8 +99,8 @@ def main(argv=None):
         print(json.dumps({'applied': arguments.apply, 'connectors': sorted(settings.connectors),
                           'projects': sorted(settings.projects)}))
         return 0
-    except (ValidationError, ValueError, TypeError, UnicodeError, RecursionError):
-        error = StoreError('INVALID_INPUT', 'Check the connector templates, project ownership and parameter size limits.')
+    except (ValidationError, ValueError, TypeError, UnicodeError, RecursionError, PaginationError):
+        error = StoreError('INVALID_INPUT', 'Check the connector templates, project roles, ownership and parameter size limits.')
     except StoreError:
         error = StoreError('INVALID_INPUT', 'Check the connector catalog YAML and supported settings.')
     except Exception:

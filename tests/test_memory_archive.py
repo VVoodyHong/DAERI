@@ -8,9 +8,10 @@ import boto3
 from botocore.validate import validate_parameters
 import pytest
 
+from aws_paginator import PaginatedClient
 from daeri.core.errors import StoreError
 from daeri.core.cloud import AccessContext, HarnessReply
-from daeri.infrastructure.project_deployment import memory_strategies
+from test_project_deployment import memory_strategies
 from test_cloud_s3 import S3, BUCKET
 
 
@@ -24,7 +25,9 @@ def event(number, role='USER', actor='alice', session='session-1'):
             'payload': [{'conversational': {'role': role, 'content': {'text': role + str(number)}}}]}
 
 
-class Objects(S3):
+class Objects(S3, PaginatedClient):
+    aws_service = 's3'
+
     def list_objects_v2(self, **request):
         self.calls.append(('list', request))
         keys = sorted(key for key in self.objects if key.startswith(request['Prefix']))
@@ -37,7 +40,9 @@ class Objects(S3):
         return result
 
 
-class Memory:
+class Memory(PaginatedClient):
+    aws_service = 'bedrock-agentcore'
+
     def __init__(self):
         self.events = [event(2, 'TOOL'), event(1)]
         self.created, self.calls, self.tokens = [], [], {}
@@ -242,10 +247,13 @@ def test_receipt_replay_keeps_tied_timestamp_turns_and_large_batches_together():
     context = AccessContext('alice', 'project')
     task = archive.objects.create_task(context, 'saved-harness', 'Review')
     turns = []
-    for label in ('A', 'B'):
+    # Split the first turn by message count while keeping its receipt inline.
+    fixtures = [('A', 'A' * 1000000, tuple({'index': index} for index in range(100))),
+                ('B', 'B' * 10000000, ())]
+    for label, text, observations in fixtures:
         turn = archive.objects.begin_turn(task, 'Review ' + label, ())
         archive.objects.finish_turn(task, turn, 'Review ' + label,
-                                    HarnessReply(label * 10000000, 'end_turn'), ())
+                                    HarnessReply(text, 'end_turn', observations=observations), ())
         turns.append(turn)
         task = archive.objects.get_task(context, task.id)
     assert archive.capture_receipts('project', apply=True)['events'] == 4
@@ -253,13 +261,19 @@ def test_receipt_replay_keeps_tied_timestamp_turns_and_large_batches_together():
     archive.capture_receipts('project', apply=True)
     assert objects.objects == snapshot
     assert archive.replay('project', 'receipts', TARGET, apply=True)['replayed'] == 4
+    assert {event['sessionId'] for event in memory.created} == {task.session_id}
+    assert {event['eventTimestamp'] for event in memory.created} == {NOW}
     groups = [event['metadata']['daeri_turn']['stringValue'] for event in memory.created]
     assert groups in [[turns[0], turns[0], turns[1], turns[1]], [turns[1], turns[1], turns[0], turns[0]]]
-    for turn, label in zip(turns, ('A', 'B')):
+    for turn, (label, text, observations) in zip(turns, fixtures):
         messages = [item['conversational'] for event in memory.created
                     if event['metadata']['daeri_turn']['stringValue'] == turn for item in event['payload']]
         assert messages[0] == {'role': 'USER', 'content': {'text': 'Review ' + label}}
-        assert ''.join(message['content']['text'] for message in messages[1:]) == label * 10000000
+        tools, answers = messages[1:1 + len(observations)], messages[1 + len(observations):]
+        assert all(message['role'] == 'TOOL' for message in tools)
+        assert tuple(json.loads(message['content']['text']) for message in tools) == observations
+        assert all(message['role'] == 'ASSISTANT' for message in answers)
+        assert ''.join(message['content']['text'] for message in answers) == text
     assert archive.replay('project', 'receipts', TARGET, apply=True)['replayed'] == 0
 
 
@@ -333,6 +347,14 @@ def test_repeated_cursor_and_partial_page_failure_are_reported_and_can_be_retrie
     monkeypatch.setattr(memory, 'list_events', original)
     archive.capture('project', SOURCE, apply=True)
     assert len(objects.objects) == 2
+
+
+def test_malformed_memory_page_is_reported_as_invalid(monkeypatch):
+    archive, memory, objects, _ = setup()
+    monkeypatch.setattr(memory, 'list_events', lambda **request: {'events': 42})
+    with pytest.raises(StoreError, match='MEMORY_ARCHIVE_INVALID'):
+        archive.capture('project', SOURCE, apply=True)
+    assert not objects.objects
 
 
 @pytest.mark.parametrize('change', ['reflection', 'expiry', 'record_expiry', 'extra_strategy'])

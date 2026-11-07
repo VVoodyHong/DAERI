@@ -234,10 +234,13 @@ def test_receipt_is_immutable_and_keeps_all_actual_tool_results():
     assert client.objects[receipt_key] == receipt_before
 
 
-def test_interrupted_receipt_is_preserved_and_explicit_follow_up_can_start():
+@pytest.mark.parametrize('reply', [
+    HarnessReply('Partial', 'error', error='HARNESS_UNAVAILABLE'),
+    HarnessReply('Invalid response', 'invalid_output', error='HARNESS_INVALID_OUTPUT'),
+])
+def test_interrupted_receipt_is_preserved_and_explicit_follow_up_can_start(reply):
     client = S3()
     store, task, turn = begin(client)
-    reply = HarnessReply('Partial', 'error', error='HARNESS_UNAVAILABLE')
     store.finish_turn(task, turn, 'Inspect', reply, ())
     assert manifest(client)[1]['state'] == 'interrupted'
     assert store.recover_turn(context(), task.id).reply == reply

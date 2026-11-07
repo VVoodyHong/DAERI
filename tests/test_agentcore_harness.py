@@ -198,16 +198,6 @@ def test_exception_event_after_partial_text_is_sanitized_and_not_retried():
     assert 'PRIVATE' not in repr(reply) and len(client.requests) == 1 and client.stream.closed
 
 
-def test_sdk_client_error_is_sanitized_without_retry():
-    from daeri.infrastructure.agentcore import AgentCoreHarness
-
-    failure = ClientError({'Error': {'Code': 'AccessDeniedException', 'Message': 'PRIVATE'}}, 'InvokeHarness')
-    client = Client(invoke_failure=failure)
-    reply = AgentCoreHarness(client).invoke(task(), [])
-    assert reply.error == 'HARNESS_ACCESS_DENIED' and len(client.requests) == 1
-    assert 'PRIVATE' not in repr(reply)
-
-
 def test_native_handoff_returns_only_the_first_inline_call_awaiting_a_response():
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
@@ -283,16 +273,23 @@ def test_missing_saved_route_never_invokes_an_arbitrary_harness():
     assert client.requests == []
 
 
-@pytest.mark.parametrize('code', ['AccessDeniedException', 'ResourceNotFoundException',
-    'ThrottlingException', 'ValidationException', 'ServiceQuotaExceededException'])
-def test_rejected_invocation_keeps_existing_pending_calls_for_explicit_resubmission(code):
+@pytest.mark.parametrize('code, expected', [
+    ('AccessDeniedException', 'HARNESS_ACCESS_DENIED'),
+    ('ResourceNotFoundException', 'HARNESS_NOT_FOUND'),
+    ('ThrottlingException', 'HARNESS_THROTTLED'),
+    ('ValidationException', 'HARNESS_VALIDATION_ERROR'),
+    ('ServiceQuotaExceededException', 'HARNESS_QUOTA_EXCEEDED'),
+])
+def test_rejected_invocation_returns_contract_error_and_preserves_pending_calls(code, expected):
     from dataclasses import replace
     from daeri.infrastructure.agentcore import AgentCoreHarness
 
     pending = ({'toolUseId': 'approve', 'name': 'confirm_plan', 'input': {'plan': 'Inspect'}},)
     failure = ClientError({'Error': {'Code': code, 'Message': 'PRIVATE'}}, 'InvokeHarness')
-    reply = AgentCoreHarness(Client(invoke_failure=failure)).invoke(replace(task(), pending_tools=pending), [])
-    assert reply.error and reply.pending_tools == pending
+    client = Client(invoke_failure=failure)
+    reply = AgentCoreHarness(client).invoke(replace(task(), pending_tools=pending), [])
+    assert reply.error == expected and reply.pending_tools == pending
+    assert len(client.requests) == 1
     assert 'PRIVATE' not in repr(reply)
 
 

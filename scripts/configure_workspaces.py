@@ -1,48 +1,38 @@
-"""Provision project Git workspaces as a versioned native harness S3 Skill."""
+"""Build and optionally upload a content-addressed Git Skill to S3."""
 
 import argparse
 import json
 
-from pydantic import ValidationError
-
-from daeri.config.project import ProjectSettings
-from daeri.config.server import HarnessReadiness
 from daeri.config.yaml import read_yaml
 from daeri.core.errors import StoreError
-from daeri.infrastructure.workspace_deployment import configure_workspaces, workspace_plan
+from daeri.infrastructure.workspace_deployment import publish_workspace_skill, workspace_plan
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--project-config', required=True)
+    parser.add_argument('--project-id', required=True)
     parser.add_argument('--config', required=True)
     parser.add_argument('--skill-uri', required=True)
+    parser.add_argument('--region')
     parser.add_argument('--apply', action='store_true')
-    arguments = parser.parse_args()
+    arguments = parser.parse_args(argv)
     try:
-        project = ProjectSettings.from_yaml(arguments.project_config)
         config = read_yaml(arguments.config)
-        plan = workspace_plan(project, config, arguments.skill_uri)
+        plan = workspace_plan(arguments.project_id, config, arguments.skill_uri)
         if arguments.apply:
             import boto3
             from botocore.config import Config
-            options = {'region_name': project.region, 'config': Config(retries={'total_max_attempts': 1})}
-            with (boto3.client('bedrock-agentcore-control', **options) as control,
-                  boto3.client('s3', **options) as s3, boto3.client('ssm', **options) as ssm):
-                result = configure_workspaces(control, s3, ssm, project, config, arguments.skill_uri,
-                    HarnessReadiness(control, project.approval_hook_arn).check)
-        else:
-            result = {'project_id': project.project_id, 'workspace': config, 'skill_uri': plan['skill_uri'],
-                      'files': list(plan['files'])}
+            with boto3.client('s3', region_name=arguments.region,
+                              config=Config(retries={'total_max_attempts': 1})) as s3:
+                publish_workspace_skill(s3, plan)
+        result = {'project_id': arguments.project_id, 'skill_uri': plan['skill_uri'],
+                  'mount_path': plan['mount_path'], 'files': list(plan['files'])}
         print(json.dumps(result, ensure_ascii=False))
     except StoreError as error:
         parser.exit(2, json.dumps({'error': {'code': error.code, 'message': error.message}}, ensure_ascii=False) + '\n')
-    except ValidationError:
-        parser.exit(2, json.dumps({'error': {'code': 'INVALID_INPUT',
-            'message': 'Workspace configuration is invalid; check supported fields and project resources.'}}) + '\n')
     except Exception:
         parser.exit(2, json.dumps({'error': {'code': 'DEPLOYMENT_FAILED',
-            'message': 'Workspace configuration failed; check project resources, repository settings and the persistent mount.'}}) + '\n')
+            'message': 'Workspace Skill publication failed. Check the S3 destination, region and permissions.'}}) + '\n')
 
 
 if __name__ == '__main__':

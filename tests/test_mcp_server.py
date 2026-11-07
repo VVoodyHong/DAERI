@@ -5,6 +5,7 @@ from datetime import timedelta
 import importlib
 import socket
 import time
+from types import SimpleNamespace
 
 import anyio
 import httpx
@@ -110,6 +111,25 @@ def test_http_requires_verified_bearer_and_scope_and_advertises_metadata():
                 assert metadata.status_code == 200
                 assert metadata.json()['authorization_servers'] == ['https://company.example/']
                 assert metadata.json()['resource'] == 'https://daeri.example/mcp'
+    anyio.run(check)
+
+
+@pytest.mark.parametrize('tool,arguments', [
+    ('daeri_projects', {}),
+    ('daeri_confirm', {'project_id': 'charging', 'task_id': 'task-1'}),
+])
+def test_tool_rechecks_expired_identity_and_returns_structured_auth_error(monkeypatch, tool, arguments):
+    async def check():
+        async def unexpected_form(context, params):
+            pytest.fail('An expired user received a confirmation form.')
+
+        async with serving(factory()) as url:
+            async with connected(url, callback=unexpected_form) as (session, _, __):
+                # Let HTTP accept the verified token but simulate expiry before the tool runs.
+                monkeypatch.setattr('daeri.core.access.time', SimpleNamespace(time=lambda: time.time() + 600))
+                result = await session.call_tool(tool, arguments)
+                assert result.isError and result.structuredContent
+                assert result.structuredContent['error']['code'] == 'AUTHENTICATION_REQUIRED'
     anyio.run(check)
 
 

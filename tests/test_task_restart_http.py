@@ -79,3 +79,51 @@ def test_http_recovery_does_not_apply_a_review_when_the_task_changed_in_another_
                 assert current.session_id == original.session_id
                 assert len(harness.calls) == 2 and not any('/reset/' in key for key in store.client.objects)
     anyio.run(check)
+
+
+@pytest.mark.parametrize('offloaded,error', [
+    (False, 'PLAN_UNAVAILABLE'),
+    (True, 'HARNESS_INVALID_OUTPUT'),
+], ids=['unsupported-pending-tool', 'oversized-receipt'])
+def test_http_nonresumable_turn_restarts_only_after_review(offloaded, error):
+    reply = (HarnessReply('x' * (8 * 1024 * 1024), 'end_turn') if offloaded else
+             HarnessReply('A different tool is waiting', 'tool_use', ({**PENDING, 'name': 'other_inline'},)))
+    agent, _, store, harness = setup(reply, HarnessReply('Review the new plan', 'tool_use', (PENDING,)))
+
+    async def check():
+        async def review(context, params):
+            assert '기존 실행의 종료 여부와 실제 변경' in params.message
+            return ElicitResult(action='accept', content={'reviewed': True, 'observations': 'The previous run ended.'})
+
+        async with serving(factory(agent)) as url:
+            async with connected(url, callback=review) as (session, _, __):
+                started = await session.call_tool('daeri_work', {'project_id': 'charging', 'request': 'Compare resources'})
+                task_id = started.structuredContent['task_id']
+                task_input = {'project_id': 'charging', 'task_id': task_id}
+                status = await session.call_tool('daeri_status', task_input)
+                recovered = await session.call_tool('daeri_recover', task_input)
+                for result in (started, status, recovered):
+                    assert result.structuredContent['state'] == 'interrupted'
+                    assert result.structuredContent['error'] == error
+                    assert result.structuredContent['awaiting_confirmation'] is False
+                    assert result.structuredContent['plan'] is None
+                tasks = await session.call_tool('daeri_tasks', {'project_id': 'charging'})
+                assert tasks.structuredContent['items'][0]['state'] == 'interrupted'
+                assert tasks.structuredContent['items'][0]['awaiting_confirmation'] is False
+                previous_objects = dict(store.client.objects)
+                blocked = await session.call_tool('daeri_work', {**task_input, 'request': 'Continue'})
+                assert blocked.isError and blocked.structuredContent['error']['code'] == error
+                assert len(harness.calls) == 1 and store.client.objects == previous_objects
+                original = harness.calls[0][0]
+                saved = store.read_turn(original.context, task_id)
+                archived = {key: value for key, value in store.client.objects.items()
+                            if f'/turns/{saved.turn_id}' in key or '/artifacts/' in key}
+
+                resumed = await session.call_tool('daeri_recover', {**task_input, 'restart': True})
+                assert resumed.structuredContent['task_id'] == task_id
+                assert resumed.structuredContent['awaiting_confirmation']
+                assert resumed.structuredContent['approval'] == 'pending'
+                assert len(harness.calls) == 2 and harness.guards[1]['decision'] == 'deny'
+                assert harness.calls[1][0].session_id != original.session_id
+                assert archived and all(store.client.objects[key] == value for key, value in archived.items())
+    anyio.run(check)

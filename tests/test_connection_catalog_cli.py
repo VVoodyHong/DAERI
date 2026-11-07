@@ -5,8 +5,11 @@ import importlib
 import json
 
 import boto3
+from botocore.exceptions import ClientError
 import pytest
 from yaml import safe_dump
+
+from aws_paginator import PaginatedClient
 
 
 GATEWAY = 'arn:aws:bedrock-agentcore:us-east-1:123456789012:gateway/payments-abcdefghij'
@@ -23,6 +26,10 @@ CONFIG = {
     },
     'projects': {'payments': {'gateway_arn': GATEWAY, 'allowed_connectors': ['reports'], 'runtime_role_arn': ROLE}},
 }
+
+
+class SsmClient(PaginatedClient):
+    aws_service = 'ssm'
 
 
 def command():
@@ -49,7 +56,7 @@ def test_catalog_check_returns_only_ids_without_initializing_aws(tmp_path, monke
 def test_catalog_apply_publishes_typed_reference_documents_and_closes_client(tmp_path, monkeypatch, capsys):
     module = command()
     events = []
-    class SSM:
+    class SSM(SsmClient):
         def __enter__(self):
             events.append('open')
             return self
@@ -82,7 +89,8 @@ def test_catalog_apply_publishes_typed_reference_documents_and_closes_client(tmp
 
 
 @pytest.mark.parametrize('apply', [False, True])
-@pytest.mark.parametrize('failure', ['duplicate_yaml', 'unknown_field', 'bad_id', 'bad_prefix', 'bad_template', 'oversized_last_payload'])
+@pytest.mark.parametrize('failure', ['duplicate_yaml', 'unknown_field', 'bad_id', 'bad_prefix', 'bad_template',
+                                    'openapi_missing_url', 'missing_runtime_role', 'oversized_last_payload'])
 def test_catalog_invalid_input_never_initializes_aws(tmp_path, monkeypatch, capsys, apply, failure):
     module = command()
     config = deepcopy(CONFIG)
@@ -94,6 +102,11 @@ def test_catalog_invalid_input_never_initializes_aws(tmp_path, monkeypatch, caps
         config['prefix'] = '/daeri/../private-value/'
     elif failure == 'bad_template':
         config['connectors']['reports']['command'] = 'private-value'
+    elif failure == 'openapi_missing_url':
+        config['connectors']['api'] = {'name': 'API', 'kind': 'openapi',
+                                       'openapi_schema': {'servers': [{'description': 'private-value'}]}}
+    elif failure == 'missing_runtime_role':
+        del config['projects']['payments']['runtime_role_arn']
     elif failure == 'oversized_last_payload':
         config['connectors']['z-last'] = {'name': 'Huge', 'kind': 'runtime', 'image_uri': IMAGE,
                                           'command': ['http-mcp'], 'environment': {'HOST': 'private-value' * 1000}}
@@ -114,7 +127,7 @@ def test_catalog_accepts_payloads_larger_than_standard_parameter_limit(tmp_path,
     config = deepcopy(CONFIG)
     config['connectors']['reports']['environment']['API_HOST'] = 'a' * 4500
     written = []
-    class SSM:
+    class SSM(SsmClient):
         def __enter__(self):
             return self
         def __exit__(self, *args):
@@ -133,7 +146,7 @@ def test_catalog_accepts_payloads_larger_than_standard_parameter_limit(tmp_path,
 def test_catalog_aws_failure_is_sanitized_and_closes_client(tmp_path, monkeypatch, capsys):
     module = command()
     events = []
-    class SSM:
+    class SSM(SsmClient):
         def __enter__(self):
             return self
         def __exit__(self, *args):
@@ -170,7 +183,7 @@ def test_catalog_rejects_shared_project_resources_before_aws(tmp_path, monkeypat
 def test_catalog_existing_bindings_are_paginated_before_any_writes(tmp_path, monkeypatch, capsys):
     module = command()
     requests, writes = [], []
-    class SSM:
+    class SSM(SsmClient):
         def __enter__(self):
             return self
         def __exit__(self, *args):
@@ -195,7 +208,7 @@ def test_catalog_existing_bindings_are_paginated_before_any_writes(tmp_path, mon
 def test_catalog_allows_operators_to_replace_the_existing_project_binding(tmp_path, monkeypatch, previous):
     module = command()
     written = []
-    class SSM:
+    class SSM(SsmClient):
         def __enter__(self):
             return self
         def __exit__(self, *args):
@@ -209,3 +222,46 @@ def test_catalog_allows_operators_to_replace_the_existing_project_binding(tmp_pa
     monkeypatch.setattr(boto3, 'client', lambda *args, **kw: SSM())
     assert module.main(['--config', str(write_config(tmp_path, CONFIG)), '--apply']) == 0
     assert len(written) == 2
+
+
+@pytest.mark.parametrize('submitted,stored_kind,expected_exit', [
+    ('project', 'runtime', 2), ('connector', 'runtime', 2),
+    ('project', 'mcp', 0), ('project', None, 0),
+])
+def test_partial_catalog_publication_checks_effective_runtime_roles(
+        tmp_path, monkeypatch, capsys, submitted, stored_kind, expected_exit):
+    binding = {'gateway_arn': GATEWAY, 'allowed_connectors': ['reports']}
+    connector = CONFIG['connectors']['reports']
+    if stored_kind == 'mcp':
+        connector = {'name': 'Remote', 'kind': 'mcp', 'endpoint': 'https://tools.example.test/mcp'}
+    config = {'projects': {'payments': binding}} if submitted == 'project' else {'connectors': {'reports': connector}}
+    written = []
+
+    class SSM(SsmClient):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def get_parameters_by_path(self, **kwargs):
+            if submitted == 'project':
+                return {'Parameters': []}
+            return {'Parameters': [{'Name': '/daeri/connections/projects/payments', 'Value': json.dumps(binding)}]}
+
+        def get_parameter(self, *, Name, WithDecryption):
+            assert Name == '/daeri/connections/catalog/reports' and WithDecryption is False
+            if stored_kind is None:
+                raise ClientError({'Error': {'Code': 'ParameterNotFound'}}, 'GetParameter')
+            return {'Parameter': {'Value': json.dumps(connector)}}
+
+        def put_parameter(self, **kwargs):
+            written.append(kwargs['Name'])
+
+    monkeypatch.setattr(boto3, 'client', lambda *args, **kwargs: SSM())
+    assert command().main(['--config', str(write_config(tmp_path, config)), '--apply']) == expected_exit
+    if expected_exit == 2:
+        assert json.loads(capsys.readouterr().err)['error']['code'] == 'INVALID_INPUT'
+        assert not written
+    else:
+        assert written == ['/daeri/connections/projects/payments']

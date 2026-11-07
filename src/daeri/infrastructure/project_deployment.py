@@ -1,8 +1,6 @@
 """Publish verified harness releases backed by independently owned shared Memory."""
 
-from hashlib import sha256
 import json
-import time
 
 from daeri.core.errors import StoreError
 from daeri.core.projects import Project
@@ -10,34 +8,20 @@ from daeri.infrastructure.project_catalog import SsmProjectCatalog
 
 
 _STRATEGIES = (
-    ('semanticMemoryStrategy', 'ProjectFacts', 'SEMANTIC', '/shared/facts/'),
-    ('episodicMemoryStrategy', 'ProjectEpisodes', 'EPISODIC', '/shared/experiences/'),
-    ('summaryMemoryStrategy', 'SessionSummaries', 'SUMMARIZATION', '/summaries/{actorId}/{sessionId}/'),
+    ('ProjectFacts', 'SEMANTIC', '/shared/facts/'),
+    ('ProjectEpisodes', 'EPISODIC', '/shared/experiences/'),
+    ('SessionSummaries', 'SUMMARIZATION', '/summaries/{actorId}/{sessionId}/'),
 )
 
 
-def memory_strategies():
-    result = []
-    for key, name, kind, namespace in _STRATEGIES:
-        strategy = {'name': name, 'namespaces': [namespace]}
-        if kind == 'EPISODIC':
-            strategy['reflectionConfiguration'] = {'namespaces': [namespace]}
-        result.append({key: strategy})
-    return result
-
-
-def validate_project_memory(memory, tags, project_id, catalog, *, name=None,
-                            execution_role=None, encryption_key=None):
+def validate_project_memory(memory, tags, project_id, catalog, *, name=None):
     """One sharing and retention contract for publication and reconstruction targets."""
     valid = memory.get('status') == 'ACTIVE' and (name is None or memory.get('name') == name)
     valid = valid and memory.get('eventExpiryDuration') == 365 and not memory.get('managedByResourceArn')
-    for key, configured in (('memoryExecutionRoleArn', execution_role), ('encryptionKeyArn', encryption_key)):
-        if configured is not None:
-            valid = valid and memory.get(key) == configured
     valid = valid and tags.get('daeri:project') == project_id and tags.get('daeri:catalog') == catalog
     strategies = memory.get('strategies', [])
     valid = valid and len(strategies) == len(_STRATEGIES)
-    for _, strategy_name, kind, namespace in _STRATEGIES:
+    for strategy_name, kind, namespace in _STRATEGIES:
         matches = [item for item in strategies if item.get('name') == strategy_name]
         if len(matches) != 1:
             valid = False
@@ -53,130 +37,58 @@ def validate_project_memory(memory, tags, project_id, catalog, *, name=None,
         raise StoreError('PROJECT_NOT_READY', 'The project memory ownership, shared namespaces or retention are invalid.')
 
 
-def _wait(fetch, field):
-    for attempt in range(60):
-        value = fetch()[field]
-        if value.get('status') in {'ACTIVE', 'READY'}:
-            return value
-        if value.get('status') not in {'CREATING', 'UPDATING'}:
-            break
-        if attempt < 59:
-            time.sleep(2)
-    raise StoreError('PROJECT_NOT_READY', 'The project resource is not ready; check deployment status before retrying.')
+def verify_project(control, settings, check_harness):
+    """Resolve the declared release and verify project-owned shared Memory."""
+    version = settings.harness_version
+    project = Project(settings.project_id, settings.name, settings.harness_arn, 'RELEASE_V' + version, version)
+    try:
+        harness = check_harness(project)
+        memory = control.get_memory(memoryId=settings.memory_id)['memory']
+        arn_prefix = settings.harness_arn.split(':harness/', 1)[0]
+        if memory['id'] != settings.memory_id or memory['arn'] != arn_prefix + ':memory/' + settings.memory_id:
+            raise StoreError('PROJECT_NOT_READY', 'The declared Memory does not match the project release account and region.')
+        tags = control.list_tags_for_resource(resourceArn=memory['arn']).get('tags', {})
+        validate_project_memory(memory, tags, settings.project_id, settings.project_parameter_prefix,
+                                name=settings.memory_id.rsplit('-', 1)[0])
+
+        binding = harness.get('memory', {}).get('agentCoreMemoryConfiguration', {})
+        if binding.get('arn') != memory['arn'] or 'actorId' in binding:
+            raise StoreError('PROJECT_NOT_READY', 'The project release needs its shared Memory and real user identity.')
+        retrieval = binding.get('retrievalConfig')
+        if retrieval is not None:
+            strategy_ids = {item['name']: item['strategyId'] for item in memory['strategies']}
+            expected = {namespace: strategy_ids[name] for name, _, namespace in _STRATEGIES}
+            if set(retrieval) != set(expected) or any(
+                retrieval[namespace].get('strategyId') != strategy_id or retrieval[namespace].get('topK', 10) <= 0
+                for namespace, strategy_id in expected.items()
+            ):
+                raise StoreError('PROJECT_NOT_READY', 'The release Memory retrieval does not match the project namespaces.')
+        return project, harness
+    except StoreError:
+        raise
+    except Exception:
+        raise StoreError('PROJECT_NOT_READY', 'The declared project release could not be verified.') from None
 
 
 class ProjectDeployment:
     def __init__(self, control, ssm, check_harness):
         self.control, self.ssm, self.check_harness = control, ssm, check_harness
 
-    def _memory(self, settings):
-        if settings.memory_id:
-            return self.control.get_memory(memoryId=settings.memory_id)['memory']
-        request = {'maxResults': 100}
-        while True:
-            result = self.control.list_memories(**request)
-            for item in result.get('memories', []):
-                if item.get('id', '').startswith(settings.memory_name + '-'):
-                    return self.control.get_memory(memoryId=item['id'])['memory']
-            token = result.get('nextToken')
-            if not token:
-                return None
-            request['nextToken'] = token
-
-    def _validate_memory(self, settings, memory):
-        if settings.memory_id and memory.get('id') != settings.memory_id:
-            raise StoreError('PROJECT_NOT_READY', 'The selected project Memory identifier does not match its resource.')
-        tags = self.control.list_tags_for_resource(resourceArn=memory['arn']).get('tags', {})
-        validate_project_memory(memory, tags, settings.project_id, settings.project_parameter_prefix,
-            name=settings.memory_name, execution_role=settings.memory_execution_role_arn,
-            encryption_key=settings.encryption_key_arn)
-
-    @staticmethod
-    def _attached(harness, memory):
-        config = harness.get('memory', {}).get('agentCoreMemoryConfiguration', {})
-        if config.get('arn') != memory['arn'] or 'actorId' in config:
-            return False
-        retrieval = config.get('retrievalConfig')
-        if retrieval is None:
-            return True
-        expected = {namespace: next(item['strategyId'] for item in memory['strategies'] if item['name'] == name)
-                    for _, name, _, namespace in _STRATEGIES}
-        return set(retrieval) == set(expected) and all(
-            retrieval[key].get('strategyId') == value and retrieval[key].get('topK', 10) > 0
-            for key, value in expected.items())
-
     def check(self, settings):
-        try:
-            project = SsmProjectCatalog(self.ssm, settings.project_parameter_prefix).get(settings.project_id)
-            if project.harness_arn != settings.harness_arn or project.name != settings.name:
-                raise StoreError('PROJECT_NOT_READY', 'The published project does not match the deployment settings.')
-            harness = self.control.get_harness(harnessId=settings.harness_arn.rsplit('/', 1)[1],
-                                               harnessVersion=project.harness_version)['harness']
-            memory = self._memory(settings)
-            if memory is None:
-                raise StoreError('PROJECT_NOT_READY', 'The project memory has not been created.')
-            self._validate_memory(settings, memory)
-            if not self._attached(harness, memory):
-                raise StoreError('PROJECT_NOT_READY', 'The project harness needs its shared memory connection.')
-            self.check_harness(project)
-            return self._metadata(project)
-        except StoreError:
-            raise
-        except Exception:
-            raise StoreError('PROJECT_NOT_READY', 'The project deployment could not be verified.') from None
+        project, _ = verify_project(self.control, settings, self.check_harness)
+        if SsmProjectCatalog(self.ssm, settings.project_parameter_prefix).get(settings.project_id) != project:
+            raise StoreError('PROJECT_NOT_READY', 'The published project does not match the declared release.')
+        return self._metadata(project)
 
     def apply(self, settings):
+        project, _ = verify_project(self.control, settings, self.check_harness)
+        metadata = self._metadata(project)
         try:
-            memory = self._memory(settings)
-            harness_id = settings.harness_arn.rsplit('/', 1)[1]
-            harness = _wait(lambda: self.control.get_harness(harnessId=harness_id), 'harness')
-            existing_arn = harness.get('memory', {}).get('agentCoreMemoryConfiguration', {}).get('arn')
-            if not settings.memory_id and existing_arn and (memory is None or existing_arn != memory['arn']):
-                raise StoreError('PROJECT_NOT_READY',
-                                 'The existing project memory needs an explicit migration before publishing.')
-            if memory is None:
-                request = {'name': settings.memory_name, 'eventExpiryDuration': 365,
-                           'memoryStrategies': memory_strategies(),
-                           'tags': {'daeri:project': settings.project_id, 'daeri:catalog': settings.project_parameter_prefix},
-                           'clientToken': sha256(settings.memory_name.encode()).hexdigest()}
-                if settings.memory_execution_role_arn:
-                    request['memoryExecutionRoleArn'] = settings.memory_execution_role_arn
-                if settings.encryption_key_arn:
-                    request['encryptionKeyArn'] = settings.encryption_key_arn
-                memory = self.control.create_memory(**request)['memory']
-            memory = _wait(lambda: self.control.get_memory(memoryId=memory['id']), 'memory')
-            self._validate_memory(settings, memory)
-            if not self._attached(harness, memory):
-                updated = self.control.update_harness(harnessId=harness_id,
-                    memory={'optionalValue': {'agentCoreMemoryConfiguration': {'arn': memory['arn']}}})['harness']
-                version = updated['harnessVersion']
-                harness = _wait(lambda: self.control.get_harness(harnessId=harness_id,
-                                                                harnessVersion=version), 'harness')
-            if not self._attached(harness, memory):
-                raise StoreError('PROJECT_NOT_READY', 'The project harness memory configuration was not applied.')
-            version = harness['harnessVersion']
-            endpoint_name = 'RELEASE_V' + version
-            try:
-                self.control.get_harness_endpoint(harnessId=harness_id, endpointName=endpoint_name)
-            except Exception as error:
-                if getattr(error, 'response', {}).get('Error', {}).get('Code') != 'ResourceNotFoundException':
-                    raise
-                self.control.create_harness_endpoint(harnessId=harness_id, endpointName=endpoint_name,
-                                                     targetVersion=version)
-            endpoint = _wait(lambda: self.control.get_harness_endpoint(harnessId=harness_id,
-                                                                      endpointName=endpoint_name), 'endpoint')
-            if endpoint.get('liveVersion') != version or endpoint.get('targetVersion') != version:
-                raise StoreError('PROJECT_NOT_READY', 'The project release endpoint points to a different version.')
-            project = Project(settings.project_id, settings.name, settings.harness_arn, endpoint_name, version)
-            self.check_harness(project)
-            metadata = self._metadata(project)
-            self.ssm.put_parameter(Name=settings.project_parameter_prefix + settings.project_id,
-                Type='String', Value=json.dumps(metadata, ensure_ascii=False), Overwrite=True)
-            return metadata
-        except StoreError:
-            raise
+            self.ssm.put_parameter(Name=settings.project_parameter_prefix + project.id, Type='String',
+                                   Value=json.dumps(metadata, ensure_ascii=False), Overwrite=True)
         except Exception:
-            raise StoreError('PROJECT_NOT_READY', 'The project deployment could not be completed; inspect its resource status.') from None
+            raise StoreError('PROJECT_NOT_READY', 'The verified release could not be published to the project catalog.') from None
+        return metadata
 
     @staticmethod
     def _metadata(project):

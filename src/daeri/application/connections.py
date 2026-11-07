@@ -1,9 +1,9 @@
 """Project members reuse connections; managers change them through host forms."""
 
 import asyncio
-import re
 
 from daeri.core.errors import StoreError
+from daeri.core.projects import valid_project_key
 
 
 class ConnectionService:
@@ -21,8 +21,7 @@ class ConnectionService:
         return {'project_id': project_id, 'connections': self.backend.list(project_id)}
 
     async def configure(self, user, project_id, connection_id, connector_id, ask):
-        if any(not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}', value)
-               for value in (connection_id, connector_id)):
+        if not (valid_project_key(connection_id) and valid_project_key(connector_id)):
             raise StoreError('INVALID_INPUT', 'Supply stable connector and connection identifiers.')
         def describe():
             user.manage(project_id)

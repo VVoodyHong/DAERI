@@ -28,6 +28,7 @@ class Control:
     def __init__(self, existing_endpoint=False):
         self.calls, self.existing_endpoint = [], existing_endpoint
         self.version = '1'
+        self.endpoint_version = '1'
         self.metadata = None
 
     def create_agent_runtime(self, **request):
@@ -43,19 +44,25 @@ class Control:
         self.calls.append(('update', request))
         self.version = '2'
         self.metadata = request.get('metadataConfiguration')
-        return {}
+        return {'agentRuntimeVersion': self.version, 'status': 'UPDATING'}
 
     def get_agent_runtime_endpoint(self, **request):
-        if not self.existing_endpoint:
+        if request['endpointName'] == 'DEFAULT':
+            version = self.version
+        elif self.existing_endpoint:
+            version = self.endpoint_version
+        else:
             raise ClientError({'Error': {'Code': 'ResourceNotFoundException'}}, 'GetAgentRuntimeEndpoint')
-        return {'status': 'READY', 'liveVersion': self.version, 'targetVersion': self.version}
+        return {'status': 'READY', 'liveVersion': version, 'targetVersion': version}
 
     def create_agent_runtime_endpoint(self, **request):
         self.calls.append(('create_endpoint', request))
         self.existing_endpoint = True
+        self.endpoint_version = request['agentRuntimeVersion']
 
     def update_agent_runtime_endpoint(self, **request):
         self.calls.append(('update_endpoint', request))
+        self.endpoint_version = request['agentRuntimeVersion']
 
 
 def test_create_publishes_only_the_version_with_real_public_url_and_preserves_token_boundary():
@@ -90,14 +97,58 @@ def test_update_reuses_existing_runtime_and_endpoint():
     assert client.calls[-1][0] == 'update_endpoint'
 
 
+def test_runtime_confirms_aws_default_endpoint_without_modifying_it():
+    client = Control(existing_endpoint=True)
+    result = configure_runtime(client, RuntimeSettings.model_validate({**BASE, 'endpoint': 'DEFAULT'}))
+
+    assert result['public_url'].endswith('/invocations?qualifier=DEFAULT')
+    assert result['version'] == '2'
+    assert not any(operation.endswith('_endpoint') for operation, _ in client.calls)
+
+
+def test_runtime_reads_the_updated_version_even_if_an_unqualified_lookup_is_stale():
+    client = Control(existing_endpoint=True)
+    describe = client.get_agent_runtime
+
+    def stale_unqualified(**request):
+        result = describe(**request)
+        if 'agentRuntimeVersion' not in request:
+            return {**result, 'agentRuntimeVersion': '1', 'metadataConfiguration': {'requireMMDSV2': True}}
+        return result
+
+    client.get_agent_runtime = stale_unqualified
+    result = configure_runtime(client, RuntimeSettings.model_validate({**BASE, 'runtime_id': 'daeri-1234567890'}))
+    assert result['version'] == '2'
+    assert ('get', {'agentRuntimeId': 'daeri-1234567890', 'agentRuntimeVersion': '2'}) in client.calls
+    assert client.endpoint_version == '2'
+
+
+def test_runtime_waits_for_both_default_endpoint_versions(monkeypatch):
+    client = Control()
+    observed = iter([('1', '1'), ('1', '2'), ('2', '2')])
+    sleeps = []
+
+    def endpoint(**request):
+        assert request['endpointName'] == 'DEFAULT'
+        live, target = next(observed)
+        return {'status': 'READY', 'liveVersion': live, 'targetVersion': target}
+
+    client.get_agent_runtime_endpoint = endpoint
+    monkeypatch.setattr('daeri.infrastructure.runtime_deployment.time.sleep', sleeps.append)
+    result = configure_runtime(client, RuntimeSettings.model_validate({**BASE, 'endpoint': 'DEFAULT'}))
+    assert result['version'] == '2' and sleeps == [1, 1]
+    assert not any(operation.endswith('_endpoint') for operation, _ in client.calls)
+
+
 @pytest.mark.parametrize('metadata', [None, {'requireMMDSV2': False}])
 def test_runtime_never_publishes_endpoint_without_confirmed_mmdsv2(metadata):
     client = Control()
     update = client.update_agent_runtime
 
     def not_applied(**request):
-        update(**request)
+        result = update(**request)
         client.metadata = metadata
+        return result
     client.update_agent_runtime = not_applied
     with pytest.raises(StoreError, match='RUNTIME_NOT_READY'):
         configure_runtime(client, RuntimeSettings.model_validate(BASE))

@@ -9,10 +9,12 @@ from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from daeri.config.cloud import _Settings
 from daeri.config.validation import control_model, validate_native, validate_network_configuration
+from daeri.core.errors import StoreError
+from daeri.core.projects import PROJECT_KEY_PATTERN
 from daeri.infrastructure.project_catalog import normalize_project_prefix
 
 
-ConnectionId = Annotated[str, StringConstraints(pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')]
+ConnectionId = Annotated[str, StringConstraints(pattern=PROJECT_KEY_PATTERN)]
 _SECRET_ARN = re.compile(r'arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+')
 _ENV = re.compile(r'[A-Za-z_][A-Za-z0-9_]*')
 _SENSITIVE = re.compile(r'(password|passwd|secret|token|api_?key|private_?key)', re.I)
@@ -48,6 +50,7 @@ def validate_url_template(template, inputs):
     keys = [key for _, key, _, _ in Formatter().parse(template) if key is not None]
     full = len(keys) == 1 and template == '{' + keys[0] + '}'
     render_url(template, {key: ('https://example.com' if full else 'example') for key in inputs})
+    return keys
 
 
 class ConnectionSettings(_Settings):
@@ -58,7 +61,7 @@ class ConnectionSettings(_Settings):
     def normalized_prefix(cls, value):
         try:
             return normalize_project_prefix(value)
-        except Exception:
+        except StoreError:
             raise ValueError('Supply an absolute connection parameter prefix.') from None
 
 
@@ -125,8 +128,9 @@ class ConnectorTemplate(_Settings):
                     raise ValueError('Supply HTTPS OpenAPI server URLs.')
                 used = set()
                 for server in servers:
-                    validate_url_template(server['url'], self.inputs)
-                    used.update(key for _, key, _, _ in Formatter().parse(server['url']) if key is not None)
+                    if not isinstance(server, dict) or not isinstance(server.get('url'), str):
+                        raise ValueError('Supply HTTPS OpenAPI server URLs.')
+                    used.update(validate_url_template(server['url'], self.inputs))
                 if set(self.inputs) - used:
                     raise ValueError('OpenAPI setup inputs must configure a server URL.')
 

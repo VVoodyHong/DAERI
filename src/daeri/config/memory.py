@@ -6,11 +6,12 @@ from pydantic import Field, field_validator
 
 from daeri.config.cloud import CloudSettings
 from daeri.core.errors import StoreError
+from daeri.core.projects import PROJECT_KEY_PATTERN
 from daeri.infrastructure.memory_archive import _memory_id
 
 
 class MemoryArchiveSettings(CloudSettings):
-    project_id: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$')
+    project_id: str = Field(pattern=PROJECT_KEY_PATTERN)
     source_memory_id: str = 'receipts'
 
     @field_validator('source_memory_id')

@@ -29,8 +29,8 @@ def main():
             from botocore.config import Config
             options = {'region_name': project.region, 'config': Config(retries={'total_max_attempts': 1})}
             with (boto3.client('bedrock-agentcore-control', **options) as control,
-                  boto3.client('lambda', **options) as lambdas, boto3.client('ssm', **options) as ssm):
-                result = configure_subagents(control, lambdas, ssm, settings, project,
+                  boto3.client('lambda', **options) as lambdas):
+                result = configure_subagents(control, lambdas, settings, project,
                     HarnessReadiness(control, project.approval_hook_arn).check)
         else:
             result = gateway_target(settings)

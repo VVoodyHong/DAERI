@@ -4,14 +4,8 @@ import json
 import re
 
 from daeri.core.errors import StoreError
-from daeri.core.projects import Project, valid_harness_release
+from daeri.core.projects import Project, valid_harness_arn, valid_harness_release, valid_project_key
 from daeri.core.serialization import validate_storable_json
-
-
-_PROJECT_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}')
-_HARNESS_ARN = re.compile(
-    r'arn:[a-z0-9-]+:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:'
-    r'harness/[A-Za-z][A-Za-z0-9_]{0,39}-[A-Za-z0-9]{10}')
 
 
 def normalize_project_prefix(prefix: str) -> str:
@@ -29,7 +23,7 @@ class SsmProjectCatalog:
         self.client, self.prefix = client, normalize_project_prefix(prefix)
 
     def get(self, project_id: str) -> Project:
-        if not isinstance(project_id, str) or not _PROJECT_ID.fullmatch(project_id):
+        if not valid_project_key(project_id):
             raise StoreError('INVALID_INPUT', 'Supply a project ID using letters, digits, underscores or hyphens.')
         try:
             result = self.client.get_parameter(Name=self.prefix + project_id, WithDecryption=False)
@@ -49,7 +43,7 @@ class SsmProjectCatalog:
             endpoint, version = metadata['harness_endpoint'], metadata['harness_version']
             if (not isinstance(name, str) or not 1 <= len(name) <= 256 or name.strip() != name
                     or any(ord(char) < 32 or ord(char) == 127 for char in name)
-                    or not isinstance(arn, str) or not _HARNESS_ARN.fullmatch(arn)
+                    or not valid_harness_arn(arn)
                     or not valid_harness_release(endpoint, version)):
                 raise ValueError('Invalid project metadata')
             return Project(project_id, name, arn, endpoint, version)

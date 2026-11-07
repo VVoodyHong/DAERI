@@ -13,15 +13,15 @@ from daeri.config.connections import (ConnectionSettings, ConnectorTemplate, Pro
 from daeri.config.validation import control_model, validate_native
 from daeri.core.endpoints import runtime_endpoint
 from daeri.core.errors import StoreError
-from daeri.core.projects import valid_harness_release
+from daeri.core.projects import valid_harness_release, valid_project_key
 from daeri.core.serialization import validate_storable_json
+from daeri.infrastructure.aws_pagination import pages
 from daeri.infrastructure.cloud_s3 import normalize_storage_prefix, validate_storage_bucket
-from daeri.infrastructure.project_catalog import _PROJECT_ID
 from daeri.infrastructure.runtime_deployment import _ready
 
 
 def _identifier(value):
-    if not isinstance(value, str) or not _PROJECT_ID.fullmatch(value):
+    if not valid_project_key(value):
         raise StoreError('INVALID_INPUT', 'Supply a connection identifier using letters, digits, underscores or hyphens.')
     return value
 
@@ -96,24 +96,16 @@ class AwsConnections:
             raise StoreError('CONNECTION_UNAVAILABLE', 'The connector configuration could not be read; check its registration.') from None
 
     def _pages(self, path):
-        request = {'Path': self.prefix + path, 'Recursive': False, 'WithDecryption': False, 'MaxResults': 10}
-        seen = set()
-        while True:
-            result = self.ssm.get_parameters_by_path(**request)
+        path = self.prefix + path
+        for result in pages(self.ssm, 'get_parameters_by_path', token_field='NextToken',
+                            Path=path, Recursive=False, WithDecryption=False, MaxResults=10):
             for item in result.get('Parameters', []):
                 name = item['Name']
-                if not name.startswith(request['Path']) or '/' in name[len(request['Path']):]:
+                if not name.startswith(path) or '/' in name[len(path):]:
                     raise ValueError('Invalid parameter path')
                 value = json.loads(item['Value'])
                 validate_storable_json(value)
-                yield _identifier(name[len(request['Path']):]), value
-            token = result.get('NextToken')
-            if not token:
-                return
-            if token in seen:
-                raise ValueError('Repeated page token')
-            seen.add(token)
-            request['NextToken'] = token
+                yield _identifier(name[len(path):]), value
 
     def _binding(self, project_id):
         _identifier(project_id)
@@ -240,18 +232,8 @@ class AwsConnections:
             raise StoreError('CONNECTION_NOT_READY', 'Verify the project dedicated Gateway, secret scope and published harness release before retrying.') from None
 
     def _resources(self, operation, field, **request):
-        request['maxResults'] = 100
-        seen = set()
-        while True:
-            result = getattr(self.control, operation)(**request)
+        for result in pages(self.control, operation, maxResults=100, **request):
             yield from result.get(field, [])
-            token = result.get('nextToken')
-            if not token:
-                return
-            if token in seen:
-                raise ValueError('Repeated page token')
-            seen.add(token)
-            request['nextToken'] = token
 
     @staticmethod
     def _runtime_request(template, binding, values):
@@ -302,8 +284,6 @@ class AwsConnections:
 
     def _runtime(self, template, binding, values, record):
         deadline = time.monotonic() + 180
-        if not binding.runtime_role_arn:
-            raise StoreError('CONNECTION_NOT_READY', 'The project needs a connector Runtime execution role.')
         runtime_id = record.get('runtime_id')
         name = 'Connection_' + record['owner'][:32]
         if not runtime_id:
@@ -434,5 +414,7 @@ class AwsConnections:
                 except Exception:
                     pass
                 if isinstance(error, StoreError):
+                    if error.code == 'RUNTIME_NOT_READY':
+                        raise StoreError('CONNECTION_NOT_READY', 'Check the saved connector Runtime before retrying.') from None
                     raise
                 raise StoreError('CONNECTION_UNAVAILABLE', 'Connection provisioning could not be confirmed; inspect the saved connection before retrying.') from None

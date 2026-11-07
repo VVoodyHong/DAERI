@@ -1,7 +1,11 @@
 """Connection forms keep trusted deployment settings out of model arguments."""
 
+import time
+from types import SimpleNamespace
+
 import anyio
 from mcp.types import ElicitResult
+import pytest
 
 from daeri.application.connections import ConnectionService
 from daeri.core.access import AuthenticatedUser
@@ -92,17 +96,62 @@ def test_manager_registers_connection_from_real_form_and_members_reuse_list():
     anyio.run(check)
 
 
-def test_cancelled_connection_form_has_no_deployment_side_effect():
+def test_expired_user_cannot_open_connection_form_and_gets_structured_auth_error(monkeypatch):
+    async def check():
+        server, backend = factory()
+
+        async def unexpected_form(context, params):
+            pytest.fail('An expired user received a connection form.')
+
+        async with serving(server) as url:
+            async with connected(url, callback=unexpected_form) as (session, _, __):
+                monkeypatch.setattr('daeri.core.access.time', SimpleNamespace(time=lambda: time.time() + 600))
+                result = await session.call_tool('daeri_connect', {
+                    'project_id': 'charging', 'connection_id': 'db', 'connector_id': 'postgres'})
+                assert result.isError and result.structuredContent
+                assert result.structuredContent['error']['code'] == 'AUTHENTICATION_REQUIRED'
+        assert backend.saved == []
+    anyio.run(check)
+
+
+@pytest.mark.parametrize('expires_during_form', [False, True])
+def test_cancelled_connection_form_has_no_deployment_side_effect(monkeypatch, expires_during_form):
     async def check():
         server, backend = factory()
 
         async def cancel(context, params):
+            if expires_during_form:
+                monkeypatch.setattr('daeri.core.access.time', SimpleNamespace(time=lambda: time.time() + 600))
             return ElicitResult(action='cancel')
         async with serving(server) as url:
             async with connected(url, callback=cancel) as (session, _, __):
                 result = await session.call_tool('daeri_connect', {
                     'project_id': 'charging', 'connection_id': 'db', 'connector_id': 'postgres'})
-                assert result.structuredContent['state'] == 'cancelled'
+                if expires_during_form:
+                    assert result.isError and result.structuredContent['error']['code'] == 'AUTHENTICATION_REQUIRED'
+                else:
+                    assert not result.isError and result.structuredContent['state'] == 'cancelled'
+        assert backend.saved == []
+    anyio.run(check)
+
+
+@pytest.mark.parametrize('failure', ['unsupported', 'timeout'])
+def test_connection_form_unavailability_cancels_without_saving(monkeypatch, failure):
+    from mcp.server.fastmcp import Context
+
+    async def timed_out(*args, **kwargs):
+        raise TimeoutError
+
+    if failure == 'timeout':
+        monkeypatch.setattr(Context, 'elicit', timed_out)
+
+    async def check():
+        server, backend = factory()
+        async with serving(server) as url:
+            async with connected(url) as (session, _, __):
+                result = await session.call_tool('daeri_connect', {
+                    'project_id': 'charging', 'connection_id': 'db', 'connector_id': 'postgres'})
+                assert not result.isError and result.structuredContent['state'] == 'cancelled'
         assert backend.saved == []
     anyio.run(check)
 

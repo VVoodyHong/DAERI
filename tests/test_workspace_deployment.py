@@ -1,12 +1,14 @@
 """Native S3 Skills provision the actual Git helper into managed harness sessions."""
 
-from copy import deepcopy
+from io import BytesIO
 import json
 from pathlib import Path
 import subprocess
 import sys
 from uuid import uuid4
 
+import boto3
+from botocore.exceptions import ClientError
 import pytest
 
 from daeri.core.errors import StoreError
@@ -28,63 +30,72 @@ def test_uploaded_skill_runs_without_an_installed_daeri_package(tmp_path):
     assert Path(json.loads(result.stdout)['path']).is_dir()
 
 
-def test_provisioning_preserves_environment_and_skills_and_publishes_after_upload():
-    from daeri.infrastructure.workspace_deployment import configure_workspaces
-    from daeri.infrastructure.project_deployment import ProjectDeployment
-    from test_project_deployment import Control, Ssm, settings, missing
-
-    class HarnessControl(Control):
-        def update_harness(self, **request):
-            if 'skills' not in request:
-                return super().update_harness(**request)
-            self.record('UpdateHarness', request)
-            self.harness.update({key: value for key, value in request.items() if key != 'harnessId'})
-            self.harness['harnessVersion'] = '3'
-            return {'harness': deepcopy(self.harness)}
-        def get_harness_endpoint(self, **request):
-            if self.endpoint is not None and self.endpoint['endpointName'] != request['endpointName']:
-                raise missing('GetHarnessEndpoint')
-            return super().get_harness_endpoint(**request)
+def test_command_previews_mount_and_publishes_only_a_content_addressed_s3_bundle(tmp_path, monkeypatch, capsys):
+    from scripts.configure_workspaces import main
 
     class S3:
-        def __init__(self):
-            self.objects = {}
-        def put_object(self, **request):
-            self.objects[request['Key']] = request['Body']
+        def __enter__(self):
+            return self
 
-    control, ssm, s3, project = HarnessControl(), Ssm(), S3(), settings()
-    control.harness['skills'] = [{'path': '/opt/company-skills/review'}]
-    control.harness['environment'] = {'agentCoreRuntimeEnvironment': {
-        'agentRuntimeArn': 'read-only-output-field', 'networkConfiguration': {'networkMode': 'PUBLIC'},
-        'filesystemConfigurations': [{'sessionStorage': {'mountPath': '/mnt/work'}}]}}
-    ProjectDeployment(control, ssm, lambda project: None).apply(project)
-    result = configure_workspaces(control, s3, ssm, project,
-        {'root': '/mnt/work/source', 'repositories': {'api': 'https://example.test/company/api.git'}},
-        's3://workspace-skills/skills/', lambda route: None)
-    assert result['project']['harness_version'] == '3' and len(s3.objects) == 3
-    assert control.harness['skills'][0] == {'path': '/opt/company-skills/review'}
-    runtime = control.harness['environment']['agentCoreRuntimeEnvironment']
-    assert runtime == {'networkConfiguration': {'networkMode': 'PUBLIC'},
-        'filesystemConfigurations': [{'sessionStorage': {'mountPath': '/mnt/work'}}]}
-    assert control.harness['skills'][-1] == {'s3': {'uri': result['skill_uri']}}
-    result = configure_workspaces(control, s3, ssm, project,
-        {'root': '/mnt/work/source', 'repositories': {'api': 'https://example.test/company/api.git'}},
-        's3://workspace-skills/skills/', lambda route: None)
-    assert len(control.harness['skills']) == 2
+        def __exit__(self, *_):
+            pass
+
+        def put_object(self, *, Bucket, Key, Body, IfNoneMatch):
+            assert Bucket == 'workspace-skills' and IfNoneMatch == '*'
+            if Key in objects:
+                raise ClientError({'Error': {'Code': 'PreconditionFailed'}}, 'PutObject')
+            objects[Key] = Body
+
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == 'workspace-skills'
+            return {'Body': BytesIO(objects[Key])}
+
+    objects, clients = {}, []
+
+    def connect(service, **options):
+        assert service == 's3' and options['region_name'] == 'us-west-2'
+        clients.append(service)
+        return S3()
+
+    monkeypatch.setattr(boto3, 'client', connect)
+    config = tmp_path / 'workspaces.yaml'
+    config.write_text('root: /mnt/work/source\nrepositories:\n  api: https://example.test/api.git\n')
+    args = ['--project-id', 'payments', '--config', str(config), '--region', 'us-west-2',
+            '--skill-uri', 's3://workspace-skills/skills/']
+
+    main(args)
+    preview = json.loads(capsys.readouterr().out)
+    assert not clients
+    assert preview['mount_path'] == '/mnt/work'
+    assert preview['skill_uri'].startswith('s3://workspace-skills/skills/payments/')
+    prefix = preview['skill_uri'].removeprefix('s3://workspace-skills/')
+
+    main([*args, '--apply'])
+    assert json.loads(capsys.readouterr().out) == preview
+    assert clients == ['s3']
+    assert set(objects) == {prefix + name for name in ['SKILL.md', 'scripts/workspace.pyz', 'assets/workspaces.json']}
+    assert json.loads(objects[prefix + 'assets/workspaces.json'])['root'] == '/mnt/work/source'
+
+    main([*args, '--apply'])
+    assert json.loads(capsys.readouterr().out) == preview
+
+    objects[prefix + 'SKILL.md'] = b'conflicting content'
+    with pytest.raises(SystemExit) as error:
+        main([*args, '--apply'])
+    assert error.value.code == 2
+    assert json.loads(capsys.readouterr().err)['error']['code'] == 'STORAGE_CONFLICT'
 
 
-@pytest.mark.parametrize('root', ['/tmp/disposable', '/mnt', '/mnt/../tmp/work'])
-def test_persistent_mount_preflight_happens_before_aws_mutations(root):
-    from daeri.infrastructure.workspace_deployment import configure_workspaces
-    from test_project_deployment import settings
-    with pytest.raises(StoreError, match='INVALID_INPUT'):
-        configure_workspaces(None, None, None, settings(), {'root': root,
-            'repositories': {'api': 'https://example.test/api.git'}}, 's3://skills/prefix/', None)
-
-
-@pytest.mark.parametrize('root,uri', [('/tmp/work', 's3://bucket/skills/'), ('/mnt/work', 'https://example.test/skills')])
-def test_preview_uses_the_same_workspace_validation(root, uri):
+@pytest.mark.parametrize('project,root,uri', [
+    ('payments', '/tmp/work', 's3://bucket/skills/'),
+    ('payments', '/mnt', 's3://bucket/skills/'),
+    ('payments', '/mnt/../tmp/work', 's3://bucket/skills/'),
+    ('payments', '/mnt/with spaces/source', 's3://bucket/skills/'),
+    ('payments', '/mnt/' + 'a' * 196 + '/source', 's3://bucket/skills/'),
+    ('payments', '/mnt/work', 'https://example.test/skills'),
+    ('../payments', '/mnt/work', 's3://bucket/skills/'),
+])
+def test_workspace_plan_rejects_invalid_mount_or_destination(project, root, uri):
     from daeri.infrastructure.workspace_deployment import workspace_plan
-    from test_project_deployment import settings
     with pytest.raises(StoreError, match='INVALID_INPUT'):
-        workspace_plan(settings(), {'root': root, 'repositories': {'api': 'https://example.test/api.git'}}, uri)
+        workspace_plan(project, {'root': root, 'repositories': {'api': 'https://example.test/api.git'}}, uri)

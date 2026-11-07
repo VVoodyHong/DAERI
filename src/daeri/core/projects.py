@@ -5,6 +5,20 @@ import re
 from typing import Protocol
 
 
+PROJECT_KEY_PATTERN = r'^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'
+_HARNESS_ARN = re.compile(
+    r'arn:[a-z0-9-]+:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:'
+    r'harness/[A-Za-z][A-Za-z0-9_]{0,39}-[A-Za-z0-9]{10}')
+
+
+def valid_project_key(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(PROJECT_KEY_PATTERN, value) is not None
+
+
+def valid_harness_arn(value: object) -> bool:
+    return isinstance(value, str) and _HARNESS_ARN.fullmatch(value) is not None
+
+
 def valid_harness_release(endpoint, version) -> bool:
     return bool(isinstance(endpoint, str) and endpoint != 'DEFAULT'
                 and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,47}', endpoint)

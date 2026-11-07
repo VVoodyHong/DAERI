@@ -55,13 +55,14 @@ class GitWorkspaces:
     def _read(self, task_id, repository):
         source, cache, path, record = self._paths(task_id, repository)
         try:
-            saved = json.loads(record.read_text())
+            saved = json.loads(record.read_text(encoding='utf-8'))
             if (not isinstance(saved, dict) or saved.get('source') != source or saved.get('path') != str(path)
+                    or not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', saved['base_commit'])
                     or _git(path, 'branch', '--show-current').stdout.strip() != saved['branch']
                     or _git(path, 'rev-parse', '--show-toplevel').stdout.strip() != str(path)):
                 raise ValueError
             return saved, cache, path
-        except (OSError, ValueError, KeyError):
+        except (OSError, TypeError, ValueError, KeyError, StoreError):
             raise StoreError('SOURCE_WORKSPACE_UNAVAILABLE', 'The saved task workspace is unavailable or changed.') from None
 
     def prepare(self, task_id, repository, base_ref='HEAD'):

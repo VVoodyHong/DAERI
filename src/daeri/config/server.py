@@ -102,6 +102,7 @@ class HarnessReadiness:
             if (schema.get('type') != 'object' or 'plan' not in schema.get('required', [])
                     or schema.get('properties', {}).get('plan', {}).get('type') != 'string'):
                 raise ValueError('The plan confirmation input is invalid')
+            return harness
         except Exception:
             raise StoreError('HARNESS_NOT_READY',
                              'The saved harness release and required approval configuration could not be verified.') from None

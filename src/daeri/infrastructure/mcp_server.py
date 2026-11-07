@@ -16,7 +16,6 @@ from mcp.shared.exceptions import McpError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model, field_validator
 
-from daeri.core.access import AuthenticatedUser
 from daeri.core.endpoints import mcp_endpoint
 from daeri.core.approval import ApprovalResponse
 from daeri.core.errors import StoreError
@@ -73,10 +72,6 @@ def _token(ctx: Context) -> ProjectAccessToken:
         raise StoreError('AUTHENTICATION_REQUIRED', 'Sign in through the host MCP connection.')
     token.user.contexts()
     return token
-
-
-def _user(ctx: Context) -> AuthenticatedUser:
-    return _token(ctx).user
 
 
 def _connection_form(description):
@@ -141,42 +136,41 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
     )
     readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
 
-    async def call(ctx, operation, *, projects=False):
-        if harness_audience is None:
-            return await _result(operation, projects=projects)
-        from daeri.infrastructure.harness_oauth import bind_harness_identity
-        async def delegated():
-            try:
-                token = _token(ctx)
-                with bind_harness_identity(token.user, token.token, token.claims.get('aud')):
-                    return await operation
-            finally:
-                operation.close()
-        return await _result(delegated(), projects=projects)
+    async def call(ctx, operation, *, projects=False, delegated=True):
+        async def authorized():
+            token = _token(ctx)
+            if harness_audience is None or not delegated:
+                return await operation(token.user)
+            from daeri.infrastructure.harness_oauth import bind_harness_identity
+            with bind_harness_identity(token.user, token.token, token.claims.get('aud')):
+                return await operation(token.user)
+        return await _result(authorized(), projects=projects)
+
+    def call_sync(ctx, operation, /, *args, projects=False, delegated=True, **kwargs):
+        return call(ctx, lambda user: anyio.to_thread.run_sync(partial(operation, user, *args, **kwargs)),
+                    projects=projects, delegated=delegated)
 
     @server.tool(annotations=readonly)
     async def daeri_projects(ctx: Context) -> CallToolResult:
         """현재 회사 로그인으로 접근할 수 있는 프로젝트를 조회한다."""
-        return await call(ctx, anyio.to_thread.run_sync(partial(agent.projects, _user(ctx))), projects=True)
+        return await call_sync(ctx, agent.projects, projects=True)
 
     @server.tool(annotations=readonly)
     async def daeri_tasks(project_id: str, ctx: Context, cursor: str | None = None,
                           limit: int = 20) -> CallToolResult:
         """선택한 프로젝트의 자신의 기존 업무를 조회한다."""
-        return await call(ctx, anyio.to_thread.run_sync(
-            partial(agent.tasks, _user(ctx), project_id, cursor=cursor, limit=limit)))
+        return await call_sync(ctx, agent.tasks, project_id, cursor=cursor, limit=limit)
 
     @server.tool()
     async def daeri_work(project_id: str, request: str, ctx: Context,
                          task_id: str | None = None) -> CallToolResult:
         """업무를 요청하거나 같은 업무에 후속 요청·피드백을 전달한다."""
-        return await call(ctx, anyio.to_thread.run_sync(
-            partial(agent.work, _user(ctx), project_id, request, task_id=task_id)))
+        return await call_sync(ctx, agent.work, project_id, request, task_id=task_id)
 
     @server.tool(annotations=readonly)
     async def daeri_status(project_id: str, task_id: str, ctx: Context) -> CallToolResult:
         """업무의 현재 계획·실제 확인·대기 상태를 조회한다."""
-        return await call(ctx, anyio.to_thread.run_sync(partial(agent.status, _user(ctx), project_id, task_id)))
+        return await call_sync(ctx, agent.status, project_id, task_id)
 
     @server.tool()
     async def daeri_confirm(project_id: str, task_id: str, ctx: Context) -> CallToolResult:
@@ -192,27 +186,25 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
                 pass
             return None
 
-        return await call(ctx, agent.confirm(_user(ctx), project_id, task_id, ask))
+        return await call(ctx, lambda user: agent.confirm(user, project_id, task_id, ask))
 
     @server.tool(annotations=readonly)
     async def daeri_files(project_id: str, task_id: str, ctx: Context,
                           cursor: str | None = None, limit: int = 20) -> CallToolResult:
         """현재 업무에 보관된 산출물과 다음 페이지를 조회한다."""
-        return await call(ctx, anyio.to_thread.run_sync(
-            partial(agent.files, _user(ctx), project_id, task_id, cursor, limit)))
+        return await call_sync(ctx, agent.files, project_id, task_id, cursor, limit)
 
     @server.tool(annotations=readonly)
     async def daeri_download(project_id: str, task_id: str, artifact_id: str, ctx: Context) -> CallToolResult:
         """현재 업무의 파일을 짧은 유효 기간의 다운로드 링크로 전달한다."""
-        return await call(ctx, anyio.to_thread.run_sync(
-            partial(agent.download, _user(ctx), project_id, task_id, artifact_id)))
+        return await call_sync(ctx, agent.download, project_id, task_id, artifact_id)
 
     @server.tool()
     async def daeri_recover(project_id: str, task_id: str, ctx: Context,
                             restart: bool = False) -> CallToolResult:
         """보관 응답으로 복구하거나 사용자 확인 후 새 세션에서 계획을 다시 수립한다."""
         if not restart:
-            return await call(ctx, anyio.to_thread.run_sync(partial(agent.recover, _user(ctx), project_id, task_id)))
+            return await call_sync(ctx, agent.recover, project_id, task_id)
 
         async def review(goal, state):
             try:
@@ -227,20 +219,18 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
                 pass
             return None
 
-        return await call(ctx, agent.restart(_user(ctx), project_id, task_id, review))
+        return await call(ctx, lambda user: agent.restart(user, project_id, task_id, review))
 
     if connections is not None:
         @server.tool(annotations=readonly)
         async def daeri_connectors(project_id: str, ctx: Context) -> CallToolResult:
             """프로젝트 담당자가 등록할 수 있는 연결 도구와 준비된 인증을 조회한다."""
-            return await _result(anyio.to_thread.run_sync(
-                partial(connections.connectors, _user(ctx), project_id)))
+            return await call_sync(ctx, connections.connectors, project_id, delegated=False)
 
         @server.tool(annotations=readonly)
         async def daeri_connections(project_id: str, ctx: Context) -> CallToolResult:
             """프로젝트 구성원이 함께 사용하는 연결 목록과 도구 등록 상태를 조회한다."""
-            return await _result(anyio.to_thread.run_sync(
-                partial(connections.connections, _user(ctx), project_id)))
+            return await call_sync(ctx, connections.connections, project_id, delegated=False)
 
         @server.tool()
         async def daeri_connect(project_id: str, connection_id: str, connector_id: str,
@@ -261,6 +251,7 @@ def build_mcp(agent, token_verifier: TokenVerifier, issuer: str, resource_url: s
                     pass
                 return None
 
-            return await _result(connections.configure(_user(ctx), project_id, connection_id, connector_id, ask))
+            return await call(ctx, lambda user: connections.configure(user, project_id, connection_id, connector_id, ask),
+                              delegated=False)
 
     return server

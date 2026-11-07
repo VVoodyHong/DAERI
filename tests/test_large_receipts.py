@@ -193,7 +193,7 @@ def test_an_original_artifact_cannot_use_another_turns_receipt_in_the_same_task(
     store, task, first_turn = begin(s3)
     store.finish_turn(task, first_turn, 'Inspect', HarnessReply('x' * MAX_BYTES, 'end_turn'), ())
     first_receipt_key = manifest(s3)[1]['last_turn']
-    current = store.get_task(task.context, task.id)
+    current = store.restart_task(store.get_task(task.context, task.id), 'Verified the first execution completed.')
     second_turn = store.begin_turn(current, 'Next', ())
     store.finish_turn(current, second_turn, 'Next', HarnessReply('y' * (MAX_BYTES + 10), 'end_turn'), ())
     second_receipt_key = manifest(s3)[1]['last_turn']

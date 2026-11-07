@@ -1,0 +1,223 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::LanguageExtensions
+Description: One DAERI project with shared Memory and a version-pinned orchestrator.
+
+Parameters:
+  ProjectId:
+    Type: String
+    AllowedPattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,127}'
+  ProjectName:
+    Type: String
+    MinLength: 1
+    MaxLength: 256
+  ProjectCatalogPrefix:
+    Type: String
+    Default: /daeri/projects/
+    AllowedPattern: '/(?:(?!\.{1,2}/)[A-Za-z0-9_.-]+/)+'
+    ConstraintDescription: Use an absolute catalog prefix ending in a single slash.
+  HarnessName:
+    Type: String
+    AllowedPattern: '[A-Za-z][A-Za-z0-9_]{0,39}'
+  HarnessRoleArn:
+    Type: String
+  ApprovalHookArn:
+    Type: String
+  GatewayArn:
+    Type: String
+  ModelId:
+    Type: String
+    MinLength: 1
+  CompatibleApiBase:
+    Type: String
+    Default: ''
+    AllowedPattern: '|https://[^\s]+'
+  CompatibleApiKeyArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '|arn:aws(-[^:]+)?:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:token-vault/[a-zA-Z0-9.-]+/apikeycredentialprovider/[a-zA-Z0-9.-]+'
+  JwtDiscoveryUrl:
+    Type: String
+    Default: ''
+    AllowedPattern: '|https://[^\s]+'
+  JwtAudience:
+    Type: String
+    Default: ''
+  ExistingMemoryArn:
+    Type: String
+    Default: ''
+    AllowedPattern: '|arn:[a-z0-9-]+:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:memory/[A-Za-z][A-Za-z0-9_-]{0,99}-[A-Za-z0-9]{10}'
+  MemoryExecutionRoleArn:
+    Type: String
+    Default: ''
+  MemoryEncryptionKeyArn:
+    Type: String
+    Default: ''
+  SourceSkillUri:
+    Type: String
+    Default: ''
+    AllowedPattern: '|s3://[^\s]+/'
+  SourceMountPath:
+    Type: String
+    Default: ''
+    AllowedPattern: '|/mnt/[A-Za-z0-9._-]{1,195}'
+
+Rules:
+  CompatibleApiPair:
+    RuleCondition: !Or
+      - !Not [!Equals [!Ref CompatibleApiBase, '']]
+      - !Not [!Equals [!Ref CompatibleApiKeyArn, '']]
+    Assertions:
+      - Assert: !And
+          - !Not [!Equals [!Ref CompatibleApiBase, '']]
+          - !Not [!Equals [!Ref CompatibleApiKeyArn, '']]
+        AssertDescription: Provide the compatible API endpoint and AgentCore Identity credential ARN together.
+  JwtPair:
+    RuleCondition: !Or
+      - !Not [!Equals [!Ref JwtDiscoveryUrl, '']]
+      - !Not [!Equals [!Ref JwtAudience, '']]
+    Assertions:
+      - Assert: !And
+          - !Not [!Equals [!Ref JwtDiscoveryUrl, '']]
+          - !Not [!Equals [!Ref JwtAudience, '']]
+        AssertDescription: Provide the Harness JWT discovery URL and audience together.
+  SourceSkillPair:
+    RuleCondition: !Or
+      - !Not [!Equals [!Ref SourceSkillUri, '']]
+      - !Not [!Equals [!Ref SourceMountPath, '']]
+    Assertions:
+      - Assert: !And
+          - !Not [!Equals [!Ref SourceSkillUri, '']]
+          - !Not [!Equals [!Ref SourceMountPath, '']]
+        AssertDescription: Provide the Git Skill URI and mount path returned by the Skill publisher together.
+
+Conditions:
+  CreateMemory: !Equals [!Ref ExistingMemoryArn, '']
+  UseMemoryRole: !Not [!Equals [!Ref MemoryExecutionRoleArn, '']]
+  UseMemoryKey: !Not [!Equals [!Ref MemoryEncryptionKeyArn, '']]
+  UseCompatibleApi: !And
+    - !Not [!Equals [!Ref CompatibleApiBase, '']]
+    - !Not [!Equals [!Ref CompatibleApiKeyArn, '']]
+  UseJwt: !Not [!Equals [!Ref JwtDiscoveryUrl, '']]
+  UseSourceSkill: !And
+    - !Not [!Equals [!Ref SourceSkillUri, '']]
+    - !Not [!Equals [!Ref SourceMountPath, '']]
+
+Resources:
+  SharedMemory:
+    Type: AWS::BedrockAgentCore::Memory
+    Condition: CreateMemory
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub '${HarnessName}_Memory'
+      EventExpiryDuration: 365
+      MemoryExecutionRoleArn: !If [UseMemoryRole, !Ref MemoryExecutionRoleArn, !Ref AWS::NoValue]
+      EncryptionKeyArn: !If [UseMemoryKey, !Ref MemoryEncryptionKeyArn, !Ref AWS::NoValue]
+      Tags:
+        'daeri:project': !Ref ProjectId
+        'daeri:catalog': !Ref ProjectCatalogPrefix
+      MemoryStrategies:
+        - SemanticMemoryStrategy:
+            Name: ProjectFacts
+            Namespaces: [/shared/facts/]
+        - EpisodicMemoryStrategy:
+            Name: ProjectEpisodes
+            Namespaces: [/shared/experiences/]
+            ReflectionConfiguration:
+              Namespaces: [/shared/experiences/]
+        - SummaryMemoryStrategy:
+            Name: SessionSummaries
+            Namespaces: ['/summaries/{actorId}/{sessionId}/']
+
+  Orchestrator:
+    Type: AWS::BedrockAgentCore::Harness
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      HarnessName: !Ref HarnessName
+      ExecutionRoleArn: !Ref HarnessRoleArn
+      AuthorizerConfiguration: !If
+        - UseJwt
+        - CustomJWTAuthorizer:
+            DiscoveryUrl: !Ref JwtDiscoveryUrl
+            AllowedAudience: [!Ref JwtAudience]
+        - !Ref AWS::NoValue
+      Model: !If
+        - UseCompatibleApi
+        - OpenAiModelConfig:
+            ModelId: !Ref ModelId
+            ApiBase: !Ref CompatibleApiBase
+            ApiKeyArn: !Ref CompatibleApiKeyArn
+        - BedrockModelConfig:
+            ModelId: !Ref ModelId
+      Memory:
+        AgentCoreMemoryConfiguration:
+          Arn: !If [CreateMemory, !GetAtt SharedMemory.MemoryArn, !Ref ExistingMemoryArn]
+      SystemPrompt:
+        - Text: >-
+            Use relevant project memory. Before using execution tools, call confirm_plan with the proposed goal,
+            scope, expected effects and completion criteria. Follow the actual confirmation response. For changes
+            to the goal or scope, present a revised plan and request confirmation again. Within the approved scope,
+            choose tools and delegate as needed. Report verified results, evidence, available files and unmet conditions.
+      Hooks:
+        - BeforeToolCall:
+            Name: daeri-plan-approval
+            Target:
+              Lambda:
+                Arn: !Ref ApprovalHookArn
+                FailureMode: deny
+      Tools:
+        - Name: confirm_plan
+          Type: inline_function
+          Config:
+            InlineFunction:
+              Description: Request confirmation of the current work plan.
+              InputSchema:
+                type: object
+                properties:
+                  plan:
+                    type: string
+                required: [plan]
+                additionalProperties: false
+        - Name: project_tools
+          Type: agentcore_gateway
+          Config:
+            AgentCoreGateway:
+              GatewayArn: !Ref GatewayArn
+      Skills: !If
+        - UseSourceSkill
+        - - S3:
+              Uri: !Ref SourceSkillUri
+        - !Ref AWS::NoValue
+      Environment: !If
+        - UseSourceSkill
+        - AgentCoreRuntimeEnvironment:
+            FilesystemConfigurations:
+              - SessionStorage:
+                  MountPath: !Ref SourceMountPath
+        - !Ref AWS::NoValue
+
+  Release:
+    Type: AWS::BedrockAgentCore::HarnessEndpoint
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      EndpointName: !Sub 'RELEASE_V${Orchestrator.Version}'
+      HarnessId: !GetAtt Orchestrator.HarnessId
+      TargetVersion: !GetAtt Orchestrator.Version
+
+Outputs:
+  ProjectConfiguration:
+    Description: JSON input to the DAERI release publisher after the stack succeeds.
+    Value:
+      Fn::ToJsonString:
+        region: !Ref AWS::Region
+        project_id: !Ref ProjectId
+        name: !Ref ProjectName
+        project_parameter_prefix: !Ref ProjectCatalogPrefix
+        harness_arn: !GetAtt Orchestrator.Arn
+        harness_version: !GetAtt Orchestrator.Version
+        approval_hook_arn: !Ref ApprovalHookArn
+        memory_id: !If [CreateMemory, !GetAtt SharedMemory.MemoryId, !Select [1, !Split ['/', !Ref ExistingMemoryArn]]]
+  MemoryArn:
+    Value: !If [CreateMemory, !GetAtt SharedMemory.MemoryArn, !Ref ExistingMemoryArn]

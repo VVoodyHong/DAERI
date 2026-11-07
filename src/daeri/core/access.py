@@ -1,15 +1,12 @@
 """Immutable caller identity and project grants from a verified access token."""
 
 from dataclasses import dataclass
-import re
 import time
 
 from daeri.core.cloud import AccessContext
 from daeri.core.errors import StoreError
+from daeri.core.projects import valid_project_key
 from daeri.core.serialization import validate_storable_json
-
-
-_PROJECT_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}')
 
 
 @dataclass(frozen=True)
@@ -22,7 +19,7 @@ class AuthenticatedUser:
     def __post_init__(self):
         if (not isinstance(self.actor_id, str) or not self.actor_id.strip()
                 or not isinstance(self.project_ids, frozenset)
-                or any(not isinstance(item, str) or not _PROJECT_ID.fullmatch(item) for item in self.project_ids)
+                or any(not valid_project_key(item) for item in self.project_ids)
                 or not isinstance(self.managed_project_ids, frozenset)
                 or not self.managed_project_ids.issubset(self.project_ids)
                 or type(self.expires_at) is not int):

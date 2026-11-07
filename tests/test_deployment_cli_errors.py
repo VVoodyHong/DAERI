@@ -10,7 +10,7 @@ from yaml import safe_dump
 
 from daeri.core.errors import StoreError
 from test_delegation import CONFIG
-from test_project_deployment import ARN, HOOK
+from test_project_deployment import DEPLOYMENT
 
 
 @pytest.mark.parametrize('command', ['configure_subagents', 'configure_workspaces'])
@@ -19,9 +19,6 @@ from test_project_deployment import ARN, HOOK
 def test_deployment_commands_report_safe_error_codes_before_aws(tmp_path, monkeypatch, capsys, command, apply, failure):
     module = importlib.import_module('scripts.' + command)
     monkeypatch.setattr(boto3, 'client', lambda *a, **kw: pytest.fail('Invalid input created AWS clients'))
-    project = tmp_path / 'project.yaml'
-    project.write_text(safe_dump({'project_id': 'payments', 'name': 'Payments',
-                                 'harness_arn': ARN, 'approval_hook_arn': HOOK}))
     config = tmp_path / 'config.yaml'
     if failure == 'duplicate_yaml':
         config.write_text('private-key: private-value\nprivate-key: duplicate\n')
@@ -37,9 +34,13 @@ def test_deployment_commands_report_safe_error_codes_before_aws(tmp_path, monkey
             raise injected_error
         monkeypatch.setattr(module, 'read_yaml', failed_read)
         expected = 'STORAGE_UNAVAILABLE' if failure == 'stored_error' else 'DEPLOYMENT_FAILED'
-    arguments = [command, '--project-config', str(project), '--config', str(config)]
     if command == 'configure_workspaces':
-        arguments += ['--skill-uri', 's3://workspace-skills/skills/']
+        arguments = [command, '--project-id', 'payments', '--config', str(config),
+                     '--skill-uri', 's3://workspace-skills/skills/']
+    else:
+        project = tmp_path / 'project.yaml'
+        project.write_text(safe_dump(DEPLOYMENT))
+        arguments = [command, '--project-config', str(project), '--config', str(config)]
     monkeypatch.setattr(sys, 'argv', arguments + (['--apply'] if apply else []))
     with pytest.raises(SystemExit) as error:
         module.main()
@@ -58,12 +59,9 @@ def test_workspace_command_reports_invalid_root_before_aws(tmp_path, monkeypatch
     from scripts.configure_workspaces import main
 
     monkeypatch.setattr(boto3, 'client', lambda *a, **kw: pytest.fail('Invalid input created AWS clients'))
-    project = tmp_path / 'project.yaml'
-    project.write_text(safe_dump({'project_id': 'payments', 'name': 'Payments',
-                                 'harness_arn': ARN, 'approval_hook_arn': HOOK}))
     config = tmp_path / 'config.yaml'
     config.write_text(safe_dump({'root': root, 'repositories': {'api': 'https://example.test/api.git'}}))
-    arguments = ['configure_workspaces', '--project-config', str(project), '--config', str(config),
+    arguments = ['configure_workspaces', '--project-id', 'payments', '--config', str(config),
                  '--skill-uri', 's3://workspace-skills/skills/']
     monkeypatch.setattr(sys, 'argv', arguments + (['--apply'] if apply else []))
     with pytest.raises(SystemExit) as error:

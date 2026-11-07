@@ -7,23 +7,47 @@ from daeri.core.approval import ApprovalResponse
 from daeri.core.errors import StoreError
 
 
+def _matching_plan(task):
+    approval = task.approval
+    if approval is None or len(task.pending_tools) != 1:
+        return None
+    tool = task.pending_tools[0]
+    if (tool.get('name') != 'confirm_plan' or tool.get('type', 'tool_use') != 'tool_use'
+            or tool.get('toolUseId') != approval.tool_use_id or tool.get('input') != {'plan': approval.plan}):
+        return None
+    return approval
+
+
 def _pending_plan(task):
     if task.state == 'running':
         raise StoreError('TASK_BUSY', 'The task already has an execution in progress.')
-    approval = task.approval
-    if (len(task.pending_tools) != 1 or task.pending_tools[0].get('name') != 'confirm_plan'
-            or approval is None
-            or task.pending_tools[0].get('toolUseId') != approval.tool_use_id
-            or task.pending_tools[0].get('input') != {'plan': approval.plan}):
+    approval = _matching_plan(task)
+    if approval is None:
+        if task.pending_tools:
+            raise StoreError('PLAN_UNAVAILABLE', 'Review the prior execution and confirm recovery in a new session.',
+                             task_id=task.id)
         raise StoreError('PLAN_UNAVAILABLE', 'There is no current plan awaiting confirmation.')
     return approval
 
 
 def _view(task):
-    return {'task_id': task.id, 'project_id': task.context.project_id, 'goal': task.goal,
-            'state': task.state, 'plan': task.approval.plan if task.approval else None,
-            'approval': task.approval.decision if task.approval else None,
-            'awaiting_confirmation': bool(task.pending_tools) and task.state != 'running'}
+    matching = _matching_plan(task)
+    unavailable = task.state != 'running' and bool(task.pending_tools) and matching is None
+    approval = None if unavailable else task.approval
+    result = {'task_id': task.id, 'project_id': task.context.project_id, 'goal': task.goal,
+              'state': task.state, 'plan': approval.plan if approval else None,
+              'approval': approval.decision if approval else None,
+              'awaiting_confirmation': matching is not None and task.state != 'running'}
+    if unavailable:
+        result.update(state='interrupted', error='PLAN_UNAVAILABLE')
+    return result
+
+
+def _view_with_reply(task, reply):
+    result = _view(task)
+    result['response'] = reply.text if reply else None
+    result['error'] = (reply.error if reply else None) or result.get('error')
+    return result
 
 
 class AgentService:
@@ -44,8 +68,7 @@ class AgentService:
         context = user.context(project_id)
         task = self.workflow.get_task(context, task_id)
         turn = self.workflow.store.read_turn(context, task_id)
-        return {**_view(task), 'response': turn.reply.text if turn else None,
-                'error': turn.reply.error if turn else None}
+        return _view_with_reply(task, turn.reply if turn else None)
 
     def work(self, user, project_id, request, task_id=None):
         _validate_prompt(request, required=True)
@@ -129,4 +152,4 @@ class AgentService:
 
     def _result(self, user, project_id, turn):
         task = self.workflow.get_task(user.context(project_id), turn.task_id)
-        return {**_view(task), 'response': turn.reply.text, 'error': turn.reply.error}
+        return _view_with_reply(task, turn.reply)

@@ -1,5 +1,6 @@
 """Real Git repositories exercise task isolation and integration checks."""
 
+import json
 from pathlib import Path
 import subprocess
 from uuid import uuid4
@@ -87,6 +88,39 @@ def test_non_object_workspace_record_is_reported_as_unavailable(tmp_path, record
     Path(task['path']).with_suffix('.json').write_text(record, encoding='utf-8')
     with pytest.raises(StoreError, match='SOURCE_WORKSPACE_UNAVAILABLE'):
         workspaces.status(task_id, 'api')
+
+
+@pytest.mark.parametrize('problem', ['missing-directory', 'not-a-worktree', 'missing-base-commit'])
+def test_unavailable_saved_worktree_is_reported_without_recreating_it(tmp_path, capsys, problem):
+    from daeri.infrastructure.workspace_cli import main
+    from daeri.infrastructure.workspaces import GitWorkspaces
+    source = repository(tmp_path / 'source')
+    workspaces = GitWorkspaces(tmp_path / 'work', {'api': str(source)})
+    task_id = str(uuid4())
+    path = Path(workspaces.prepare(task_id, 'api')['path'])
+    record = path.with_suffix('.json')
+    original = path
+    if problem == 'missing-base-commit':
+        saved = json.loads(record.read_text())
+        del saved['base_commit']
+        record.write_text(json.dumps(saved))
+    else:
+        original = path.rename(tmp_path / 'moved-worktree')
+        if problem == 'not-a-worktree':
+            path.mkdir()
+    saved_record = record.read_bytes()
+
+    with pytest.raises(StoreError, match='SOURCE_WORKSPACE_UNAVAILABLE') as unavailable:
+        workspaces.status(task_id, 'api')
+    config = tmp_path / 'workspace.json'
+    config.write_text(json.dumps({'root': str(workspaces.root), 'repositories': workspaces.repositories}))
+    with pytest.raises(SystemExit) as exited:
+        main(['--config', str(config), 'status', task_id, 'api'])
+    assert exited.value.code == 2
+    assert capsys.readouterr().err.strip() == unavailable.value.message
+    assert path.exists() == (problem != 'missing-directory')
+    assert record.read_bytes() == saved_record
+    assert (original / 'value.txt').read_text() == 'original\n'
 
 
 def test_simultaneous_tasks_share_the_cache_and_push_their_own_branches(tmp_path):

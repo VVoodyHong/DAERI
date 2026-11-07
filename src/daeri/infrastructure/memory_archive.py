@@ -9,12 +9,14 @@ import re
 from time import monotonic
 from uuid import UUID
 
+from botocore.exceptions import PaginationError
 from botocore.session import get_session
 from botocore.validate import validate_parameters
 
 from daeri.core.errors import StoreError
+from daeri.core.projects import valid_harness_release, valid_project_key
 from daeri.core.serialization import validate_storable_json
-from daeri.core.projects import valid_harness_release
+from daeri.infrastructure.aws_pagination import pages
 from daeri.infrastructure.cloud_s3 import S3CloudStore
 from daeri.infrastructure.project_catalog import normalize_project_prefix
 from daeri.infrastructure.project_deployment import validate_project_memory
@@ -83,7 +85,7 @@ class MemoryArchive:
         self.create_shape = get_session().get_service_model('bedrock-agentcore').operation_model('CreateEvent').input_shape
 
     def _scope(self, project_id, source_memory_id, catalog):
-        if not isinstance(project_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,127}', project_id):
+        if not valid_project_key(project_id):
             raise StoreError('INVALID_INPUT', 'Supply a project identifier.')
         source = source_memory_id if source_memory_id == 'receipts' else _memory_id(source_memory_id)
         return {'project_id': project_id, 'catalog': normalize_project_prefix(catalog), 'source_memory_id': source}
@@ -103,37 +105,31 @@ class MemoryArchive:
         return resource
 
     def _pages(self, method, field, **request):
-        tokens = set()
-        while True:
-            response = getattr(self.memory, method)(maxResults=100, **request)
-            values = response[field]
-            if not isinstance(values, list):
-                raise StoreError('MEMORY_ARCHIVE_INVALID', 'The Memory page is invalid.')
-            yield from values
-            token = response.get('nextToken')
-            if not token:
-                break
-            if not isinstance(token, str) or token in tokens:
-                raise StoreError('MEMORY_ARCHIVE_INVALID', 'The Memory cursor did not advance.')
-            tokens.add(token)
-            request['nextToken'] = token
+        try:
+            for response in pages(self.memory, method, maxResults=100, **request):
+                values = response[field]
+                if not isinstance(values, list):
+                    raise StoreError('MEMORY_ARCHIVE_INVALID', 'The Memory page is invalid.')
+                yield from values
+        except PaginationError:
+            raise StoreError('MEMORY_ARCHIVE_INVALID', 'The Memory cursor did not advance.') from None
+        except TypeError:
+            # The paginator measures the result field before yielding the page.
+            raise StoreError('MEMORY_ARCHIVE_INVALID', 'The Memory page is invalid.') from None
 
     def _keys(self, prefix):
-        request, tokens = {'Bucket': self.objects.bucket, 'Prefix': prefix, 'MaxKeys': 100}, set()
-        while True:
-            response = self.s3.list_objects_v2(**request)
-            for item in response.get('Contents', []):
-                key = item['Key']
-                if not isinstance(key, str) or not key.startswith(prefix):
-                    raise StoreError('MEMORY_ARCHIVE_INVALID', 'The archive page is outside its scope.')
-                yield key, item
-            if not response.get('IsTruncated'):
-                break
-            token = response.get('NextContinuationToken')
-            if not isinstance(token, str) or token in tokens:
-                raise StoreError('MEMORY_ARCHIVE_INVALID', 'The archive cursor did not advance.')
-            tokens.add(token)
-            request['ContinuationToken'] = token
+        try:
+            for response in pages(self.s3, 'list_objects_v2', token_field='NextContinuationToken',
+                                  Bucket=self.objects.bucket, Prefix=prefix, MaxKeys=100):
+                if response.get('IsTruncated') and not response.get('NextContinuationToken'):
+                    raise PaginationError(message='The truncated archive page is missing its cursor.')
+                for item in response.get('Contents', []):
+                    key = item['Key']
+                    if not isinstance(key, str) or not key.startswith(prefix):
+                        raise StoreError('MEMORY_ARCHIVE_INVALID', 'The archive page is outside its scope.')
+                    yield key, item
+        except PaginationError:
+            raise StoreError('MEMORY_ARCHIVE_INVALID', 'The archive cursor did not advance.') from None
 
     def _read(self, key, *, max_bytes=None):
         try:

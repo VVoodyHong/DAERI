@@ -10,7 +10,7 @@ from daeri.core.cloud import AccessContext, CloudTask
 from daeri.core.errors import StoreError
 from daeri.core.serialization import validate_storable_json
 from daeri.infrastructure.agentcore import AgentCoreHarness
-from daeri.infrastructure.project_catalog import SsmProjectCatalog
+from daeri.infrastructure.aws_pagination import pages
 
 
 def gateway_target(settings):
@@ -44,7 +44,10 @@ def handle_delegation(event, context, settings, target_id, control, harness):
     if (not isinstance(event, dict) or set(event) != {'request'}
             or not isinstance(event['request'], str) or not event['request'].strip()):
         raise StoreError('INVALID_INPUT', 'Supply the delegated goal and approved scope.')
-    validate_storable_json(event)
+    try:
+        validate_storable_json(event)
+    except UnicodeEncodeError:
+        raise StoreError('INVALID_INPUT', 'Supply a delegated request in valid UTF-8.') from None
     name = tool[len(prefix):]
     route = settings.subagents[name]
     check_release(control, route)
@@ -60,29 +63,25 @@ def handle_delegation(event, context, settings, target_id, control, harness):
                                                             None if completed else 'SUBAGENT_INCOMPLETE')}
 
 
-def configure_subagents(control, lambdas, ssm, settings, project_settings, check_harness):
-    """Register the Gateway tool, configure its fixed scope, then publish the root release."""
-    from daeri.infrastructure.project_deployment import ProjectDeployment
+def configure_subagents(control, lambdas, settings, project_settings, check_harness):
+    """Register project-scoped Gateway tools and configure their Lambda."""
+    from daeri.infrastructure.project_deployment import verify_project
 
     if settings.project_id != project_settings.project_id:
         raise StoreError('INVALID_INPUT', 'Use the same project for subagents and their orchestrator.')
-    published = SsmProjectCatalog(ssm, project_settings.project_parameter_prefix).get(settings.project_id)
-    if published.harness_arn != project_settings.harness_arn or published.name != project_settings.name:
-        raise StoreError('PROJECT_NOT_READY', 'The published orchestrator differs from the project deployment.')
-    check_harness(published)
-    deployed = control.get_harness(harnessId=published.harness_arn.rsplit('/', 1)[1],
-                                   harnessVersion=published.harness_version)['harness']
-    root = control.get_harness(harnessId=published.harness_arn.rsplit('/', 1)[1])['harness']
-    memory = deployed.get('memory', {}).get('agentCoreMemoryConfiguration', {}).get('arn')
-    if root.get('memory') != deployed.get('memory'):
-        raise StoreError('PROJECT_NOT_READY', 'Publish the project memory changes before configuring subagents.')
+    project, orchestrator = verify_project(control, project_settings, check_harness)
+    if not any(tool.get('type') == 'agentcore_gateway'
+               and tool.get('config', {}).get('agentCoreGateway', {}).get('gatewayArn') == settings.gateway_arn
+               for tool in orchestrator.get('tools', [])):
+        raise StoreError('PROJECT_NOT_READY', 'Connect the project Gateway to the orchestrator release before registering subagents.')
+    memory = orchestrator.get('memory', {}).get('agentCoreMemoryConfiguration', {}).get('arn')
     function = lambdas.get_function_configuration(FunctionName=settings.lambda_arn)
     environment = dict(function.get('Environment', {}).get('Variables', {}))
     environment['DAERI_DELEGATION_CONFIG'] = json.dumps({**settings.model_dump(), 'target_id': '0' * 10})
     if sum(len(key.encode()) + len(value.encode()) for key, value in environment.items()) > 4096:
         raise StoreError('INVALID_INPUT', 'The subagent configuration exceeds the Lambda environment limit.')
     for route in settings.subagents.values():
-        if route.harness_arn == published.harness_arn:
+        if route.harness_arn == project.harness_arn:
             raise StoreError('INVALID_INPUT', 'Use a separate managed harness for each delegated role.')
         check_release(control, route)
         child = control.get_harness(harnessId=route.harness_arn.rsplit('/', 1)[1],
@@ -96,15 +95,10 @@ def configure_subagents(control, lambdas, ssm, settings, project_settings, check
             raise StoreError('PROJECT_NOT_READY', 'Subagents need shared project Memory, bounded execution and server-side tools.')
     request, target_id = gateway_target(settings), None
     gateway_id = request['gatewayIdentifier']
-    query = {'gatewayIdentifier': gateway_id}
-    while True:
-        page = control.list_gateway_targets(**query)
+    for page in pages(control, 'list_gateway_targets', gatewayIdentifier=gateway_id):
         for target in page.get('items', []):
             if target.get('name') == settings.target_name:
                 target_id = target['targetId']
-        if not page.get('nextToken'):
-            break
-        query['nextToken'] = page['nextToken']
     if target_id is None:
         target_id = control.create_gateway_target(**request)['targetId']
     else:
@@ -122,15 +116,7 @@ def configure_subagents(control, lambdas, ssm, settings, project_settings, check
     environment['DAERI_DELEGATION_CONFIG'] = json.dumps({**settings.model_dump(), 'target_id': target_id})
     lambdas.update_function_configuration(FunctionName=settings.lambda_arn, Environment={'Variables': environment})
     lambdas.get_waiter('function_updated_v2').wait(FunctionName=settings.lambda_arn)
-    tools = root.get('tools', [])
-    connected = any(tool.get('config', {}).get('agentCoreGateway', {}).get('gatewayArn') == settings.gateway_arn
-                    for tool in tools)
-    if not connected:
-        control.update_harness(harnessId=published.harness_arn.rsplit('/', 1)[1], tools=tools + [{
-            'name': 'project_subagents', 'type': 'agentcore_gateway',
-            'config': {'agentCoreGateway': {'gatewayArn': settings.gateway_arn}}}])
-    result = ProjectDeployment(control, ssm, check_harness).apply(project_settings)
-    return {'target_id': target_id, 'project': result}
+    return {'target_id': target_id, 'project_id': settings.project_id}
 
 
 def lambda_handler(event, context):

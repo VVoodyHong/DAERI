@@ -9,8 +9,10 @@ from botocore.exceptions import ClientError
 from botocore.loaders import create_loader
 from botocore.model import ServiceModel
 from botocore.validate import validate_parameters
+from pydantic import ValidationError
 import pytest
 
+from aws_paginator import PaginatedClient
 from daeri.core.errors import StoreError
 
 
@@ -41,7 +43,9 @@ def missing(operation):
     return ClientError({'Error': {'Code': 'ParameterNotFound' if 'Parameter' in operation else 'ResourceNotFoundException'}}, operation)
 
 
-class Ssm:
+class Ssm(PaginatedClient):
+    aws_service = 'ssm'
+
     def __init__(self):
         self.values = {PREFIX + 'catalog/database': deepcopy(RUNTIME), PREFIX + 'catalog/remote': deepcopy(MCP),
                        PREFIX + 'catalog/api': deepcopy(OPENAPI), PREFIX + 'projects/payments': deepcopy(BINDING)}
@@ -94,7 +98,9 @@ class S3:
         del self.objects[request['Key']]
 
 
-class Control:
+class Control(PaginatedClient):
+    aws_service = 'bedrock-agentcore-control'
+
     def __init__(self):
         self.model = ServiceModel(create_loader().load_service_model('bedrock-agentcore-control', 'service-2'))
         self.calls = []
@@ -234,6 +240,16 @@ def test_remote_and_openapi_targets_use_trusted_credential_aliases(connector, in
     assert control.runtime is None
 
 
+@pytest.mark.parametrize('server', [None, {}, {'url': 123}])
+def test_openapi_server_entries_require_url_strings(server):
+    from daeri.config.connections import ConnectorTemplate
+
+    template = deepcopy(OPENAPI)
+    template['openapi_schema']['servers'] = [server]
+    with pytest.raises(ValidationError):
+        ConnectorTemplate.model_validate(template)
+
+
 @pytest.mark.parametrize('inputs', [
     {'host': 'db.internal', 'password': 'raw-password'}, {'host': 'db.internal', 'password': SECRET + '\n'},
     {'host': 'db.internal', 'password': SECRET.replace('payments/', 'other/')},
@@ -286,6 +302,30 @@ def test_partial_failure_can_retry_without_creating_duplicate_runtime_and_saniti
     control.create_gateway_target = create
     assert backend.connect('payments', 'warehouse', 'database', {'host': 'db.internal', 'password': SECRET})['state'] == 'READY'
     assert len([1 for operation, _ in control.calls if operation == 'CreateAgentRuntime']) == 1
+
+
+@pytest.mark.parametrize('resource', ['runtime', 'endpoint'])
+def test_unready_connector_runtime_reports_connection_failure_and_can_retry(resource):
+    backend, control, _ = service()
+    create_name = 'create_agent_runtime' if resource == 'runtime' else 'create_agent_runtime_endpoint'
+    create = getattr(control, create_name)
+
+    def create_failed(**request):
+        created = create(**request)
+        getattr(control, resource)['status'] = 'CREATE_FAILED'
+        return created
+
+    setattr(control, create_name, create_failed)
+    inputs = {'host': 'db.internal', 'password': SECRET}
+    with pytest.raises(StoreError, match='CONNECTION_NOT_READY'):
+        backend.connect('payments', 'warehouse', 'database', inputs)
+    assert backend.list('payments')[0]['state'] == 'FAILED'
+    assert control.target is None and not backend.locks.client.objects
+
+    setattr(control, create_name, create)
+    getattr(control, resource)['status'] = 'READY'
+    assert backend.connect('payments', 'warehouse', 'database', inputs)['state'] == 'READY'
+    assert sum(operation == 'CreateAgentRuntime' for operation, _ in control.calls) == 1
 
 
 def test_owned_connection_cannot_change_connector_or_update_foreign_runtime_or_target():
